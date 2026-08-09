@@ -1323,8 +1323,20 @@ class RAGTool(Tool):
             document_ids=document_ids,
         )
         if scope == []:
+            self._last_action_data = {
+                "success": False,
+                "query": str(query),
+                "document_ids": [],
+                "results": [],
+            }
             return "❌ document_ids 不能为空"
         if scope is not None and len(scope) > MAX_SELECTED_DOCUMENTS:
+            self._last_action_data = {
+                "success": False,
+                "query": str(query),
+                "document_ids": list(scope),
+                "results": [],
+            }
             return f"❌ 最多选择 {MAX_SELECTED_DOCUMENTS} 篇文档"
 
         pipeline = self._get_pipeline(rag_namespace)
@@ -1343,9 +1355,45 @@ class RAGTool(Tool):
         )
 
         if not results:
+            self._last_action_data = {
+                "success": True,
+                "query": str(query),
+                "document_ids": list(scope or []),
+                "results": [],
+            }
             if scope:
                 return f"🔍 未在所选文档 {', '.join(scope)} 中找到与 '{query}' 相关的知识"
             return f"🔍 未找到与 '{query}' 相关的知识"
+
+        public_results = []
+        metadata_keys = (
+            "document_id",
+            "document_name",
+            "file_name",
+            "file_suffix",
+            "source_type",
+            "page_number",
+            "chunk_index",
+            "source_position",
+        )
+        for item in results:
+            metadata = item.get("metadata", {}) or {}
+            public_results.append(
+                {
+                    "chunk_id": str(item.get("id", "")),
+                    "content": str(item.get("content", "")),
+                    "score": float(item.get("score", 0.0)),
+                    "metadata": {
+                        key: metadata.get(key) for key in metadata_keys
+                    },
+                }
+            )
+        self._last_action_data = {
+            "success": True,
+            "query": str(query),
+            "document_ids": list(scope or []),
+            "results": public_results,
+        }
 
         lines = [f"🔍 找到 {len(results)} 条相关知识:"]
 

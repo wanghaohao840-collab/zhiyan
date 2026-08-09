@@ -110,3 +110,30 @@ def test_execute_result_returns_structured_failure_for_add_document(tmp_path, mo
     assert result.action == "add_document"
     assert result.data["document_id"] == "doc-md"
     assert "missing.md" in result.message
+
+
+def test_search_execute_result_preserves_top_level_pipeline_hit_id(monkeypatch):
+    class SearchPipeline:
+        def search(self, **kwargs):
+            return [
+                {
+                    "id": "pipeline-hit-42",
+                    "content": "retrieved evidence",
+                    "score": 0.91,
+                    "metadata": {"document_id": "doc-1"},
+                }
+            ]
+
+    monkeypatch.setattr(
+        rag_tool_module,
+        "create_rag_pipeline",
+        lambda **kwargs: SearchPipeline(),
+    )
+
+    result = rag_tool_module.RAGTool(enable_graph=False).execute_result(
+        "search",
+        query="evidence",
+        document_id="doc-1",
+    )
+
+    assert result.data["results"][0]["chunk_id"] == "pipeline-hit-42"
