@@ -18,6 +18,7 @@ def test_ensure_user_dirs_creates_expected_layout(tmp_path):
     assert paths.documents.is_dir()
     assert paths.rag_cache == paths.root / "rag" / "rag_cache.json"
     assert paths.history == paths.root / "history.json"
+    assert paths.learning == paths.root / "learning.json"
     assert paths.memory_snapshot == paths.root / "memory" / "memories.json"
     assert paths.reports.is_dir()
 

@@ -22,6 +22,7 @@ class UserPaths:
     documents: Path
     rag_cache: Path
     history: Path
+    learning: Path
     memory_snapshot: Path
     reports: Path
     imports: Path
@@ -39,6 +40,7 @@ class UserStorage:
             documents=root / "documents",
             rag_cache=root / "rag" / "rag_cache.json",
             history=root / "history.json",
+            learning=root / "learning.json",
             memory_snapshot=root / "memory" / "memories.json",
             reports=root / "reports",
             imports=root / "imports",
