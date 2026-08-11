@@ -285,3 +285,34 @@ def test_save_rejects_unusable_exercises_and_schedules(tmp_path, mutate):
 
     with pytest.raises(CorruptLearningDataError):
         repo.save(data)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda data: data["exercises"][0].update({"explanation": ""}),
+        lambda data: data["exercises"][0].update(
+            {"options": ["A", " a ", "B", "C"]}
+        ),
+        lambda data: data["cards"][0].update({"sources": []}),
+        lambda data: data["exercises"][0].update({"sources": []}),
+        lambda data: data["exercises"][0].update(
+            {
+                "type": "short_answer",
+                "options": [],
+                "correct_index": None,
+                "reference_answer": "Reference answer",
+                "key_points": ["point"],
+                "explanation": None,
+                "sources": [],
+            }
+        ),
+    ],
+)
+def test_save_rejects_empty_sources_and_unusable_multiple_choice_fields(tmp_path, mutate):
+    repo, _ = _repo(tmp_path)
+    data = _data()
+    mutate(data)
+
+    with pytest.raises(CorruptLearningDataError):
+        repo.save(data)

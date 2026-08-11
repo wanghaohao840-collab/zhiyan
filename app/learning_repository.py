@@ -6,6 +6,7 @@ from math import isfinite
 from pathlib import Path
 from threading import RLock
 from typing import Any, Callable, TypeVar
+from unicodedata import normalize
 
 from app.storage import read_json, write_json_atomic
 
@@ -204,8 +205,9 @@ def _validate_exercise(exercise: Any) -> None:
         if exercise.get("key_points") != []:
             raise ValueError("multiple-choice key_points must be empty")
         _require_key(exercise, "explanation", "multiple-choice exercise")
-        if not isinstance(exercise.get("explanation"), str):
-            raise ValueError("multiple-choice explanation must be a string")
+        _require_non_empty_string(
+            exercise.get("explanation"), "multiple-choice explanation"
+        )
     else:
         if exercise.get("options") != []:
             raise ValueError("short-answer options must be empty")
@@ -222,8 +224,8 @@ def _validate_exercise(exercise: Any) -> None:
 
 def _validate_sources(item: dict, name: str) -> None:
     sources = item.get("sources")
-    if not isinstance(sources, list):
-        raise ValueError(f"{name}.sources must be a list")
+    if not isinstance(sources, list) or not sources:
+        raise ValueError(f"{name}.sources must contain at least one source")
     for source in sources:
         _require_mapping(source, f"{name} source")
         _require_strings(
@@ -326,9 +328,13 @@ def _validate_multiple_choice_options(value: Any) -> None:
         not isinstance(value, list)
         or len(value) != 4
         or not all(isinstance(option, str) and option.strip() for option in value)
-        or len(set(value)) != 4
+        or len({_normalize_option(option) for option in value}) != 4
     ):
         raise ValueError("multiple-choice options must be four unique non-empty strings")
+
+
+def _normalize_option(value: str) -> str:
+    return " ".join(normalize("NFKC", value).casefold().split())
 
 
 def _validate_short_answer_key_points(value: Any) -> None:
