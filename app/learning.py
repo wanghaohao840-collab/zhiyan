@@ -40,12 +40,14 @@ class LearningService:
     ) -> dict:
         document_id = _required_string(document_id, "document_id")
         document_name = _required_string(document_name, "document_name")
-        title = _required_string(title, "title")
+        title = _plan_title(title)
         target = _iso_date(target_date, "target_date")
-        minutes = _positive_int(daily_minutes, "daily_minutes")
+        minutes = _bounded_int(daily_minutes, "daily_minutes", 5, 480)
         today = self._today()
         if target < today:
             raise ValueError("target_date cannot be before today")
+        if target > today + timedelta(days=364):
+            raise ValueError("target_date cannot be more than 364 days after today")
         timestamp = self._timestamp()
         phases = _allocate_phases((target - today).days + 1)
         plan = {
@@ -388,16 +390,23 @@ def _allocate_phases(day_count: int) -> list[str]:
     if day_count == 3:
         return ["reading", "cards", "review"]
 
-    remaining = day_count - len(_PHASES)
-    quotas = [remaining * weight / sum(_PHASE_WEIGHTS) for weight in _PHASE_WEIGHTS]
-    extras = [int(quota) for quota in quotas]
-    leftover = remaining - sum(extras)
-    order = sorted(
-        range(len(_PHASES)), key=lambda index: (-(quotas[index] - extras[index]), index)
-    )
-    for index in order[:leftover]:
-        extras[index] += 1
-    counts = [1 + extra for extra in extras]
+    quotas = [day_count * weight / sum(_PHASE_WEIGHTS) for weight in _PHASE_WEIGHTS]
+    floors = [int(quota) for quota in quotas]
+    counts = [max(1, value) for value in floors]
+    fractions = [quota - floor for quota, floor in zip(quotas, floors)]
+    while sum(counts) < day_count:
+        order = sorted(range(len(_PHASES)), key=lambda index: (-fractions[index], index))
+        for index in order:
+            if sum(counts) == day_count:
+                break
+            counts[index] += 1
+    while sum(counts) > day_count:
+        order = sorted(range(len(_PHASES)), key=lambda index: (fractions[index], index))
+        for index in order:
+            if sum(counts) == day_count:
+                break
+            if counts[index] > 1:
+                counts[index] -= 1
     return [
         phase
         for phase, count in zip(_PHASES, counts)
@@ -417,6 +426,8 @@ def _new_schedule(timestamp: str) -> dict:
 
 
 def _next_schedule(schedule: dict, grade: int, timestamp: str) -> dict:
+    ease_delta = 0.1 - (5 - grade) * (0.08 + (5 - grade) * 0.02)
+    ease_factor = round(max(1.3, schedule["ease_factor"] + ease_delta), 10)
     if grade < 3:
         repetitions = 0
         interval_days = 1
@@ -427,9 +438,7 @@ def _next_schedule(schedule: dict, grade: int, timestamp: str) -> dict:
         elif repetitions == 2:
             interval_days = 6
         else:
-            interval_days = max(1, round(schedule["interval_days"] * schedule["ease_factor"]))
-    ease_delta = 0.1 - (5 - grade) * (0.08 + (5 - grade) * 0.02)
-    ease_factor = round(max(1.3, schedule["ease_factor"] + ease_delta), 10)
+            interval_days = max(1, round(schedule["interval_days"] * ease_factor))
     reviewed_at = datetime.fromisoformat(timestamp)
     return {
         "repetitions": repetitions,
@@ -606,10 +615,17 @@ def _draft_list(value: Any) -> list[dict]:
     return value
 
 
-def _positive_int(value: Any, name: str) -> int:
-    if not _is_int(value) or value <= 0:
-        raise ValueError(f"{name} must be a positive integer")
+def _bounded_int(value: Any, name: str, minimum: int, maximum: int) -> int:
+    if not _is_int(value) or not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be an integer in {minimum}..{maximum}")
     return value
+
+
+def _plan_title(value: Any) -> str:
+    title = _required_string(value, "title").strip()
+    if len(title) > 100:
+        raise ValueError("title must contain at most 100 characters")
+    return title
 
 
 def _is_int(value: Any) -> bool:

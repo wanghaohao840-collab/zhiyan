@@ -94,6 +94,23 @@ def short_draft(prompt="Explain it", document_id="doc-a", **overrides):
                 "review",
             ],
         ),
+        (
+            12,
+            [
+                "reading",
+                "reading",
+                "reading",
+                "cards",
+                "cards",
+                "cards",
+                "cards",
+                "exercises",
+                "exercises",
+                "exercises",
+                "review",
+                "review",
+            ],
+        ),
     ],
 )
 def test_create_plan_allocates_inclusive_phase_days(service, days, expected_phases):
@@ -117,12 +134,15 @@ def test_create_plan_allocates_inclusive_phase_days(service, days, expected_phas
         ("document_id", " "),
         ("document_name", ""),
         ("title", None),
+        ("title", " "),
         ("target_date", "2026-08-10"),
+        ("target_date", "2027-08-11"),
         ("target_date", "not-a-date"),
-        ("daily_minutes", 0),
-        ("daily_minutes", -1),
+        ("daily_minutes", 4),
+        ("daily_minutes", 481),
         ("daily_minutes", 1.5),
         ("daily_minutes", True),
+        ("title", "x" * 101),
     ],
 )
 def test_create_plan_validates_boundaries(service, field, value):
@@ -137,6 +157,24 @@ def test_create_plan_validates_boundaries(service, field, value):
 
     with pytest.raises(ValueError):
         service.create_plan(**arguments)
+
+
+@pytest.mark.parametrize(
+    ("days_after_today", "daily_minutes", "raw_title", "expected_title"),
+    [(0, 5, "  x  ", "x"), (364, 480, f"  {'x' * 100}  ", "x" * 100)],
+)
+def test_create_plan_accepts_exact_date_and_minutes_boundaries(
+    service, days_after_today, daily_minutes, raw_title, expected_title
+):
+    target = TODAY + timedelta(days=days_after_today)
+
+    plan = service.create_plan(
+        "doc-a", "Alpha", raw_title, target.isoformat(), daily_minutes
+    )
+
+    assert plan["title"] == expected_title
+    assert plan["daily_minutes"] == daily_minutes
+    assert plan["target_date"] == target.isoformat()
 
 
 def test_list_plans_is_sorted_and_defensive(service):
@@ -310,7 +348,7 @@ def test_card_sm2_transitions_and_review_log_content(service, repository):
     assert second["schedule"]["ease_factor"] == pytest.approx(2.7)
     third = service.review_card("doc-a", card["id"], "fuzzy")
     assert third["schedule"]["repetitions"] == 3
-    assert third["schedule"]["interval_days"] == 16
+    assert third["schedule"]["interval_days"] == 15
     assert third["schedule"]["ease_factor"] == pytest.approx(2.56)
 
     log = repository.load()["review_logs"][-1]
