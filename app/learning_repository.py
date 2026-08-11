@@ -189,21 +189,33 @@ def _validate_exercise(exercise: Any) -> None:
         raise ValueError("exercise.type is invalid")
     _require_timestamp(exercise["created_at"], "exercise.created_at")
     _require_timestamp(exercise["updated_at"], "exercise.updated_at")
-    _validate_string_list(exercise.get("options"), "exercise.options")
-    _validate_string_list(exercise.get("key_points"), "exercise.key_points")
     _validate_sources(exercise, "exercise")
     _validate_schedule(exercise.get("schedule"), "exercise.schedule")
     if exercise_type == "multiple_choice":
-        if not _is_int(exercise.get("correct_index")):
-            raise ValueError("multiple-choice correct_index must be an integer")
+        _validate_multiple_choice_options(exercise.get("options"))
+        _require_key(exercise, "correct_index", "multiple-choice exercise")
+        correct_index = exercise.get("correct_index")
+        if not _is_int(correct_index) or not 0 <= correct_index <= 3:
+            raise ValueError("multiple-choice correct_index must be in 0..3")
+        _require_key(exercise, "reference_answer", "multiple-choice exercise")
         if exercise.get("reference_answer") is not None:
             raise ValueError("multiple-choice reference_answer must be null")
+        _require_key(exercise, "key_points", "multiple-choice exercise")
+        if exercise.get("key_points") != []:
+            raise ValueError("multiple-choice key_points must be empty")
+        _require_key(exercise, "explanation", "multiple-choice exercise")
         if not isinstance(exercise.get("explanation"), str):
             raise ValueError("multiple-choice explanation must be a string")
     else:
+        if exercise.get("options") != []:
+            raise ValueError("short-answer options must be empty")
+        _require_key(exercise, "correct_index", "short-answer exercise")
         if exercise.get("correct_index") is not None:
             raise ValueError("short-answer correct_index must be null")
+        _require_key(exercise, "reference_answer", "short-answer exercise")
         _require_non_empty_string(exercise.get("reference_answer"), "short-answer reference_answer")
+        _validate_short_answer_key_points(exercise.get("key_points"))
+        _require_key(exercise, "explanation", "short-answer exercise")
         if exercise.get("explanation") is not None:
             raise ValueError("short-answer explanation must be null")
 
@@ -235,16 +247,23 @@ def _validate_schedule(schedule: Any, name: str) -> None:
     _require_mapping(schedule, name)
     for field in ("repetitions", "interval_days"):
         _require_int(schedule, field, name)
+        if schedule[field] < 0:
+            raise ValueError(f"{name}.{field} must be nonnegative")
     ease_factor = schedule.get("ease_factor")
-    if not isinstance(ease_factor, (int, float)) or isinstance(ease_factor, bool) or not isfinite(ease_factor):
-        raise ValueError(f"{name}.ease_factor must be a finite number")
+    if (
+        not isinstance(ease_factor, (int, float))
+        or isinstance(ease_factor, bool)
+        or not isfinite(ease_factor)
+        or ease_factor < 1.3
+    ):
+        raise ValueError(f"{name}.ease_factor must be a finite number at least 1.3")
     _require_timestamp(schedule.get("due_at"), f"{name}.due_at")
     _require_key(schedule, "last_reviewed_at", name)
     _require_optional_timestamp(schedule.get("last_reviewed_at"), f"{name}.last_reviewed_at")
     _require_key(schedule, "last_grade", name)
     last_grade = schedule.get("last_grade")
-    if last_grade is not None and not _is_int(last_grade):
-        raise ValueError(f"{name}.last_grade must be an integer or null")
+    if last_grade is not None and (not _is_int(last_grade) or not 0 <= last_grade <= 5):
+        raise ValueError(f"{name}.last_grade must be an integer in 0..5 or null")
 
 
 def _validate_review_log(log: Any) -> None:
@@ -302,9 +321,24 @@ def _is_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _validate_string_list(value: Any, name: str) -> None:
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise ValueError(f"{name} must be a list of strings")
+def _validate_multiple_choice_options(value: Any) -> None:
+    if (
+        not isinstance(value, list)
+        or len(value) != 4
+        or not all(isinstance(option, str) and option.strip() for option in value)
+        or len(set(value)) != 4
+    ):
+        raise ValueError("multiple-choice options must be four unique non-empty strings")
+
+
+def _validate_short_answer_key_points(value: Any) -> None:
+    if (
+        not isinstance(value, list)
+        or not 1 <= len(value) <= 8
+        or not all(isinstance(point, str) and point.strip() for point in value)
+        or len(set(value)) != len(value)
+    ):
+        raise ValueError("short-answer key_points must be 1..8 unique non-empty strings")
 
 
 def _require_date(value: str, name: str) -> None:

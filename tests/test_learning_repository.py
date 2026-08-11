@@ -238,3 +238,50 @@ def test_save_does_not_overwrite_existing_corrupt_bytes(tmp_path):
         repo.save(_data())
 
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda data: data["exercises"][0].update({"options": []}),
+        lambda data: data["exercises"][0].update(
+            {"options": ["A", "B", "C", "C"]}
+        ),
+        lambda data: data["exercises"][0].update({"correct_index": 4}),
+        lambda data: data["exercises"][0].update(
+            {
+                "type": "short_answer",
+                "options": [],
+                "correct_index": None,
+                "reference_answer": "",
+                "key_points": ["point"],
+                "explanation": None,
+            }
+        ),
+        lambda data: data["exercises"][0].update(
+            {
+                "type": "short_answer",
+                "options": [],
+                "correct_index": None,
+                "reference_answer": "Reference answer",
+                "key_points": [],
+                "explanation": None,
+            }
+        ),
+        lambda data: data["cards"][0]["schedule"].update(
+            {
+                "repetitions": -1,
+            }
+        ),
+        lambda data: data["cards"][0]["schedule"].update({"interval_days": -1}),
+        lambda data: data["cards"][0]["schedule"].update({"ease_factor": 1.2}),
+        lambda data: data["cards"][0]["schedule"].update({"last_grade": 99}),
+    ],
+)
+def test_save_rejects_unusable_exercises_and_schedules(tmp_path, mutate):
+    repo, _ = _repo(tmp_path)
+    data = _data()
+    mutate(data)
+
+    with pytest.raises(CorruptLearningDataError):
+        repo.save(data)
