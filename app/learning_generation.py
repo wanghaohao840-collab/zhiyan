@@ -100,8 +100,8 @@ class LearningGenerationService:
     def _validated_request(document_id, document_name, count) -> tuple[str, str, int]:
         document_id = _required_string(document_id, "document_id")
         document_name = _required_string(document_name, "document_name")
-        if not _is_int(count) or count < 1:
-            raise LearningGenerationError("count must be a positive integer")
+        if not _is_int(count) or count not in {3, 5, 10}:
+            raise LearningGenerationError("count must be 3, 5, or 10")
         return document_id, document_name, count
 
     @staticmethod

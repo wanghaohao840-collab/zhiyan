@@ -107,6 +107,26 @@ def payload(key, items):
     return json.dumps({key: items}, ensure_ascii=False)
 
 
+def three_cards(first=None):
+    return [
+        first or card("Question 1"),
+        card("Question 2"),
+        card("Question 3"),
+    ]
+
+
+def three_mcqs(first=None):
+    return [first or mcq("MCQ 1"), mcq("MCQ 2"), mcq("MCQ 3")]
+
+
+def three_short_answers(first=None):
+    return [
+        first or short_answer("Short answer 1"),
+        short_answer("Short answer 2"),
+        short_answer("Short answer 3"),
+    ]
+
+
 def service_with(response, results=None):
     rag = FakeRAG(results if results is not None else [hit()])
     llm = FakeLLM(response)
@@ -125,11 +145,12 @@ def test_cards_search_once_deduplicates_chunks_and_reconstructs_pdf_sources():
         [
             card("First", "A1", ["SRC-1"]),
             card("Second", "A2", ["SRC-2"]),
+            card("Third", "A3", ["SRC-1", "SRC-2"]),
         ],
     )
     generation, rag, llm = service_with(response, results)
 
-    drafts = generation.generate_cards("doc-1", "notes.pdf", 2)
+    drafts = generation.generate_cards("doc-1", "notes.pdf", 3)
 
     assert rag.calls == [
         (
@@ -175,6 +196,28 @@ def test_cards_search_once_deduplicates_chunks_and_reconstructs_pdf_sources():
                 }
             ],
         },
+        {
+            "front": "Third",
+            "back": "A3",
+            "sources": [
+                {
+                    "chunk_id": "chunk-1",
+                    "document_id": "doc-1",
+                    "document_name": "notes.pdf",
+                    "page_number": 7,
+                    "source_position": None,
+                    "preview": "x" * 240,
+                },
+                {
+                    "chunk_id": "chunk-2",
+                    "document_id": "doc-1",
+                    "document_name": "notes.pdf",
+                    "page_number": 9,
+                    "source_position": None,
+                    "preview": "second evidence",
+                },
+            ],
+        },
     ]
     assert all("source_ids" not in draft for draft in drafts)
 
@@ -190,10 +233,10 @@ def test_non_pdf_source_uses_source_position_and_chat_fallback():
             )
         ]
     )
-    llm = ChatOnlyLLM(payload("cards", [card()]))
+    llm = ChatOnlyLLM(payload("cards", three_cards()))
 
     drafts = LearningGenerationService(rag, llm).generate_cards(
-        "doc-1", "notes.md", 1
+        "doc-1", "notes.md", 3
     )
 
     assert len(llm.calls) == 1
@@ -214,17 +257,17 @@ def test_non_pdf_source_uses_source_position_and_chat_fallback():
         ),
         (
             "multiple_choice",
-            11,
-            [mcq(f"M{i}") for i in range(11)],
-            ["multiple_choice"] * 11,
+            10,
+            [mcq(f"M{i}") for i in range(10)],
+            ["multiple_choice"] * 10,
             30,
         ),
         (
             "short_answer",
-            4,
-            [short_answer(f"S{i}") for i in range(4)],
-            ["short_answer"] * 4,
-            12,
+            5,
+            [short_answer(f"S{i}") for i in range(5)],
+            ["short_answer"] * 5,
+            15,
         ),
     ],
 )
@@ -244,35 +287,44 @@ def test_exercise_kind_exact_count_split_and_search_limit(
 @pytest.mark.parametrize("kind", ["", "essay", None])
 def test_invalid_exercise_kind_fails_before_rag(kind):
     rag = FakeRAG([hit()])
-    llm = FakeLLM(payload("exercises", [mcq()]))
+    llm = FakeLLM(payload("exercises", three_mcqs()))
 
     with pytest.raises(LearningGenerationError, match="kind"):
         LearningGenerationService(rag, llm).generate_exercises(
-            "doc-1", "notes.pdf", 1, kind=kind
+            "doc-1", "notes.pdf", 3, kind=kind
         )
 
     assert rag.calls == []
     assert llm.calls == []
 
 
-@pytest.mark.parametrize("count", [0, -1, True, 1.5])
-def test_invalid_count_fails_before_rag(count):
+@pytest.mark.parametrize("method_name", ["generate_cards", "generate_exercises"])
+@pytest.mark.parametrize("count", [0, 1, 2, 4, 6, 11, True])
+def test_unsupported_count_fails_before_dependencies(method_name, count):
     rag = FakeRAG([hit()])
-    llm = FakeLLM(payload("cards", [card()]))
+    response = (
+        payload("cards", three_cards())
+        if method_name == "generate_cards"
+        else payload("exercises", three_mcqs())
+    )
+    llm = FakeLLM(response)
+    generation = LearningGenerationService(rag, llm)
 
     with pytest.raises(LearningGenerationError, match="count"):
-        LearningGenerationService(rag, llm).generate_cards(
-            "doc-1", "notes.pdf", count
-        )
+        getattr(generation, method_name)("doc-1", "notes.pdf", count)
 
     assert rag.calls == []
+    assert llm.calls == []
 
 
 @pytest.mark.parametrize(
     ("existing", "items"),
     [
-        ((" existing   front ",), [card("Existing Front")]),
-        ((), [card("Same"), card(" SAME ")]),
+        (
+            (" existing   front ",),
+            [card("Existing Front"), card("Other 1"), card("Other 2")],
+        ),
+        ((), [card("Same"), card(" SAME "), card("Other")]),
     ],
 )
 def test_card_duplicate_rejection_is_normalized_and_batch_atomic(existing, items):
@@ -280,7 +332,7 @@ def test_card_duplicate_rejection_is_normalized_and_batch_atomic(existing, items
 
     with pytest.raises(LearningGenerationError, match="duplicate"):
         generation.generate_cards(
-            "doc-1", "notes.pdf", len(items), existing_fronts=existing
+            "doc-1", "notes.pdf", 3, existing_fronts=existing
         )
 
     assert len(llm.calls) == 1
@@ -289,8 +341,11 @@ def test_card_duplicate_rejection_is_normalized_and_batch_atomic(existing, items
 @pytest.mark.parametrize(
     ("existing", "items"),
     [
-        ((" existing prompt ",), [mcq("Existing Prompt")]),
-        ((), [short_answer("Same"), mcq(" SAME ")]),
+        (
+            (" existing prompt ",),
+            [mcq("Existing Prompt"), mcq("Other 1"), short_answer("Other 2")],
+        ),
+        ((), [short_answer("Same"), mcq(" SAME "), short_answer("Other")]),
     ],
 )
 def test_exercise_duplicate_rejection_is_normalized_and_batch_atomic(
@@ -300,7 +355,7 @@ def test_exercise_duplicate_rejection_is_normalized_and_batch_atomic(
 
     with pytest.raises(LearningGenerationError, match="duplicate"):
         generation.generate_exercises(
-            "doc-1", "notes.pdf", len(items), existing_prompts=existing
+            "doc-1", "notes.pdf", 3, existing_prompts=existing
         )
 
     assert len(llm.calls) == 1
@@ -317,12 +372,12 @@ def test_exercise_duplicate_rejection_is_normalized_and_batch_atomic(
 )
 def test_card_unknown_missing_or_duplicate_source_ids_are_semantic_failures(bad_item):
     generation, _, llm = service_with(
-        payload("cards", [bad_item]),
+        payload("cards", three_cards(bad_item)),
     )
-    llm.responses.append(payload("cards", [card()]))
+    llm.responses.append(payload("cards", three_cards()))
 
     with pytest.raises(LearningGenerationError, match="source"):
-        generation.generate_cards("doc-1", "notes.pdf", 1)
+        generation.generate_cards("doc-1", "notes.pdf", 3)
 
     assert len(llm.calls) == 1
 
@@ -330,12 +385,12 @@ def test_card_unknown_missing_or_duplicate_source_ids_are_semantic_failures(bad_
 @pytest.mark.parametrize("bad_document_id", [None, "", "doc-2"])
 def test_retrieved_hit_must_belong_to_requested_document(bad_document_id):
     generation, _, llm = service_with(
-        payload("cards", [card()]),
+        payload("cards", three_cards()),
         [hit(document_id=bad_document_id)],
     )
 
     with pytest.raises(LearningGenerationError, match="document"):
-        generation.generate_cards("doc-1", "notes.pdf", 1)
+        generation.generate_cards("doc-1", "notes.pdf", 3)
 
     assert llm.calls == []
 
@@ -354,12 +409,12 @@ def test_retrieved_hit_must_belong_to_requested_document(bad_document_id):
 def test_multiple_choice_semantic_errors_never_trigger_repair(mutate):
     item = mcq()
     mutate(item)
-    generation, _, llm = service_with(payload("exercises", [item]))
-    llm.responses.append(payload("exercises", [mcq()]))
+    generation, _, llm = service_with(payload("exercises", three_mcqs(item)))
+    llm.responses.append(payload("exercises", three_mcqs()))
 
     with pytest.raises(LearningGenerationError):
         generation.generate_exercises(
-            "doc-1", "notes.pdf", 1, kind="multiple_choice"
+            "doc-1", "notes.pdf", 3, kind="multiple_choice"
         )
 
     assert len(llm.calls) == 1
@@ -378,12 +433,14 @@ def test_multiple_choice_semantic_errors_never_trigger_repair(mutate):
 def test_short_answer_semantic_errors_never_trigger_repair(mutate):
     item = short_answer()
     mutate(item)
-    generation, _, llm = service_with(payload("exercises", [item]))
-    llm.responses.append(payload("exercises", [short_answer()]))
+    generation, _, llm = service_with(
+        payload("exercises", three_short_answers(item))
+    )
+    llm.responses.append(payload("exercises", three_short_answers()))
 
     with pytest.raises(LearningGenerationError):
         generation.generate_exercises(
-            "doc-1", "notes.pdf", 1, kind="short_answer"
+            "doc-1", "notes.pdf", 3, kind="short_answer"
         )
 
     assert len(llm.calls) == 1
@@ -412,26 +469,26 @@ def test_wrong_count_or_mixed_split_is_semantic_and_never_repaired():
 )
 def test_card_wrong_count_is_semantic_and_never_repaired(response):
     generation, _, llm = service_with(response)
-    llm.responses.append(payload("cards", [card()]))
+    llm.responses.append(payload("cards", three_cards()))
 
     with pytest.raises(LearningGenerationError, match="count"):
-        generation.generate_cards("doc-1", "notes.pdf", 1)
+        generation.generate_cards("doc-1", "notes.pdf", 3)
 
     assert len(llm.calls) == 1
 
 
 def test_empty_or_failed_search_stops_before_llm():
-    llm = FakeLLM(payload("cards", [card()]))
+    llm = FakeLLM(payload("cards", three_cards()))
     empty_rag = FakeRAG([])
     failed_rag = FakeRAG([], success=False)
 
     with pytest.raises(LearningGenerationError, match="evidence"):
         LearningGenerationService(empty_rag, llm).generate_cards(
-            "doc-1", "notes.pdf", 1
+            "doc-1", "notes.pdf", 3
         )
     with pytest.raises(LearningGenerationError, match="RAG"):
         LearningGenerationService(failed_rag, llm).generate_cards(
-            "doc-1", "notes.pdf", 1
+            "doc-1", "notes.pdf", 3
         )
 
     assert llm.calls == []
@@ -440,10 +497,10 @@ def test_empty_or_failed_search_stops_before_llm():
 @pytest.mark.parametrize("response", ["[LLM未配置]", "[LLM调用失败] timeout"])
 def test_llm_failure_markers_are_direct_failures_without_repair(response):
     generation, _, llm = service_with(response)
-    llm.responses.append(payload("cards", [card()]))
+    llm.responses.append(payload("cards", three_cards()))
 
     with pytest.raises(LearningGenerationError, match="LLM"):
-        generation.generate_cards("doc-1", "notes.pdf", 1)
+        generation.generate_cards("doc-1", "notes.pdf", 3)
 
     assert len(llm.calls) == 1
 
@@ -452,13 +509,13 @@ def test_missing_llm_and_llm_exception_are_direct_failures():
     rag = FakeRAG([hit()])
     with pytest.raises(LearningGenerationError, match="LLM未配置"):
         LearningGenerationService(rag, None).generate_cards(
-            "doc-1", "notes.pdf", 1
+            "doc-1", "notes.pdf", 3
         )
 
     llm = FakeLLM(RuntimeError("secret transport details"))
     with pytest.raises(LearningGenerationError, match="LLM调用失败"):
         LearningGenerationService(rag, llm).generate_cards(
-            "doc-1", "notes.pdf", 1
+            "doc-1", "notes.pdf", 3
         )
     assert len(llm.calls) == 1
 
@@ -473,15 +530,15 @@ def test_missing_llm_and_llm_exception_are_direct_failures():
     ],
 )
 def test_json_syntax_or_root_shape_gets_exactly_one_repair(first_response):
-    repaired = "```json\n" + payload("cards", [card()]) + "\n```"
+    repaired = "```json\n" + payload("cards", three_cards()) + "\n```"
     rag = FakeRAG([hit()])
     llm = FakeLLM(first_response, repaired)
 
     drafts = LearningGenerationService(rag, llm).generate_cards(
-        "doc-1", "notes.pdf", 1
+        "doc-1", "notes.pdf", 3
     )
 
-    assert drafts[0]["front"] == "Question"
+    assert drafts[0]["front"] == "Question 1"
     assert len(rag.calls) == 1
     assert len(llm.calls) == 2
     assert "repair" in llm.calls[1].casefold()
@@ -490,10 +547,10 @@ def test_json_syntax_or_root_shape_gets_exactly_one_repair(first_response):
 def test_repair_is_attempted_at_most_once():
     generation, _, llm = service_with("not json")
     llm.responses.append("still not json")
-    llm.responses.append(payload("cards", [card()]))
+    llm.responses.append(payload("cards", three_cards()))
 
     with pytest.raises(LearningGenerationError, match="JSON"):
-        generation.generate_cards("doc-1", "notes.pdf", 1)
+        generation.generate_cards("doc-1", "notes.pdf", 3)
 
     assert len(llm.calls) == 2
 
@@ -505,8 +562,8 @@ def test_generation_has_no_persistence_dependency_or_side_effect():
 
     rag = SearchOnlyRAG([hit()])
     drafts = LearningGenerationService(
-        rag, FakeLLM(payload("cards", [card()]))
-    ).generate_cards("doc-1", "notes.pdf", 1)
+        rag, FakeLLM(payload("cards", three_cards()))
+    ).generate_cards("doc-1", "notes.pdf", 3)
 
     assert rag.calls[0][0] == "search"
     assert set(drafts[0]) == {"front", "back", "sources"}
