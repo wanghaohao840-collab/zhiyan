@@ -9,6 +9,7 @@ from __future__ import annotations
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -17,6 +18,9 @@ import pytest
 
 from app.coordination import UserMutationCoordinator
 from app.history import CorruptHistoryError, HistoryRepository
+from app.learning import LearningService
+from app.learning_generation import LearningGenerationService
+from app.learning_repository import LearningRepository
 from assistants.pdf_learning_assistant import PDFLearningAssistant
 
 
@@ -74,6 +78,8 @@ def _make_runtime(tmp_path, user_id="user-1"):
         history=history_repo,
         document_root=user_root / "documents",
     )
+    rag_tool = FakeTool()
+    learning_repository = LearningRepository(user_root / "learning.json", lock)
     return SimpleNamespace(
         paths=SimpleNamespace(
             root=user_root,
@@ -86,8 +92,11 @@ def _make_runtime(tmp_path, user_id="user-1"):
         coordinator=coordinator,
         history=history_repo,
         memory_tool=FakeTool(),
-        rag_tool=FakeTool(),
+        rag_tool=rag_tool,
         reports=None,
+        learning_repository=learning_repository,
+        learning_service=LearningService(learning_repository),
+        learning_generation_service=LearningGenerationService(rag_tool, object()),
     ), user_id
 
 
@@ -380,6 +389,106 @@ class TestAssistantCoordination:
         assert loaded["questions"] == []
         assert loaded["notes"] == [{"note": "keep-me"}]
         assert not src.exists()
+
+    def test_delete_document_cascades_learning_records(self, tmp_path):
+        runtime, user_id = _make_runtime(tmp_path)
+        runtime.history.update(lambda history: history["documents"].append({
+            "document_id": "doc-1",
+            "document_name": "One.md",
+            "document_path": str(runtime.paths.documents / "missing.md"),
+        }))
+        assistant = PDFLearningAssistant(user_id=user_id, runtime=runtime)
+        assistant.current_document_id = "doc-1"
+        runtime.learning_service.create_plan(
+            "doc-1", "One.md", "Delete me", date.today().isoformat(), 10
+        )
+
+        assistant.delete_current_document()
+        assistant.current_document_id = "doc-1"
+        second_result = assistant.delete_current_document()
+
+        assert runtime.learning_repository.load()["plans"] == []
+        assert "history synchronized" in second_result.lower()
+
+    def test_delete_reports_partial_failure_when_learning_cleanup_fails(self, tmp_path):
+        runtime, user_id = _make_runtime(tmp_path)
+        runtime.learning_service = MagicMock()
+        runtime.learning_service.delete_document.side_effect = RuntimeError("disk full")
+        runtime.history.update(lambda history: history["documents"].append({
+            "document_id": "doc-1",
+            "document_name": "One.md",
+            "document_path": str(runtime.paths.documents / "missing.md"),
+        }))
+        assistant = PDFLearningAssistant(user_id=user_id, runtime=runtime)
+        assistant.current_document_id = "doc-1"
+
+        result = assistant.delete_current_document()
+
+        assert runtime.history.load()["documents"] == []
+        assert "partial failure" in result.lower()
+        assert "learning cleanup" in result.lower()
+
+    def test_clear_reports_partial_failure_when_learning_cleanup_fails(self, tmp_path):
+        runtime, user_id = _make_runtime(tmp_path)
+        runtime.learning_service = MagicMock()
+        runtime.learning_service.clear_all.side_effect = RuntimeError("disk full")
+        runtime.learning_repository = MagicMock()
+        runtime.learning_generation_service = MagicMock()
+        runtime.history.update(lambda history: history["documents"].append({
+            "document_id": "doc-1",
+            "document_name": "One.md",
+            "document_path": str(runtime.paths.documents / "missing.md"),
+        }))
+        assistant = PDFLearningAssistant(user_id=user_id, runtime=runtime)
+        assistant.current_document_id = "doc-1"
+
+        result = assistant.clear_all_documents()
+
+        assert runtime.history.load()["documents"] == []
+        assert "partial failure" in result.lower()
+        assert "learning cleanup" in result.lower()
+
+    def test_clear_cascades_all_learning_records_and_is_idempotent(self, tmp_path):
+        runtime, user_id = _make_runtime(tmp_path)
+        runtime.history.update(lambda history: history["documents"].append({
+            "document_id": "doc-1",
+            "document_name": "One.md",
+            "document_path": str(runtime.paths.documents / "missing.md"),
+        }))
+        runtime.learning_service.create_plan(
+            "doc-1", "One.md", "Clear me", date.today().isoformat(), 10
+        )
+        assistant = PDFLearningAssistant(user_id=user_id, runtime=runtime)
+        assistant.current_document_id = "doc-1"
+
+        assistant.clear_all_documents()
+        second_result = assistant.clear_all_documents()
+
+        assert runtime.learning_repository.load()["plans"] == []
+        assert "history synchronized" in second_result.lower()
+
+    def test_active_import_guards_do_not_clean_learning_data(self, tmp_path):
+        runtime, user_id = _make_runtime(tmp_path)
+        runtime.import_task_service = SimpleNamespace(
+            has_active_task_for_document=MagicMock(return_value=True),
+            has_active_tasks=MagicMock(return_value=True),
+        )
+        runtime.learning_service = MagicMock()
+        runtime.history.update(lambda history: history["documents"].append({
+            "document_id": "doc-1",
+            "document_name": "One.md",
+            "document_path": str(runtime.paths.documents / "missing.md"),
+        }))
+        assistant = PDFLearningAssistant(user_id=user_id, runtime=runtime)
+        assistant.current_document_id = "doc-1"
+
+        delete_result = assistant.delete_current_document()
+        clear_result = assistant.clear_all_documents()
+
+        assert "import is active" in delete_result
+        assert "imports are active" in clear_result
+        runtime.learning_service.delete_document.assert_not_called()
+        runtime.learning_service.clear_all.assert_not_called()
 
     def test_structured_question_scope_committed_after_generation(self, tmp_path):
         """After ask(), the history question record carries document_ids,

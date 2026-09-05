@@ -6,6 +6,9 @@ from threading import RLock
 
 from app.coordination import UserMutationCoordinator
 from app.history import HistoryRepository
+from app.learning import LearningService
+from app.learning_generation import LearningGenerationService
+from app.learning_repository import LearningRepository
 from app.memory_repository import MemorySnapshotRepository
 from app.recovery import RecoveryService
 from app.reports import ReportService
@@ -26,6 +29,9 @@ class UserRuntime:
     history: HistoryRepository
     reports: ReportService
     recovery: RecoveryService
+    learning_repository: LearningRepository
+    learning_service: LearningService
+    learning_generation_service: LearningGenerationService
     active_session_count: int = 0
     active_background_count: int = 0
     import_task_service: object | None = None
@@ -92,21 +98,30 @@ class UserRuntimeRegistry:
                 backup_dir=backup_dir,
                 memory_manager=memory_tool.memory_manager,
             )
+            rag_tool = RAGTool(
+                knowledge_base_path=str(paths.rag_cache.parent),
+                collection_name="pdf_learning_collection",
+                rag_namespace=f"pdf_{user_id}",
+                cache_path=str(paths.rag_cache),
+            )
+            learning_repository = LearningRepository(
+                paths.root / "learning.json", user_lock
+            )
             runtime = UserRuntime(
                 user_id=user_id,
                 paths=paths,
                 lock=user_lock,
                 coordinator=coordinator,
-                rag_tool=RAGTool(
-                    knowledge_base_path=str(paths.rag_cache.parent),
-                    collection_name="pdf_learning_collection",
-                    rag_namespace=f"pdf_{user_id}",
-                    cache_path=str(paths.rag_cache),
-                ),
+                rag_tool=rag_tool,
                 memory_tool=memory_tool,
                 history=history_repo,
                 reports=ReportService(self.db_path, self.storage),
                 recovery=recovery,
+                learning_repository=learning_repository,
+                learning_service=LearningService(learning_repository),
+                learning_generation_service=LearningGenerationService(
+                    rag_tool, rag_tool.llm
+                ),
                 import_task_service=self.import_task_service,
             )
             self._runtimes[user_id] = runtime

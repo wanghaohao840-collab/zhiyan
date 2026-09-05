@@ -9,6 +9,9 @@ from threading import RLock
 from typing import Optional, Dict, Any, Sequence
 
 from app.history import HistoryRepository
+from app.learning import LearningService
+from app.learning_generation import LearningGenerationService
+from app.learning_repository import LearningRepository
 from app.summary_tasks import SummaryTaskManager
 from hello_agents.memory.base import MemoryConfig
 from hello_agents.memory.rag.result_utils import (
@@ -97,6 +100,28 @@ class PDFLearningAssistant:
                 collection_name="pdf_learning_collection",
                 rag_namespace=f"pdf_{user_id}",
                 cache_path=str(self.rag_dir / "rag_cache.json"),
+            )
+
+        runtime_learning_repository = getattr(runtime, "learning_repository", None)
+        runtime_learning_service = getattr(runtime, "learning_service", None)
+        runtime_learning_generation_service = getattr(
+            runtime, "learning_generation_service", None
+        )
+        if (
+            runtime_learning_repository is not None
+            and runtime_learning_service is not None
+            and runtime_learning_generation_service is not None
+        ):
+            self.learning_repository = runtime_learning_repository
+            self.learning_service = runtime_learning_service
+            self.learning_generation_service = runtime_learning_generation_service
+        else:
+            self.learning_repository = LearningRepository(
+                self.runtime_dir / "learning.json", self._write_lock
+            )
+            self.learning_service = LearningService(self.learning_repository)
+            self.learning_generation_service = LearningGenerationService(
+                self.rag_tool, getattr(self.rag_tool, "llm", None)
             )
 
         self.current_document: Optional[str] = None
@@ -790,6 +815,136 @@ class PDFLearningAssistant:
         with self._write_lock:
             return self.memory_tool.execute(action, **kwargs)
 
+    def _require_learning_document(
+        self, expected_document_id: Optional[str] = None
+    ) -> tuple[str, str]:
+        """Reload and validate this session's selected document under its user lock."""
+
+        with self._write_lock:
+            document_id = self.current_document_id
+            if expected_document_id is not None and document_id != expected_document_id:
+                raise ValueError("current document changed during learning generation")
+            latest = self._load_history()
+            self.history = latest
+            document = next(
+                (
+                    item
+                    for item in latest.get("documents", [])
+                    if item.get("document_id") == document_id
+                ),
+                None,
+            )
+            if document is None:
+                raise ValueError("current document is not available")
+            document_name = (
+                document.get("document_name")
+                or Path(document.get("document_path", "")).name
+                or document_id
+            )
+            return document_id, document_name
+
+    def get_learning_plans(self) -> list[dict]:
+        with self._write_lock:
+            document_id, _ = self._require_learning_document()
+            return self.learning_service.list_plans(document_id)
+
+    def create_learning_plan(
+        self, title: str, target_date: str, daily_minutes: int
+    ) -> dict:
+        with self._write_lock:
+            document_id, document_name = self._require_learning_document()
+            return self.learning_service.create_plan(
+                document_id, document_name, title, target_date, daily_minutes
+            )
+
+    def set_learning_task_completed(
+        self, plan_id: str, task_id: str, completed: bool
+    ) -> dict:
+        with self._write_lock:
+            document_id, _ = self._require_learning_document()
+            return self.learning_service.set_task_completed(
+                document_id, plan_id, task_id, completed
+            )
+
+    def get_learning_dashboard(self) -> dict:
+        with self._write_lock:
+            document_id, _ = self._require_learning_document()
+            return self.learning_service.dashboard(document_id)
+
+    def get_learning_cards(self) -> list[dict]:
+        with self._write_lock:
+            document_id, _ = self._require_learning_document()
+            return self.learning_service.list_cards(document_id)
+
+    def generate_learning_cards(self, count: int) -> list[dict]:
+        with self._write_lock:
+            document_id, document_name = self._require_learning_document()
+            existing_fronts = self.learning_service.existing_card_fronts(document_id)
+
+        drafts = self.learning_generation_service.generate_cards(
+            document_id,
+            document_name,
+            count,
+            existing_fronts=existing_fronts,
+        )
+
+        with self._write_lock:
+            self._require_learning_document(document_id)
+            return self.learning_service.save_cards(
+                document_id, document_name, drafts
+            )
+
+    def review_learning_card(self, card_id: str, rating: str) -> dict:
+        with self._write_lock:
+            document_id, _ = self._require_learning_document()
+            return self.learning_service.review_card(document_id, card_id, rating)
+
+    def get_learning_exercises(self) -> list[dict]:
+        with self._write_lock:
+            document_id, _ = self._require_learning_document()
+            return self.learning_service.list_exercises(document_id)
+
+    def generate_learning_exercises(
+        self, count: int, kind: str = "mixed"
+    ) -> list[dict]:
+        with self._write_lock:
+            document_id, document_name = self._require_learning_document()
+            existing_prompts = self.learning_service.existing_exercise_prompts(
+                document_id
+            )
+
+        drafts = self.learning_generation_service.generate_exercises(
+            document_id,
+            document_name,
+            count,
+            kind=kind,
+            existing_prompts=existing_prompts,
+        )
+
+        with self._write_lock:
+            self._require_learning_document(document_id)
+            return self.learning_service.save_exercises(
+                document_id, document_name, drafts
+            )
+
+    def answer_learning_multiple_choice(
+        self, exercise_id: str, selected_index: int
+    ) -> dict:
+        with self._write_lock:
+            document_id, _ = self._require_learning_document()
+            return self.learning_service.answer_multiple_choice(
+                document_id, exercise_id, selected_index
+            )
+
+    def review_learning_short_answer(
+        self, exercise_id: str, rating: str, user_answer: str
+    ) -> dict:
+        with self._write_lock:
+            document_id, _ = self._require_learning_document()
+            return self.learning_service.review_short_answer(
+                document_id, exercise_id, rating, user_answer
+            )
+
     def get_documents(self):
         """获取历史导入过的文档列表，用于 Gradio 下拉框"""
 
@@ -924,6 +1079,14 @@ class PDFLearningAssistant:
                 else:
                     path.unlink()
 
+            learning_cleanup_error = None
+            learning_service = getattr(self, "learning_service", None)
+            if learning_service is not None:
+                try:
+                    learning_service.delete_document(document_id)
+                except Exception as exc:
+                    learning_cleanup_error = exc
+
         result = (
             f"{rag_result}\n\nHistory synchronized\n"
             f"- documents removed: {removed_docs}\n"
@@ -933,6 +1096,11 @@ class PDFLearningAssistant:
             result += (
                 "\n- ⚠️ source files outside user root were not deleted: "
                 + ", ".join(str(p) for p in skipped_paths)
+            )
+        if learning_cleanup_error is not None:
+            result += (
+                "\n- ⚠️ partial failure: learning cleanup failed: "
+                f"{learning_cleanup_error}"
             )
         return result
 
@@ -963,6 +1131,14 @@ class PDFLearningAssistant:
                 else:
                     path.unlink()
 
+            learning_cleanup_error = None
+            learning_service = getattr(self, "learning_service", None)
+            if learning_service is not None:
+                try:
+                    learning_service.clear_all()
+                except Exception as exc:
+                    learning_cleanup_error = exc
+
             self.current_document = None
             self.current_document_id = None
             self.stats["documents_loaded"] = 0
@@ -977,6 +1153,11 @@ class PDFLearningAssistant:
             result += (
                 "\n- ⚠️ source files outside user root were not deleted: "
                 + ", ".join(str(p) for p in skipped_paths)
+            )
+        if learning_cleanup_error is not None:
+            result += (
+                "\n- ⚠️ partial failure: learning cleanup failed: "
+                f"{learning_cleanup_error}"
             )
         return result
 
