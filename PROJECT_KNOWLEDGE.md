@@ -135,6 +135,7 @@
 - Gradio“8. 学习中心”提供今日任务、学习计划、知识卡片、练习题；每次生成仅限一篇文档，数量为 3/5/10，简答题由用户自评。
 - 学习数据不进入 Memory，也不修改既有问答统计。删除文档时清理对应学习数据，失败须报告部分失败。
 - 两用户离线闭环验收：`tests/integration/test_learning_mvp_acceptance.py`，覆盖实际生成服务、来源持久化、复习、重读及删除隔离。
+- 2026-09-06 验收：全量 988 passed、7 skipped；最终修复另通过 RAG 58 项及鉴权 21 项定向回归。完整范围和环境限制见 `docs/superpowers/plans/2026-09-06-learning-mvp-acceptance.md`。
 
 ### 工程升级（优先）
 
