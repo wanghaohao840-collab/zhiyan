@@ -3,6 +3,7 @@ import json
 import sys
 import atexit
 import re
+from functools import wraps
 from datetime import datetime
 from pathlib import Path
 
@@ -12,6 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from assistants.document_selection import primary_document_label
+from assistants.pdf_learning_assistant import CorruptLearningDataError, LearningGenerationError
 from app.database import initialize_database
 from app.session import InvalidSessionError, SessionRegistry
 from app.storage import UserStorage
@@ -519,6 +521,27 @@ def clear_all_pdfs(session_token):
     )
 
 
+def _learning_errors(handler):
+    @wraps(handler)
+    def wrapped(*args, **kwargs):
+        try:
+            return handler(*args, **kwargs)
+        except CorruptLearningDataError as exc:
+            raise gr.Error("学习数据需要恢复，原文件已保留。请联系管理员从备份恢复 learning.json 后重试。") from exc
+        except LearningGenerationError as exc:
+            message = str(exc)
+            if "[LLM未配置]" in message:
+                detail = "请先配置可用的语言模型。"
+            elif "[LLM调用失败]" in message:
+                detail = "语言模型调用失败，请检查配置与连接后重试。"
+            else:
+                detail = "请确认文档已完成索引且有可用内容后重试。"
+            raise gr.Error("学习材料生成失败，未保存本批内容。" + detail) from exc
+        except OSError as exc:
+            raise gr.Error("学习数据读写失败，请检查磁盘空间和文件权限后重试。") from exc
+    return wrapped
+
+
 def _select_learning_document(assistant, selected):
     if not isinstance(selected, str) or not selected.strip():
         raise gr.Error("请选择一个学习文档")
@@ -559,6 +582,7 @@ def clear_learning_interaction():
             "", None, 30, False, empty(), "")
 
 
+@_learning_errors
 def learning_plan_choices(session_token, selected):
     assistant = _require_assistant(session_token)
     _select_learning_document(assistant, selected)
@@ -566,6 +590,7 @@ def learning_plan_choices(session_token, selected):
     return gr.update(choices=[(p["title"], p["id"]) for p in plans], value=None), gr.update(choices=[], value=None)
 
 
+@_learning_errors
 def learning_task_choices(session_token, selected, plan_id):
     assistant = _require_assistant(session_token)
     _select_learning_document(assistant, selected)
@@ -610,6 +635,7 @@ def _task_rows(plans, tasks=None):
     return [[task["due_date"], task["phase"], task["title"], task["duration_minutes"], "是" if task.get("completed") else "否", plan_by_task.get(task["id"], {}).get("id", ""), task["id"]] for task in items]
 
 
+@_learning_errors
 def refresh_learning_dashboard(session_token, selected):
     assistant = _require_assistant(session_token)
     _select_learning_document(assistant, selected)
@@ -630,6 +656,7 @@ def refresh_learning_dashboard(session_token, selected):
     return summary, _task_rows(dashboard["plans"], tasks), due
 
 
+@_learning_errors
 def refresh_learning_plans(session_token, selected):
     assistant = _require_assistant(session_token)
     _select_learning_document(assistant, selected)
@@ -637,6 +664,7 @@ def refresh_learning_plans(session_token, selected):
     return _plan_rows(plans), _task_rows(plans), ""
 
 
+@_learning_errors
 def create_learning_plan(session_token, selected, title, target_date, daily_minutes):
     assistant = _require_assistant(session_token)
     _select_learning_document(assistant, selected)
@@ -645,17 +673,22 @@ def create_learning_plan(session_token, selected, title, target_date, daily_minu
             target_date = datetime.fromisoformat(target_date).date().isoformat()
         assistant.create_learning_plan(title, target_date, daily_minutes)
         plans = assistant.get_learning_plans()
+    except (CorruptLearningDataError, LearningGenerationError):
+        raise
     except (ValueError, TypeError) as exc:
         raise gr.Error("创建失败，请检查计划名称、目标日期和每日分钟数") from exc
     return "计划已创建", _plan_rows(plans), _task_rows(plans)
 
 
+@_learning_errors
 def set_learning_task_completed(session_token, selected, plan_id, task_id, completed):
     assistant = _require_assistant(session_token)
     _select_learning_document(assistant, selected)
     try:
         assistant.set_learning_task_completed(plan_id, task_id, bool(completed))
         plans = assistant.get_learning_plans()
+    except (CorruptLearningDataError, LearningGenerationError):
+        raise
     except (ValueError, KeyError) as exc:
         raise gr.Error("任务不可用，请刷新计划后重试") from exc
     return "任务已更新", _plan_rows(plans), _task_rows(plans)
@@ -665,12 +698,14 @@ def _card_choices(cards):
     return [(card["front"], card["id"]) for card in cards]
 
 
+@_learning_errors
 def refresh_learning_cards(session_token, selected):
     assistant = _require_assistant(session_token)
     _select_learning_document(assistant, selected)
     return gr.update(choices=_card_choices(assistant.get_learning_cards()), value=None), "", "", ""
 
 
+@_learning_errors
 def generate_learning_cards(session_token, selected, count):
     assistant = _require_assistant(session_token)
     _select_learning_document(assistant, selected)
@@ -679,11 +714,14 @@ def generate_learning_cards(session_token, selected, count):
     try:
         assistant.generate_learning_cards(count)
         cards = assistant.get_learning_cards()
+    except (CorruptLearningDataError, LearningGenerationError):
+        raise
     except (ValueError, TypeError) as exc:
         raise gr.Error("卡片生成失败，请检查文档内容与生成数量后重试") from exc
     return f"已生成 {int(count)} 张卡片", gr.update(choices=_card_choices(cards), value=None), "", "", ""
 
 
+@_learning_errors
 def select_learning_card(session_token, selected, card_id):
     assistant = _require_assistant(session_token)
     if not card_id:
@@ -695,6 +733,7 @@ def select_learning_card(session_token, selected, card_id):
     return card["front"], "", "", ""
 
 
+@_learning_errors
 def reveal_learning_card(session_token, selected, card_id):
     assistant = _require_assistant(session_token)
     _select_learning_document(assistant, selected)
@@ -704,6 +743,7 @@ def reveal_learning_card(session_token, selected, card_id):
     return card["back"], _source_text(card["sources"]), card["id"]
 
 
+@_learning_errors
 def review_learning_card(session_token, selected, card_id, revealed_card_id, rating):
     assistant = _require_assistant(session_token)
     _select_learning_document(assistant, selected)
@@ -711,6 +751,8 @@ def review_learning_card(session_token, selected, card_id, revealed_card_id, rat
         raise gr.Error("Reveal this exact card before rating it")
     try:
         card = assistant.review_learning_card(card_id, rating)
+    except (CorruptLearningDataError, LearningGenerationError):
+        raise
     except (ValueError, KeyError) as exc:
         raise gr.Error("卡片评分失败，请重新选择并查看答案") from exc
     return f"下次复习：{card['schedule']['due_at']}", ""
@@ -720,12 +762,14 @@ def _exercise_choices(exercises):
     return [(exercise["prompt"], exercise["id"]) for exercise in exercises]
 
 
+@_learning_errors
 def refresh_learning_exercises(session_token, selected):
     assistant = _require_assistant(session_token)
     _select_learning_document(assistant, selected)
     return gr.update(choices=_exercise_choices(assistant.get_learning_exercises()), value=None), "", gr.update(choices=[], value=None), "", "", ""
 
 
+@_learning_errors
 def generate_learning_exercises(session_token, selected, count, kind):
     assistant = _require_assistant(session_token)
     _select_learning_document(assistant, selected)
@@ -734,11 +778,14 @@ def generate_learning_exercises(session_token, selected, count, kind):
     try:
         assistant.generate_learning_exercises(count, kind or "mixed")
         exercises = assistant.get_learning_exercises()
+    except (CorruptLearningDataError, LearningGenerationError):
+        raise
     except (ValueError, TypeError) as exc:
         raise gr.Error("练习生成失败，请检查文档内容与生成数量后重试") from exc
     return f"已生成 {int(count)} 道练习", gr.update(choices=_exercise_choices(exercises), value=None), "", gr.update(choices=[], value=None), "", "", ""
 
 
+@_learning_errors
 def select_learning_exercise(session_token, selected, exercise_id):
     assistant = _require_assistant(session_token)
     if not exercise_id:
@@ -751,6 +798,7 @@ def select_learning_exercise(session_token, selected, exercise_id):
     return exercise["prompt"], gr.update(choices=[(text, index) for index, text in enumerate(options)], value=None), "", "", ""
 
 
+@_learning_errors
 def submit_learning_multiple_choice(session_token, selected, exercise_id, selected_index):
     assistant = _require_assistant(session_token)
     _select_learning_document(assistant, selected)
@@ -758,6 +806,8 @@ def submit_learning_multiple_choice(session_token, selected, exercise_id, select
         raise gr.Error("Please select an answer")
     try:
         result = assistant.answer_learning_multiple_choice(exercise_id, selected_index)
+    except (CorruptLearningDataError, LearningGenerationError):
+        raise
     except (ValueError, TypeError, KeyError) as exc:
         raise gr.Error("答案提交失败，请刷新题目后重试") from exc
     exercise = result["exercise"]
@@ -765,6 +815,7 @@ def submit_learning_multiple_choice(session_token, selected, exercise_id, select
     return f"{status}\n\n{result['explanation']}\n\n{_source_text(exercise['sources'])}\n\nNext review: {exercise['schedule']['due_at']}"
 
 
+@_learning_errors
 def reveal_learning_short_answer(session_token, selected, exercise_id, user_answer):
     assistant = _require_assistant(session_token)
     _select_learning_document(assistant, selected)
@@ -777,6 +828,7 @@ def reveal_learning_short_answer(session_token, selected, exercise_id, user_answ
     return reference, exercise["id"]
 
 
+@_learning_errors
 def review_learning_short_answer(session_token, selected, exercise_id, revealed_exercise_id, rating, user_answer):
     assistant = _require_assistant(session_token)
     _select_learning_document(assistant, selected)
@@ -784,6 +836,8 @@ def review_learning_short_answer(session_token, selected, exercise_id, revealed_
         raise gr.Error("Reveal this exact reference answer before rating it")
     try:
         exercise = assistant.review_learning_short_answer(exercise_id, rating, user_answer)
+    except (CorruptLearningDataError, LearningGenerationError):
+        raise
     except (ValueError, KeyError) as exc:
         raise gr.Error("练习评分失败，请重新选择并查看参考答案") from exc
     return f"下次复习：{exercise['schedule']['due_at']}", ""

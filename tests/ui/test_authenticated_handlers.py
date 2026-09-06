@@ -83,7 +83,7 @@ STATE_CHANGING_HANDLERS = [
     ("review_learning_short_answer", lambda token: (token, "Doc | doc", "exercise", "exercise", "fuzzy", "answer")),
 ]
 
-LEARNING_MUTATION_HANDLERS = STATE_CHANGING_HANDLERS[-8:]
+LEARNING_MUTATION_HANDLERS = [item for item in STATE_CHANGING_HANDLERS if "learning" in item[0]]
 
 
 AUTHENTICATED_READ_HANDLERS = [
@@ -320,7 +320,7 @@ class TestRejectedTokenNoStateChange:
         token = isolated.register("LearningAuthTest", "correct horse battery")
         assistant = isolated.get_session(token).assistant
         learning_path = assistant.learning_repository.path
-        assistant.learning_repository.load()
+        assistant.learning_repository.save(assistant.learning_repository.load())
         original = learning_path.read_bytes() if learning_path.exists() else None
         rejected = "" if token_kind == "missing" else "forged-token"
         if token_kind == "expired":

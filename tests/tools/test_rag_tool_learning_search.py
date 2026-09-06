@@ -1,6 +1,28 @@
 from hello_agents.tools.builtin import rag_tool as rag_tool_module
 
 
+def test_concurrent_action_envelopes_remain_request_local():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    tool = rag_tool_module.RAGTool.__new__(rag_tool_module.RAGTool)
+    tool.qdrant_api_key = None
+    published = Barrier(2)
+
+    def execute(action, **kwargs):
+        request = kwargs["document_id"]
+        tool._last_action_data = {"success": True, "results": [request]}
+        published.wait(timeout=5)
+        return "ok"
+
+    tool.execute = execute
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(tool.execute_result, "search", document_id="first")
+        second = pool.submit(tool.execute_result, "search", document_id="second")
+        assert first.result().data["results"] == ["first"]
+        assert second.result().data["results"] == ["second"]
+
+
 class SearchPipeline:
     def __init__(self, results):
         self.results = results

@@ -10,8 +10,8 @@ from typing import Optional, Dict, Any, Sequence
 
 from app.history import HistoryRepository
 from app.learning import LearningService
-from app.learning_generation import LearningGenerationService
-from app.learning_repository import LearningRepository
+from app.learning_generation import LearningGenerationError, LearningGenerationService
+from app.learning_repository import CorruptLearningDataError, LearningRepository
 from app.summary_tasks import SummaryTaskManager
 from hello_agents.memory.base import MemoryConfig
 from hello_agents.memory.rag.result_utils import (
@@ -1100,7 +1100,7 @@ class PDFLearningAssistant:
         if learning_cleanup_error is not None:
             result += (
                 "\n- ⚠️ partial failure: learning cleanup failed: "
-                f"{learning_cleanup_error}"
+                "学习数据清理未完成，请从备份恢复学习数据后重试；原文件已保留。"
             )
         return result
 
@@ -1157,7 +1157,7 @@ class PDFLearningAssistant:
         if learning_cleanup_error is not None:
             result += (
                 "\n- ⚠️ partial failure: learning cleanup failed: "
-                f"{learning_cleanup_error}"
+                "学习数据清理未完成，请从备份恢复学习数据后重试；原文件已保留。"
             )
         return result
 

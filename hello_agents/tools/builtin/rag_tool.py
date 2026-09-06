@@ -9,7 +9,7 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from threading import RLock
+from threading import RLock, local
 from typing import Dict, Any, List, Optional
 
 from hello_agents.tools.base import Tool
@@ -67,6 +67,23 @@ class RAGTool(Tool):
 
     SUMMARY_CACHE_PROMPT_VERSION = "document-summary-v1"
     SUMMARY_CACHE_MAX_ENTRIES = 256
+
+    @property
+    def _last_action_data(self):
+        state = self.__dict__.setdefault("_action_state", local())
+        return getattr(state, "data", {})
+
+    @_last_action_data.setter
+    def _last_action_data(self, value):
+        self.__dict__.setdefault("_action_state", local()).data = value
+
+    @property
+    def _last_action_error(self):
+        return getattr(self.__dict__.setdefault("_action_state", local()), "error", None)
+
+    @_last_action_error.setter
+    def _last_action_error(self, value):
+        self.__dict__.setdefault("_action_state", local()).error = value
 
     def __init__(
         self,

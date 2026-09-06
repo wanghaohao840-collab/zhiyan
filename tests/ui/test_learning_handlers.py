@@ -17,6 +17,28 @@ SOURCE = {
 }
 
 
+@pytest.mark.parametrize("handler,args,method", [
+    ("refresh_learning_cards", (), "get_learning_cards"),
+    ("generate_learning_cards", (3,), "generate_learning_cards"),
+    ("create_learning_plan", ("Plan", "2026-09-06", 30), "create_learning_plan"),
+])
+def test_corruption_gives_recovery_guidance(assistant, handler, args, method):
+    def corrupt(*args):
+        raise app.CorruptLearningDataError("private/path/file.json")
+    setattr(assistant, method, corrupt)
+    with pytest.raises(gr.Error, match="学习数据需要恢复") as error:
+        getattr(app, handler)("token", "One.pdf | doc-1", *args)
+    assert "private/path" not in str(error.value)
+
+
+def test_missing_llm_has_actionable_message(assistant):
+    def unconfigured(*args):
+        raise app.LearningGenerationError("[LLM未配置]")
+    assistant.generate_learning_cards = unconfigured
+    with pytest.raises(gr.Error, match="配置可用的语言模型"):
+        app.generate_learning_cards("token", "One.pdf | doc-1", 3)
+
+
 class Assistant:
     current_document_id = "doc-1"
 
