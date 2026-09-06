@@ -113,6 +113,10 @@ def _empty_dropdowns():
     return gr.update(choices=[], value=[]), gr.update(choices=[], value=[])
 
 
+def _empty_learning_dropdown():
+    return gr.update(choices=[], value=None)
+
+
 def _get_current_dropdown_value(session_token):
     """根据 current_document_id 找到下拉框当前值"""
 
@@ -136,10 +140,11 @@ def register_user(username, password):
         session = session_registry.get_session(token)
         choices, current_value = _get_current_dropdown_value(token)
         update = gr.update(choices=choices, value=[current_value] if current_value else [])
-        return token, f"Logged in as {session.username}", update, update
+        learning_update = gr.update(choices=choices, value=current_value)
+        return token, f"Logged in as {session.username}", update, update, learning_update
     except Exception as exc:
         empty_ask, empty_search = _empty_dropdowns()
-        return "", f"Register failed: {exc}", empty_ask, empty_search
+        return "", f"Register failed: {exc}", empty_ask, empty_search, _empty_learning_dropdown()
 
 
 def login_user(username, password):
@@ -148,17 +153,18 @@ def login_user(username, password):
         session = session_registry.get_session(token)
         choices, current_value = _get_current_dropdown_value(token)
         update = gr.update(choices=choices, value=[current_value] if current_value else [])
-        return token, f"Logged in as {session.username}", update, update
+        learning_update = gr.update(choices=choices, value=current_value)
+        return token, f"Logged in as {session.username}", update, update, learning_update
     except Exception as exc:
         empty_ask, empty_search = _empty_dropdowns()
-        return "", f"Login failed: {exc}", empty_ask, empty_search
+        return "", f"Login failed: {exc}", empty_ask, empty_search, _empty_learning_dropdown()
 
 
 def logout_user(session_token):
     _require_session(session_token)
     session_registry.logout(session_token)
     empty_ask, empty_search = _empty_dropdowns()
-    return "", "Logged out", empty_ask, empty_search
+    return "", "Logged out", empty_ask, empty_search, _empty_learning_dropdown()
 
 
 def upload_document(session_token, file):
@@ -289,12 +295,14 @@ def submit_import_batch(session_token, files, progress=gr.Progress()):
     except (ValueError, KeyError) as exc:
         raise gr.Error(str(exc))
     document_update = gr.update()
+    learning_update = gr.update()
     try:
         choices, current_value = _get_current_dropdown_value(session_token)
         document_update = gr.update(
             choices=choices,
             value=[current_value] if current_value else [],
         )
+        learning_update = gr.update(choices=choices, value=current_value)
     except gr.Error:
         raise
     return (
@@ -302,6 +310,8 @@ def submit_import_batch(session_token, files, progress=gr.Progress()):
         format_batch_summary(summary),
         format_task_table(summary),
         document_update,
+        document_update,
+        learning_update,
         "",
     )
 
@@ -455,6 +465,7 @@ def delete_current_pdf(session_token, selected=None):
                 "❌ 删除当前文档只能选择 1 篇文档",
                 gr.update(),
                 gr.update(),
+                gr.update(),
                 "",
                 "",
             )
@@ -468,6 +479,7 @@ def delete_current_pdf(session_token, selected=None):
         choices=choices,
         value=[current_value] if current_value else []
     )
+    learning_update = gr.update(choices=choices, value=current_value)
 
     empty_status = ""
 
@@ -475,6 +487,7 @@ def delete_current_pdf(session_token, selected=None):
         result,
         dropdown_update,
         dropdown_update,
+        learning_update,
         empty_status,
         empty_status,
     )
@@ -492,6 +505,7 @@ def clear_all_pdfs(session_token):
         choices=choices,
         value=[current_value] if current_value else []
     )
+    learning_update = gr.update(choices=choices, value=current_value)
 
     empty_status = ""
 
@@ -499,9 +513,280 @@ def clear_all_pdfs(session_token):
         result,
         dropdown_update,
         dropdown_update,
+        learning_update,
         empty_status,
         empty_status,
     )
+
+
+def _select_learning_document(assistant, selected):
+    if not isinstance(selected, str) or not selected.strip():
+        raise gr.Error("请选择一个学习文档")
+    try:
+        label = primary_document_label(selected)
+    except ValueError as exc:
+        raise gr.Error("Please select one learning document") from exc
+    try:
+        assistant.select_document(label)
+    except (ValueError, KeyError) as exc:
+        raise gr.Error("学习文档不可用，请刷新后重试") from exc
+    return label
+
+
+def refresh_learning_documents(session_token, selected=None):
+    assistant = _require_assistant(session_token)
+    choices = assistant.get_documents()
+    value = selected if selected in choices else None
+    if value is None and assistant.current_document_id:
+        value = next(
+            (choice for choice in choices if choice.endswith(assistant.current_document_id)),
+            None,
+        )
+    return (gr.update(choices=choices, value=value), *clear_learning_interaction())
+
+
+def select_learning_document(session_token, selected):
+    assistant = _require_assistant(session_token)
+    if selected:
+        _select_learning_document(assistant, selected)
+    return clear_learning_interaction()
+
+
+def clear_learning_interaction():
+    empty = lambda: gr.update(choices=[], value=None)
+    return ("", "", "", empty(), empty(), "", "", "", "", "", "",
+            "", "", "", "", "", "", [], [], [], [], empty(), empty(),
+            "", None, 30, False, empty(), "")
+
+
+def learning_plan_choices(session_token, selected):
+    assistant = _require_assistant(session_token)
+    _select_learning_document(assistant, selected)
+    plans = assistant.get_learning_plans()
+    return gr.update(choices=[(p["title"], p["id"]) for p in plans], value=None), gr.update(choices=[], value=None)
+
+
+def learning_task_choices(session_token, selected, plan_id):
+    assistant = _require_assistant(session_token)
+    _select_learning_document(assistant, selected)
+    plan = next((p for p in assistant.get_learning_plans() if p["id"] == plan_id), None)
+    return gr.update(choices=[(f"{t['due_date']} · {t['title']}", t["id"]) for t in plan["tasks"]] if plan else [], value=None)
+
+
+def _source_text(sources):
+    if not sources:
+        return "暂无来源"
+    lines = []
+    for source in sources:
+        location = (
+            f"第 {source['page_number']} 页"
+            if source.get("page_number") is not None
+            else source.get("source_position") or "位置未知"
+        )
+        lines.append(
+            f"- {source.get('document_name', '')} · {location}\n  {source.get('preview', '')}"
+        )
+    return "\n".join(lines)
+
+
+def _plan_rows(plans):
+    rows = []
+    for plan in plans:
+        tasks = plan.get("tasks", [])
+        completed = sum(bool(task.get("completed")) for task in tasks)
+        rows.append([plan["title"], plan["target_date"], plan["daily_minutes"], plan["status"], f"{completed}/{len(tasks)}", plan["id"]])
+    return rows
+
+
+def _task_rows(plans, tasks=None):
+    plan_by_task = {
+        task["id"]: plan for plan in plans for task in plan.get("tasks", [])
+    }
+    selected_tasks = tasks if tasks is not None else list(plan_by_task)
+    if tasks is None:
+        items = [task for plan in plans for task in plan.get("tasks", [])]
+    else:
+        items = tasks
+    return [[task["due_date"], task["phase"], task["title"], task["duration_minutes"], "是" if task.get("completed") else "否", plan_by_task.get(task["id"], {}).get("id", ""), task["id"]] for task in items]
+
+
+def refresh_learning_dashboard(session_token, selected):
+    assistant = _require_assistant(session_token)
+    _select_learning_document(assistant, selected)
+    dashboard = assistant.get_learning_dashboard()
+    summary = (
+        f"完成率：{dashboard['completion_rate']:.0%}　"
+        f"今日任务：{len(dashboard['today_tasks'])}　"
+        f"到期复习：{len(dashboard['due_cards']) + len(dashboard['due_exercises'])}"
+    )
+    tasks = dashboard["overdue_tasks"] + dashboard["today_tasks"]
+    due = [
+        ["卡片", item["front"], item["schedule"]["due_at"], item["id"]]
+        for item in dashboard["due_cards"]
+    ] + [
+        ["练习", item["prompt"], item["schedule"]["due_at"], item["id"]]
+        for item in dashboard["due_exercises"]
+    ]
+    return summary, _task_rows(dashboard["plans"], tasks), due
+
+
+def refresh_learning_plans(session_token, selected):
+    assistant = _require_assistant(session_token)
+    _select_learning_document(assistant, selected)
+    plans = assistant.get_learning_plans()
+    return _plan_rows(plans), _task_rows(plans), ""
+
+
+def create_learning_plan(session_token, selected, title, target_date, daily_minutes):
+    assistant = _require_assistant(session_token)
+    _select_learning_document(assistant, selected)
+    try:
+        if isinstance(target_date, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?", target_date):
+            target_date = datetime.fromisoformat(target_date).date().isoformat()
+        assistant.create_learning_plan(title, target_date, daily_minutes)
+        plans = assistant.get_learning_plans()
+    except (ValueError, TypeError) as exc:
+        raise gr.Error("创建失败，请检查计划名称、目标日期和每日分钟数") from exc
+    return "计划已创建", _plan_rows(plans), _task_rows(plans)
+
+
+def set_learning_task_completed(session_token, selected, plan_id, task_id, completed):
+    assistant = _require_assistant(session_token)
+    _select_learning_document(assistant, selected)
+    try:
+        assistant.set_learning_task_completed(plan_id, task_id, bool(completed))
+        plans = assistant.get_learning_plans()
+    except (ValueError, KeyError) as exc:
+        raise gr.Error("任务不可用，请刷新计划后重试") from exc
+    return "任务已更新", _plan_rows(plans), _task_rows(plans)
+
+
+def _card_choices(cards):
+    return [(card["front"], card["id"]) for card in cards]
+
+
+def refresh_learning_cards(session_token, selected):
+    assistant = _require_assistant(session_token)
+    _select_learning_document(assistant, selected)
+    return gr.update(choices=_card_choices(assistant.get_learning_cards()), value=None), "", "", ""
+
+
+def generate_learning_cards(session_token, selected, count):
+    assistant = _require_assistant(session_token)
+    _select_learning_document(assistant, selected)
+    if type(count) is not int or count not in (3, 5, 10):
+        raise gr.Error("生成数量必须是 3、5 或 10")
+    try:
+        assistant.generate_learning_cards(count)
+        cards = assistant.get_learning_cards()
+    except (ValueError, TypeError) as exc:
+        raise gr.Error("卡片生成失败，请检查文档内容与生成数量后重试") from exc
+    return f"已生成 {int(count)} 张卡片", gr.update(choices=_card_choices(cards), value=None), "", "", ""
+
+
+def select_learning_card(session_token, selected, card_id):
+    assistant = _require_assistant(session_token)
+    if not card_id:
+        return "", "", "", ""
+    _select_learning_document(assistant, selected)
+    card = next((item for item in assistant.get_learning_cards() if item["id"] == card_id), None)
+    if card is None:
+        raise gr.Error("Card not found for learning document")
+    return card["front"], "", "", ""
+
+
+def reveal_learning_card(session_token, selected, card_id):
+    assistant = _require_assistant(session_token)
+    _select_learning_document(assistant, selected)
+    card = next((item for item in assistant.get_learning_cards() if item["id"] == card_id), None)
+    if card is None:
+        raise gr.Error("Card not found for learning document")
+    return card["back"], _source_text(card["sources"]), card["id"]
+
+
+def review_learning_card(session_token, selected, card_id, revealed_card_id, rating):
+    assistant = _require_assistant(session_token)
+    _select_learning_document(assistant, selected)
+    if not card_id or card_id != revealed_card_id:
+        raise gr.Error("Reveal this exact card before rating it")
+    try:
+        card = assistant.review_learning_card(card_id, rating)
+    except (ValueError, KeyError) as exc:
+        raise gr.Error("卡片评分失败，请重新选择并查看答案") from exc
+    return f"下次复习：{card['schedule']['due_at']}", ""
+
+
+def _exercise_choices(exercises):
+    return [(exercise["prompt"], exercise["id"]) for exercise in exercises]
+
+
+def refresh_learning_exercises(session_token, selected):
+    assistant = _require_assistant(session_token)
+    _select_learning_document(assistant, selected)
+    return gr.update(choices=_exercise_choices(assistant.get_learning_exercises()), value=None), "", gr.update(choices=[], value=None), "", "", ""
+
+
+def generate_learning_exercises(session_token, selected, count, kind):
+    assistant = _require_assistant(session_token)
+    _select_learning_document(assistant, selected)
+    if type(count) is not int or count not in (3, 5, 10):
+        raise gr.Error("生成数量必须是 3、5 或 10")
+    try:
+        assistant.generate_learning_exercises(count, kind or "mixed")
+        exercises = assistant.get_learning_exercises()
+    except (ValueError, TypeError) as exc:
+        raise gr.Error("练习生成失败，请检查文档内容与生成数量后重试") from exc
+    return f"已生成 {int(count)} 道练习", gr.update(choices=_exercise_choices(exercises), value=None), "", gr.update(choices=[], value=None), "", "", ""
+
+
+def select_learning_exercise(session_token, selected, exercise_id):
+    assistant = _require_assistant(session_token)
+    if not exercise_id:
+        return "", gr.update(choices=[], value=None), "", "", ""
+    _select_learning_document(assistant, selected)
+    exercise = next((item for item in assistant.get_learning_exercises() if item["id"] == exercise_id), None)
+    if exercise is None:
+        raise gr.Error("Exercise not found for learning document")
+    options = exercise.get("options", []) if exercise["type"] == "multiple_choice" else []
+    return exercise["prompt"], gr.update(choices=[(text, index) for index, text in enumerate(options)], value=None), "", "", ""
+
+
+def submit_learning_multiple_choice(session_token, selected, exercise_id, selected_index):
+    assistant = _require_assistant(session_token)
+    _select_learning_document(assistant, selected)
+    if type(selected_index) is not int:
+        raise gr.Error("Please select an answer")
+    try:
+        result = assistant.answer_learning_multiple_choice(exercise_id, selected_index)
+    except (ValueError, TypeError, KeyError) as exc:
+        raise gr.Error("答案提交失败，请刷新题目后重试") from exc
+    exercise = result["exercise"]
+    status = "Correct" if result["correct"] else f"Incorrect; correct answer: {exercise['options'][result['correct_index']]}"
+    return f"{status}\n\n{result['explanation']}\n\n{_source_text(exercise['sources'])}\n\nNext review: {exercise['schedule']['due_at']}"
+
+
+def reveal_learning_short_answer(session_token, selected, exercise_id, user_answer):
+    assistant = _require_assistant(session_token)
+    _select_learning_document(assistant, selected)
+    exercise = next((item for item in assistant.get_learning_exercises() if item["id"] == exercise_id), None)
+    if exercise is None or exercise["type"] != "short_answer":
+        raise gr.Error("Short-answer exercise not found for learning document")
+    if not str(user_answer or "").strip():
+        raise gr.Error("Please enter your answer")
+    reference = f"参考答案：{exercise['reference_answer']}\n\n关键点：{'、'.join(exercise['key_points'])}\n\n{_source_text(exercise['sources'])}"
+    return reference, exercise["id"]
+
+
+def review_learning_short_answer(session_token, selected, exercise_id, revealed_exercise_id, rating, user_answer):
+    assistant = _require_assistant(session_token)
+    _select_learning_document(assistant, selected)
+    if not exercise_id or exercise_id != revealed_exercise_id:
+        raise gr.Error("Reveal this exact reference answer before rating it")
+    try:
+        exercise = assistant.review_learning_short_answer(exercise_id, rating, user_answer)
+    except (ValueError, KeyError) as exc:
+        raise gr.Error("练习评分失败，请重新选择并查看参考答案") from exc
+    return f"下次复习：{exercise['schedule']['due_at']}", ""
 
 
 def _legacy_ask_pdf_unused(question, selected_pdf=None):
@@ -1361,6 +1646,142 @@ with gr.Blocks(title="文档 智能学习助手") as demo:
                 outputs=recovery_restore_output,
             )
 
+    # =========================
+    # 8. 学习中心
+    # =========================
+    with gr.Tab("8. 学习中心"):
+        with gr.Row():
+            learning_document = gr.Dropdown(
+                label="学习文档", choices=[], multiselect=False, interactive=True
+            )
+            refresh_learning_document_btn = gr.Button("刷新文档")
+        learning_document_status = gr.Markdown()
+        revealed_card_id = gr.State("")
+        revealed_exercise_id = gr.State("")
+
+        with gr.Tabs():
+            with gr.Tab("今日任务"):
+                refresh_dashboard_btn = gr.Button("刷新今日任务")
+                dashboard_summary = gr.Markdown()
+                dashboard_tasks = gr.Dataframe(
+                    headers=["日期", "阶段", "任务", "分钟", "已完成", "计划 ID", "任务 ID"],
+                    datatype=["str", "str", "str", "number", "str", "str", "str"],
+                    interactive=False,
+                )
+                dashboard_due = gr.Dataframe(
+                    headers=["类型", "内容", "到期时间", "项目 ID"],
+                    datatype=["str", "str", "str", "str"],
+                    interactive=False,
+                )
+
+            with gr.Tab("学习计划"):
+                plan_title = gr.Textbox(label="计划名称", max_lines=1)
+                target_date = gr.DateTime(label="目标日期", include_time=False, type="string")
+                daily_minutes = gr.Number(label="每日学习分钟数", value=30, precision=0)
+                create_plan_btn = gr.Button("创建计划")
+                plan_result = gr.Markdown()
+                plan_table = gr.Dataframe(
+                    headers=["名称", "目标日期", "每日分钟", "状态", "进度", "计划 ID"],
+                    datatype=["str", "str", "number", "str", "str", "str"],
+                    interactive=False,
+                )
+                plan_task_table = gr.Dataframe(
+                    headers=["日期", "阶段", "任务", "分钟", "已完成", "计划 ID", "任务 ID"],
+                    datatype=["str", "str", "str", "number", "str", "str", "str"],
+                    interactive=False,
+                )
+                with gr.Row():
+                    task_plan_id = gr.Dropdown(label="选择计划", choices=[])
+                    task_id = gr.Dropdown(label="选择任务", choices=[])
+                    task_completed = gr.Checkbox(label="标记完成")
+                    update_task_btn = gr.Button("更新任务")
+                refresh_plans_btn = gr.Button("刷新计划")
+
+            with gr.Tab("知识卡片"):
+                card_count = gr.Radio([3, 5, 10], value=5, label="生成数量")
+                generate_cards_btn = gr.Button("生成卡片")
+                refresh_cards_btn = gr.Button("加载已有卡片")
+                card_result = gr.Markdown()
+                card_selector = gr.Dropdown(label="选择卡片", choices=[])
+                card_front = gr.Markdown()
+                reveal_card_btn = gr.Button("显示答案与来源")
+                card_back = gr.Markdown()
+                card_sources = gr.Markdown()
+                with gr.Row():
+                    card_forgot_btn = gr.Button("不会")
+                    card_fuzzy_btn = gr.Button("模糊")
+                    card_mastered_btn = gr.Button("掌握")
+                card_review_result = gr.Markdown()
+
+            with gr.Tab("练习题"):
+                exercise_kind = gr.Radio(
+                    [("混合", "mixed"), ("选择题", "multiple_choice"), ("简答题", "short_answer")],
+                    value="mixed", label="题型"
+                )
+                exercise_count = gr.Radio([3, 5, 10], value=5, label="生成数量")
+                generate_exercises_btn = gr.Button("生成练习")
+                refresh_exercises_btn = gr.Button("加载已有练习")
+                exercise_result = gr.Markdown()
+                exercise_selector = gr.Dropdown(label="选择题目", choices=[])
+                exercise_prompt = gr.Markdown()
+                mcq_choice = gr.Radio(label="选择答案", choices=[])
+                submit_mcq_btn = gr.Button("提交选择题")
+                mcq_result = gr.Markdown()
+                short_answer = gr.Textbox(label="简答作答", lines=4)
+                reveal_short_btn = gr.Button("显示参考答案与来源")
+                short_reference = gr.Markdown()
+                with gr.Row():
+                    short_forgot_btn = gr.Button("不会")
+                    short_fuzzy_btn = gr.Button("模糊")
+                    short_mastered_btn = gr.Button("掌握")
+                short_review_result = gr.Markdown()
+
+        learning_reset_outputs = [
+            learning_document_status, revealed_card_id, revealed_exercise_id,
+            card_selector, exercise_selector,
+            card_back, card_sources, card_review_result, mcq_result,
+            short_reference, short_review_result,
+            card_front, exercise_prompt, short_answer, card_result, exercise_result,
+            dashboard_summary, dashboard_tasks, dashboard_due, plan_table, plan_task_table,
+            task_plan_id, task_id, plan_title, target_date, daily_minutes, task_completed, mcq_choice, plan_result,
+        ]
+        session_token.change(fn=clear_learning_interaction, inputs=[], outputs=learning_reset_outputs)
+        refresh_learning_document_btn.click(
+            fn=refresh_learning_documents,
+            inputs=[session_token, learning_document],
+            outputs=[learning_document] + learning_reset_outputs,
+        )
+        learning_document.change(
+            fn=select_learning_document,
+            inputs=[session_token, learning_document],
+            outputs=learning_reset_outputs,
+        )
+        refresh_dashboard_btn.click(
+            fn=refresh_learning_dashboard,
+            inputs=[session_token, learning_document],
+            outputs=[dashboard_summary, dashboard_tasks, dashboard_due],
+        )
+        refresh_plans_btn.click(fn=refresh_learning_plans, inputs=[session_token, learning_document], outputs=[plan_table, plan_task_table, plan_result])
+        refresh_plans_btn.click(fn=learning_plan_choices, inputs=[session_token, learning_document], outputs=[task_plan_id, task_id])
+        task_plan_id.change(fn=learning_task_choices, inputs=[session_token, learning_document, task_plan_id], outputs=task_id)
+        create_plan_btn.click(fn=create_learning_plan, inputs=[session_token, learning_document, plan_title, target_date, daily_minutes], outputs=[plan_result, plan_table, plan_task_table]).success(fn=learning_plan_choices, inputs=[session_token, learning_document], outputs=[task_plan_id, task_id])
+        update_task_btn.click(fn=set_learning_task_completed, inputs=[session_token, learning_document, task_plan_id, task_id, task_completed], outputs=[plan_result, plan_table, plan_task_table])
+        generate_cards_btn.click(fn=generate_learning_cards, inputs=[session_token, learning_document, card_count], outputs=[card_result, card_selector, card_back, card_sources, revealed_card_id])
+        refresh_cards_btn.click(fn=refresh_learning_cards, inputs=[session_token, learning_document], outputs=[card_selector, card_back, card_sources, revealed_card_id])
+        card_selector.change(fn=select_learning_card, inputs=[session_token, learning_document, card_selector], outputs=[card_front, card_back, card_sources, revealed_card_id])
+        card_selector.change(fn=lambda: "", inputs=[], outputs=card_review_result)
+        reveal_card_btn.click(fn=reveal_learning_card, inputs=[session_token, learning_document, card_selector], outputs=[card_back, card_sources, revealed_card_id])
+        for button, rating in ((card_forgot_btn, "forgot"), (card_fuzzy_btn, "fuzzy"), (card_mastered_btn, "mastered")):
+            button.click(fn=lambda token, document, item, revealed, value=rating: review_learning_card(token, document, item, revealed, value), inputs=[session_token, learning_document, card_selector, revealed_card_id], outputs=[card_review_result, revealed_card_id])
+        generate_exercises_btn.click(fn=generate_learning_exercises, inputs=[session_token, learning_document, exercise_count, exercise_kind], outputs=[exercise_result, exercise_selector, exercise_prompt, mcq_choice, mcq_result, short_reference, revealed_exercise_id])
+        refresh_exercises_btn.click(fn=refresh_learning_exercises, inputs=[session_token, learning_document], outputs=[exercise_selector, exercise_prompt, mcq_choice, mcq_result, short_reference, revealed_exercise_id])
+        exercise_selector.change(fn=lambda: ("", ""), inputs=[], outputs=[short_answer, short_review_result])
+        exercise_selector.change(fn=select_learning_exercise, inputs=[session_token, learning_document, exercise_selector], outputs=[exercise_prompt, mcq_choice, mcq_result, short_reference, revealed_exercise_id])
+        submit_mcq_btn.click(fn=submit_learning_multiple_choice, inputs=[session_token, learning_document, exercise_selector, mcq_choice], outputs=mcq_result)
+        reveal_short_btn.click(fn=reveal_learning_short_answer, inputs=[session_token, learning_document, exercise_selector, short_answer], outputs=[short_reference, revealed_exercise_id])
+        for button, rating in ((short_forgot_btn, "forgot"), (short_fuzzy_btn, "fuzzy"), (short_mastered_btn, "mastered")):
+            button.click(fn=lambda token, document, item, revealed, answer, value=rating: review_learning_short_answer(token, document, item, revealed, value, answer), inputs=[session_token, learning_document, exercise_selector, revealed_exercise_id, short_answer], outputs=[short_review_result, revealed_exercise_id])
+
         delete_doc_btn_ask.click(
             fn=delete_current_pdf,
             inputs=[session_token, doc_dropdown_ask],
@@ -1368,6 +1789,7 @@ with gr.Blocks(title="文档 智能学习助手") as demo:
                 delete_doc_output_ask,
                 doc_dropdown_ask,
                 doc_dropdown_search,
+                learning_document,
                 select_doc_output_ask,
                 select_doc_output_search,
             ],
@@ -1380,6 +1802,7 @@ with gr.Blocks(title="文档 智能学习助手") as demo:
                 delete_doc_output_search,
                 doc_dropdown_ask,
                 doc_dropdown_search,
+                learning_document,
                 select_doc_output_ask,
                 select_doc_output_search,
             ],
@@ -1392,6 +1815,7 @@ with gr.Blocks(title="文档 智能学习助手") as demo:
                 delete_doc_output_ask,
                 doc_dropdown_ask,
                 doc_dropdown_search,
+                learning_document,
                 select_doc_output_ask,
                 select_doc_output_search,
             ],
@@ -1404,6 +1828,7 @@ with gr.Blocks(title="文档 智能学习助手") as demo:
                 delete_doc_output_search,
                 doc_dropdown_ask,
                 doc_dropdown_search,
+                learning_document,
                 select_doc_output_ask,
                 select_doc_output_search,
             ],
@@ -1415,8 +1840,8 @@ with gr.Blocks(title="文档 智能学习助手") as demo:
         login_btn.click(
             fn=login_user,
             inputs=[username_input, password_input],
-            outputs=[session_token, auth_status, doc_dropdown_ask, doc_dropdown_search],
-        ).then(
+            outputs=[session_token, auth_status, doc_dropdown_ask, doc_dropdown_search, learning_document],
+        ).then(fn=clear_learning_interaction, inputs=[], outputs=learning_reset_outputs).then(
             fn=refresh_import_batches,
             inputs=session_token,
             outputs=[
@@ -1431,8 +1856,8 @@ with gr.Blocks(title="文档 智能学习助手") as demo:
         register_btn.click(
             fn=register_user,
             inputs=[username_input, password_input],
-            outputs=[session_token, auth_status, doc_dropdown_ask, doc_dropdown_search],
-        ).then(
+            outputs=[session_token, auth_status, doc_dropdown_ask, doc_dropdown_search, learning_document],
+        ).then(fn=clear_learning_interaction, inputs=[], outputs=learning_reset_outputs).then(
             fn=refresh_import_batches,
             inputs=session_token,
             outputs=[
@@ -1447,8 +1872,8 @@ with gr.Blocks(title="文档 智能学习助手") as demo:
         logout_btn.click(
             fn=logout_user,
             inputs=session_token,
-            outputs=[session_token, auth_status, doc_dropdown_ask, doc_dropdown_search],
-        ).then(
+            outputs=[session_token, auth_status, doc_dropdown_ask, doc_dropdown_search, learning_document],
+        ).then(fn=clear_learning_interaction, inputs=[], outputs=learning_reset_outputs).then(
             fn=clear_import_ui,
             inputs=None,
             outputs=[
@@ -1468,6 +1893,8 @@ with gr.Blocks(title="文档 智能学习助手") as demo:
                 import_summary,
                 import_tasks,
                 doc_dropdown_ask,
+                doc_dropdown_search,
+                learning_document,
                 selected_import_task_id,
             ]
         ).then(

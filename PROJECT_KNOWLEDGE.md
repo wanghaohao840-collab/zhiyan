@@ -126,6 +126,16 @@
 
 ## 8. 后续路线
 
+### 学习 MVP（2026-09）
+
+- `app/learning_repository.py`：每用户 `learning.json`，版本 1，原子更新、损坏失败关闭和按文档级联清理。
+- `app/learning.py`：1–365 天确定性计划、每日 5–480 分钟、SM-2、复习日志和到期查询。
+- `app/learning_generation.py`：只消费公共 `RAGTool.execute_result("search")`，校验真实来源、数量和重复内容，返回整批草稿。
+- `app/runtime.py` 与 `PDFLearningAssistant` 共享用户锁和学习服务；生成期间释放锁，提交前重验文档与重复内容。
+- Gradio“8. 学习中心”提供今日任务、学习计划、知识卡片、练习题；每次生成仅限一篇文档，数量为 3/5/10，简答题由用户自评。
+- 学习数据不进入 Memory，也不修改既有问答统计。删除文档时清理对应学习数据，失败须报告部分失败。
+- 两用户离线闭环验收：`tests/integration/test_learning_mvp_acceptance.py`，覆盖实际生成服务、来源持久化、复习、重读及删除隔离。
+
 ### 工程升级（优先）
 
 1. 引入 Qdrant，并保留 JSON/Qdrant 后端切换能力；

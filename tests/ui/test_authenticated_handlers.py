@@ -74,7 +74,16 @@ STATE_CHANGING_HANDLERS = [
     ("generate_report",  lambda token: (token,)),
     ("recall_memory",    lambda token: (token, "keyword")),
     ("show_stats",       lambda token: (token,)),
+    ("create_learning_plan", lambda token: (token, "Doc | doc", "Plan", "2026-09-05", 30)),
+    ("set_learning_task_completed", lambda token: (token, "Doc | doc", "plan", "task", True)),
+    ("generate_learning_cards", lambda token: (token, "Doc | doc", 3)),
+    ("review_learning_card", lambda token: (token, "Doc | doc", "card", "card", "fuzzy")),
+    ("generate_learning_exercises", lambda token: (token, "Doc | doc", 3, "mixed")),
+    ("submit_learning_multiple_choice", lambda token: (token, "Doc | doc", "exercise", 0)),
+    ("review_learning_short_answer", lambda token: (token, "Doc | doc", "exercise", "exercise", "fuzzy", "answer")),
 ]
+
+LEARNING_MUTATION_HANDLERS = STATE_CHANGING_HANDLERS[-8:]
 
 
 AUTHENTICATED_READ_HANDLERS = [
@@ -301,3 +310,22 @@ class TestRejectedTokenNoStateChange:
 
         assert snapshot() == before
         assert not any(paths.imports.iterdir())
+
+    @pytest.mark.parametrize("name,args_fn", LEARNING_MUTATION_HANDLERS)
+    @pytest.mark.parametrize("token_kind", ["missing", "forged", "expired"])
+    def test_rejected_learning_mutation_preserves_learning_file(
+        self, name, args_fn, token_kind, tmp_path, monkeypatch,
+    ):
+        isolated = _make_isolated_registry(tmp_path)
+        token = isolated.register("LearningAuthTest", "correct horse battery")
+        assistant = isolated.get_session(token).assistant
+        learning_path = assistant.learning_repository.path
+        assistant.learning_repository.load()
+        original = learning_path.read_bytes() if learning_path.exists() else None
+        rejected = "" if token_kind == "missing" else "forged-token"
+        if token_kind == "expired":
+            isolated.idle_timeout = timedelta(seconds=-1)
+            rejected = token
+        monkeypatch.setattr("ui.gradio_app.session_registry", isolated)
+        _require_raises_gr_error(_get_handler(name), *args_fn(rejected))
+        assert (learning_path.read_bytes() if learning_path.exists() else None) == original

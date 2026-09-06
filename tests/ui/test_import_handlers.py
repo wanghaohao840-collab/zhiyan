@@ -304,7 +304,7 @@ def test_submit_batch_id_is_bound_to_hidden_state():
         if block_fn.fn is module.submit_import_batch
     )
 
-    assert len(binding.outputs) == 5
+    assert len(binding.outputs) == 7
     assert binding.outputs[0].__class__.__name__ == "State"
     assert binding.outputs[-1].__class__.__name__ == "State"
 

@@ -120,7 +120,7 @@ class UserRuntimeRegistry:
                 learning_repository=learning_repository,
                 learning_service=LearningService(learning_repository),
                 learning_generation_service=LearningGenerationService(
-                    rag_tool, rag_tool.llm
+                    rag_tool, getattr(rag_tool, "llm", None)
                 ),
                 import_task_service=self.import_task_service,
             )
