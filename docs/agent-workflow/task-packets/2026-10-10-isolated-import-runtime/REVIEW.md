@@ -1,5 +1,11 @@
 # Plan Review: isolated authenticated import runtime
 
+## Current Task06 acceptance — 2026-10-20
+
+Task06 is accepted at two implementation files SHA256 `53a0d8be05e5b303b2d9e2543a4953a59ba01389b7b715d6194d4f7bf9af81b9` / `fd4a573406d489e07a4efd490273181e60a0cc8368d48d729cb20455d406005e`: full n5 75 PASS (51 controlled, 24 real) plus distinct 330-identity regression n6, zero failure/error/skip. Astra full report SHA256 `f805d79d471024be4b8c156063df9b8ead48a568770b766550058f5ff441e7f9` and final regression/SPEC/QUALITY report SHA256 `6ec687d64b0db752634dff0566bd533763be28a0b051e05c4dbab332d87c612f` independently accept the exact recorded source/evidence; root read both. Full's 96 exact resource absences are separate from regression's existing fixture/teardown contract. The unavailable original n6 terminal is not a missing-result run: its complete retained OS-exit/completion/XML/log evidence remains; older incomplete runs are not promoted. See `docs/agent-work/isolated-import-runtime/task06-acceptance.md` for hashes and limits.
+
+Root's scoped Git delivery remains separate. Task07 combined all-packet review, main and production remain open. The earlier dated verdicts below are retained chronology, not current Task06 status.
+
 - Source plan: `docs/superpowers/plans/2026-10-10-isolated-import-runtime.md`
 - Approved design: `docs/superpowers/specs/2026-10-10-isolated-import-runtime-design.md`
 - Reviewed commit: `38bc8bcabd90e23a7518375d7e2087a399f0eec9`
@@ -68,6 +74,7 @@
 | `04b-source-delete-test-barrier.md` (done) | Task03 done; serial correction before Task04 acceptance | no | existing recovery test source-delete parameter only | Event barrier/exact missing-source refusal/common absence checks accepted; focused2 and fullregression320 passed |
 | `05-restricted-api.md` (done) | Task04/04a/04b done | no | isolated API factory and dedicated API test | FinalSPEC/QUALITYPASS,187distinct passed cases, exactcorrectedinput binding |
 | `05a-migration-logger-preservation.md` (done) | Task04 done; serial correction before05acceptance | no | migrations/env.py one keyword | Enables unlisted app loggers; unchanged original auth logging assertion passes |
+| `06-actual-process-acceptance.md` (ready) | Task05/05a done | no | CREATE process acceptance test and PowerShell dispatcher | Complete Astra n2 READY; Sol High implementation after root missing-dispatcher RED, process execution requires runner GO |
 
 ## Packet readiness audit
 
@@ -78,6 +85,7 @@
 | `03-authenticated-facades.md` | yes | yes | yes | yes, six files | yes | yes | yes | yes |
 | `04-independent-worker.md` | yes | yes | yes | four CREATE files | yes | yes | yes | yes, Astra n2 |
 | `05-restricted-api.md` | yes | verified Solcurrentn2 | yes | two CREATE files | explicit routes/lifecycle/real+local tests | yes | yes | yes, Astra n2 |
+| `06-actual-process-acceptance.md` | yes | Sol/Astra inventories integrated | yes | two CREATE files |24 proposed actual-process cases plus separate Windows harness smoke; exact commands | yes | yes | yes, complete Astra n2 |
 
 Task 01 passed its earlier ready gate, was implemented, then independently accepted. The completed packet records final GREEN 28 and regression 194 with actual exits 0; the root's accepted delivery binding is `.runtime/isolated-import-runtime/p1-delivery-root-n3.json`, and Astra's final Spec/Quality PASS report is `p1-final-accepted-astra-n4.md` (SHA256 `d911fcc66e1c920034cf8e57752fe9836e8049fb03dffe846b14286f81004cd5`). Task 02 passed independent plan review: `.runtime/isolated-import-runtime/p2-plan-astra-n2.md`, SHA256 `16130c01e2e8c57a4c4300eb8ed173838ec2cd19a8565af4312077331a686553`, binding the complete pre-bookkeeping packet `a8a89fb5bde13e528b8c32bfb3acd1a94b808e999808cc203327c8d83fd4c791` and source plan `7a05589b77990a8d0940b1b52628af7b52b30f3399e10fedaaae09405e38988c`. Task 02 is now implemented and accepted on the exact source/test bytes: Astra final Spec/Quality PASS report `p2-final-accepted-astra-n4.md` (SHA256 `1ee8dfa7a3bc225b88b42c6b15bb5f1eab73e0c1d14fe7e11f7d271b3c63cd26`) and root `p2-delivery-root-n4.json` verify complete new-file 71 plus regression 51 unique cases, actual exits 0 and zero failures/errors/skips. The earlier reviewed readiness contract remains unchanged; synthetic provider reports do not establish real provider/admission acceptance. Its source base is `d81f0c3`; root's later progress-document commit `181e2d9` is a descendant and changes no source interface. Readiness bookkeeping does not change the independently reviewed contract.
 
