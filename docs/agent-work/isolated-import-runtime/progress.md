@@ -1,5 +1,15 @@
 # 隔离认证导入运行时进度
 
+## 2026-10-20：Task06实现提交并推送，远端精确核同
+
+最终文档Astra p6-delivery-docs-astra-n1.md SHAb520cc659d3d6432bda07588e00f57878bc18883cf9794a3055f2a1980eaa690接受限定Git交付，绑定五文档最终字节；Sol最终交接p6-final-handoff-sol-n2.md SHAdc870fb1eaf37be0751f9eccfa6fc151d5130c72278e7a2473fa8f345bd70115补全330实际与全部边界。root读报后只暂存两实现文件+五份已审文档共7路径，staged bytes全部等于原审工作树字节，git diff --cached --check通过；115基线/15protected原始hash核同且15路径未暂存。
+
+root git commit实际exit0，提交c225ad3b7086934adae80b5cd06dd9b9324e0bef（test: accept isolated import process and recovery schedules）。随后进程级proxy7900下push实际exit0，远端授权分支从380bbe7快进至c225ad3；root新ls-remote actual0确认refs/heads/codex/distributed-cutover-vertical-slice完整SHA与本地一致。GitHub仅返回仓库已迁移到zhiyan的重定向提示，推送已成功；未修改remote/持久代理配置。当前仅原15protected仍modified；未合并main或发布生产。
+
+第一次暂存被2026-10-15留下的0B index.lock阻止。root核精确worktree Git目录、非reparse/0B、无任何Git进程并成功独占打开后，将原文件保留改名为D:/python_self_agent/.git/worktrees/python_self_agent2/index.lock.stale-task06-20261020-203025，不删除锁备份或改索引内容；随后限定暂存成功。
+
+本段及acceptance首尾是提交/推送之后新增的交付观测，与原五文档Astra绑定字节不同；不追认其为测试输入。本次后续仅两份文档记账，另作提交推送并读取最终远端核验。Task06实现与独审已闭合；Task07整体跨packet合审、main和生产仍open，未据405身份扩大结论。
+
 ## 2026-10-20：Task06最终SPEC/QUALITY接受，限定交付核验中
 
 Astra High正式p6-final-accepted-astra-n6.md SHA6ec687d64b0db752634dff0566bd533763be28a0b051e05c4dbab332d87c612f接受REGRESSION FINAL-N6 / TASK06 SPEC / QUALITY，无新增blocking，root全文读报。独立audit p6-final-audit-astra-n6.json SHAee14d500bbd38bb435e0549c9d175679f7d5b3e9c063be2c5fbd2c4407d35bbb actual0/2409checks，190输入/115baseline/15protected、330精确身份990phase、11actualexit及五级谱系、serviceprepost均通过；full已接受75与回归330不重叠，共405身份，不能说单个pytest或全仓suite。
