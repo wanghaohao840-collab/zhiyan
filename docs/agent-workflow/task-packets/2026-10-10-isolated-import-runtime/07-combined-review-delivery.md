@@ -1,7 +1,7 @@
 ---
 id: "2026-10-10-isolated-import-runtime-07"
 title: "Review the combined isolated import delivery and verify current compatibility"
-status: "in_progress"
+status: "done"
 parallel-safe: false
 depends-on: ["2026-10-10-isolated-import-runtime-06"]
 base-commit: "eebe89fe00b49895f05cec587f1dee75924e9ef1"
@@ -151,7 +151,7 @@ Existing legacy fixtures generate exact UUID schemas/buckets/collections and rai
 - [x] Task06 process inheritance is byte-qualified, reported separately, and affected evidence invalidated if a correction changes dependencies. Historical overlapping counts are not added.
 - [x] Final review uses every template section: delivered packet inventory, actual combined diff, producer/consumer audit, requirements, overlap, architecture/compatibility/persistence/isolation, combined verification, findings, explicit residual limits and decision.
 - [x] Astra independently reviews packet READY, runner/collection gates and actual combined evidence/consistency; root reviews the whole combined diff. Concrete changes receive corrective packets.
-- [ ] Root records exact allowed Git paths, tested commit/blob relationship, actual commit/push exits and freshly read remote ancestry; main and production remain unperformed.
+- [x] Root records exact allowed Git paths, tested commit/blob relationship, actual commit/push exits and freshly read remote ancestry; main and production remain unperformed.
 
 ## Stop conditions and handoff
 
@@ -164,3 +164,9 @@ Sol handoff lists generated runner/helper/manifest hashes, exact stages/nodeids/
 Root and Astra accepted four fresh serial stages:329+234+247+210=1020 distinct identities,3060 passed phases,0FES; historical637 retained/0missing/383new. Required real migration-before-auth same-process interaction passes. Task06 full75 is separately byte-qualified inherited evidence, not rerun; authority-a n1 interrupted original is excluded. Combined Astra report SHA256 `3bc592f2bad997ae7d9544148d9665692695c455c51a3d8183ff9e92ed935ac5`; full final review and acceptance records carry original hashes and limitations.
 
 The executed packet original SHA256 `13571653a70674c82ed9ec685a4304065174ce97b213978134c09cb1f1f04f82` is preserved as ignored `p7-packet-tested-root-n1.md`. This later status/checkbox/431-input-label bookkeeping does not change test selection or contracts and is not the original tested document byte stream. Product/test/fixture/config inputs remain unchanged. Final Git acceptance box stays unchecked and status in_progress until actual scoped commit/push/remote-ref evidence; main and production remain unperformed.
+
+## Scoped delivery observed — 2026-10-22
+
+Six reviewed governance paths were committed as `600b325e7d185abd50a2cdb8d0e4e0c8cf7fc737`. Commit and push actually exited0; a fresh ls-remote actually exited0 and returned that exact authorized branch ref. Tested HEAD eebe89fe… is an ancestor; all431 planning raw inputs and15 protected raw paths remain unchanged. Root receipt `p7-delivery-root-n1.json` records the six-path boundary and observed results. The first add was refused by an old0-byte index.lock; no Git process existed and exclusive open succeeded, then it was preserved as `index.lock.stale-task07-20261022-063351` before the successful add. No protected source was staged.
+
+This later status-only record closes the actual Git gate for the accepted combined delivery; it is not part of the earlier tested packet bytes or n2 documentary review binding. Main/production remain unperformed. A subsequent bookkeeping commit carries this observation and done status; its own SHA cannot be self-embedded and is checked separately at delivery.

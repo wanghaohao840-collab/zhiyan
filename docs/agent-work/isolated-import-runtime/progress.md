@@ -1,5 +1,9 @@
 # 隔离认证导入运行时进度
 
+## 2026-10-22：六文档600b325已提交推送并核远端，Task07关闭
+
+Astra最终文审d7c895ae4ca46cceeddbe583521f0ce613976536e4e85c449382b35b6f7cd228接受n2六文档。实际commit/push/新lsremote均exit0，授权ref600b325e7d185abd50a2cdb8d0e4e0c8cf7fc737；只交付六治理文件，431/15raw不变。旧0Bindex.lock经无Git进程/非reparse/独占打开验证后保留改名，不删除备份。root delivery收据p7-delivery-root-n1.json。现仅状态记账更新07done及最后checkbox；main/生产未做。
+
 ## 2026-10-22：四阶段1020 PASS及combined SPEC/QUALITY接受，准备文档交付
 
 isolated210原completion9d8fc3d29c54e9c79695c4f8962dfd29041cb9fa48ab890eb9e475f6044f3416、Astra实际接受b496f57521a20f1693b59184a761fa334780fbf71031caaa5f0f5c4338b78ad7。全部四stage1020disjoint/3060phasePASS，637retained0missing383new；原949rawsame、Job/noowners/9+9+10+9retainedexit0及服务绑定通过。root组合收据b87c7fce945dfd54635b1c2c15e616f8c0c82db6297799c912aa94d218b7b373，Astra combined3bc592f2bad997ae7d9544148d9665692695c455c51a3d8183ff9e92ed935ac5正式SPEC/QUALITY接受，root全文读报。
@@ -762,3 +766,9 @@ n9 Astra独立失败报告p6-real2-failure-astra-n9.md SHA9efc3a079214c13d0c78e8
 n11仅该fixture补输出mock/空diagnostic断言，最终source590e866ddc62df64aa0fd2f577710ee6408e1469570f8768dfc90bf2688325b2，unit runner6a241304ee7308ecd87404c2e92cceb671cf0e67b1ca238299a52beda5dac0ca/real runner87bb0f3a5401266a808eb60ad9bcabbc3e53a1593d38ecf26d7c56bfe4f072c4，PSfd4a保持，真实源快照已保存。Astra exact n2报告366cea96870fea2e5a03e3ee6c9ee2478d80d9d2f1cf02dd1a1ef2cd7da9387b通过/rootGOda6c9ec401415179df775e41d0b938d54e2dee8e7a0057fc6f28cb2e4af7e86c后unitn11单次actual0：33pass/0FES、2real deselected17.30s，8ledger/Jobempty/noowners、身份及postflight绑定一致。completion89c507ce86acae99c0146de63a16234efba0a59aa717b5047698b46d2d607120/XML3f8f41c6f247e80801c72e8e26f335e1fbadfc94ec7ca915197521c8211121bf/loga74f7c9f533439e176440c9e5a102cf6d9c34dba37c506cf2dbf393cc9f91b21。root独立解析XML并核127before/after/current完全同。这仍仅unit，尚未n11业务复验/Task06完成，未提交推送。
 
 Astra独立unitn11实际证据p6-unit-accepted-astra-n5.md SHAd8a68cf77674a2ff6d120657a842c92ee50820f18dba031a47d03ea23a9d217e通过（33唯一节点/8ledger/18外层retained退出）。但root fresh服务preflight失败：DockerDesktopLinuxEngine pipe不存在，故p6-real2-go-root-n11.json未生成，realn11未执行。root仅启动现有Docker Desktop隐藏进程；随后backend日志记录Secrets Engine启动失败，旧C:/Users/11272/AppData/Local/docker-secrets-engine/engine.sock为零字节Archive/ReparsePoint，系统无法访问、backend不能移除该端点。独立25秒exact4-ID inspect超时，未到容器启动或变更；restore_p6_services_root_n4.py未生成成功收据。root关闭本次新启动的故障Desktop/backend进程，仅尝试将这一端点Rename-Item为engine.sock.p6-20261015-backup，亦被Windows拒绝，原端点保持、备份不存在；没有删除端点、重建/改卷/容器/配置或恢复出厂设置。Docker现不可用，因此无法给当前源/目标容器实时状态作新证明，不能沿用旧running/stopped当当前现场状态。Task06实际业务复验受此外部环境阻塞；已通过unit/source均冻结，未静默重跑/换模型/提交推送或进入Task07/main/生产。
+
+## Scoped delivery observed — 2026-10-22
+
+Six reviewed governance paths were committed as `600b325e7d185abd50a2cdb8d0e4e0c8cf7fc737`. Commit and push actually exited0; a fresh ls-remote actually exited0 and returned that exact authorized branch ref. Tested HEAD eebe89fe… is an ancestor; all431 planning raw inputs and15 protected raw paths remain unchanged. Root receipt `p7-delivery-root-n1.json` records the six-path boundary and observed results. The first add was refused by an old0-byte index.lock; no Git process existed and exclusive open succeeded, then it was preserved as `index.lock.stale-task07-20261022-063351` before the successful add. No protected source was staged.
+
+This later status-only record closes the actual Git gate for the accepted combined delivery; it is not part of the earlier tested packet bytes or n2 documentary review binding. Main/production remain unperformed. A subsequent bookkeeping commit carries this observation and done status; its own SHA cannot be self-embedded and is checked separately at delivery.

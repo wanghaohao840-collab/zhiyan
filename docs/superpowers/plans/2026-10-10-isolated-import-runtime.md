@@ -200,7 +200,7 @@ Executed contract (combined verification accepted, scoped Git gate pending): `do
 
 - [x] Freeze exact source bytes and run unfiltered focused/combined regression commands with unique basetemps and raw XML/log/exit; use one pytest lane. Include old local tests and ordinary distributed refusal. The accepted old 637 baseline is compared by test identity, not added to new counts.
 - [x] Astra independently reviews tenant SQL, user/task lease, issuance/adapter single execution, Unknown, stale Worker/vector fence, cross-store consistency and readback. Sol resolves concrete findings in an owned corrective packet; Luna records process/log/resource evidence. Codex performs required final combined diff review against every packet, including route allowlist and config; verdict is `accepted`, `changes-required`, or `blocked`.
-- [ ] After all gates pass, commit exact intended files and push the authorized branch; record actual commit and remote ancestry. First-milestone acceptance remains distinct from fresh-user initializer, full business migration, retained-source migration and different-image rollback, each of which needs a later independent plan and production authorization.
+- [x] After all gates pass, commit exact intended files and push the authorized branch; record actual commit and remote ancestry. First-milestone acceptance remains distinct from fresh-user initializer, full business migration, retained-source migration and different-image rollback, each of which needs a later independent plan and production authorization.
 
 ## Self-review and scope boundary
 
@@ -209,3 +209,9 @@ The plan covers every section of `docs/superpowers/specs/2026-10-10-isolated-imp
 ## Task07 combined acceptance — 2026-10-22
 
 Four fresh serial stages passed1020 distinct identities/3060 phases,0FES; historical637 retained/0missing/383new. Real migration-before-auth same-process interaction passes. Separate Task06 full75 inherited by187same/3documentary inputs, not rerun. Astra combined SPEC/QUALITY accepted SHA256 `3bc592f2bad997ae7d9544148d9665692695c455c51a3d8183ff9e92ed935ac5`; root final template is `docs/agent-workflow/task-packets/2026-10-10-isolated-import-runtime/FINAL_INTEGRATION_REVIEW.md`. The tested431 inputs are429tracked+2ignored,949 explicit raw bindings unchanged. Original interrupted authority-a n1 and unknown top-level final exits remain distinct. Product/test bytes are unchanged; six governance documents await exact-byte review and scoped Git delivery. No main/production or full parent-task acceptance follows.
+
+## Scoped delivery observed — 2026-10-22
+
+Six reviewed governance paths were committed as `600b325e7d185abd50a2cdb8d0e4e0c8cf7fc737`. Commit and push actually exited0; a fresh ls-remote actually exited0 and returned that exact authorized branch ref. Tested HEAD eebe89fe… is an ancestor; all431 planning raw inputs and15 protected raw paths remain unchanged. Root receipt `p7-delivery-root-n1.json` records the six-path boundary and observed results. The first add was refused by an old0-byte index.lock; no Git process existed and exclusive open succeeded, then it was preserved as `index.lock.stale-task07-20261022-063351` before the successful add. No protected source was staged.
+
+This later status-only record closes the actual Git gate for the accepted combined delivery; it is not part of the earlier tested packet bytes or n2 documentary review binding. Main/production remain unperformed. A subsequent bookkeeping commit carries this observation and done status; its own SHA cannot be self-embedded and is checked separately at delivery.

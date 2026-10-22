@@ -3,7 +3,7 @@
 - Source review: `REVIEW.md`
 - Reviewed commit/worktree: `eebe89fe00b49895f05cec587f1dee75924e9ef1`, `codex/distributed-cutover-vertical-slice`; 15 preserved pre-existing dirty paths excluded from delivery; Task07 governance changes uncommitted.
 - Review date: `2026-10-22`
-- Result: `accepted` for the bounded isolated implementation and verification. Governance commit/push/remote confirmation remains pending and separate.
+- Result: `accepted` for the bounded isolated implementation and verification. Six-path governance delivery600b325 was pushed and remote-verified; subsequent status bookkeeping is separate.
 
 ## Delivered packet inventory
 
@@ -15,7 +15,7 @@
 | 04,04a,04b | done | 66772996f77badb1e12ca12298e45e040582b2ce | provider, Worker, CLI, Worker test; gate-message and source-delete barrier corrections | Historical433; current authority/isolated/compatibility PASS |
 | 05,05a | done | 020f16e6726497e861d2162ea890a83103a2d23b | restricted API/test and migration logger keyword | Historical187; current isolated and ordered compatibility PASS |
 | 06 | done | c225ad3b7086934adae80b5cd06dd9b9324e0bef | process acceptance test and PowerShell dispatcher | Accepted full75 inherited; old330 regression overlaps current coverage |
-| 07 | in progress: Git gate pending | uncommitted governance only | this review, packet, REVIEW, plan, progress, acceptance | Fresh1020 and Astra combined accepted; delivery pending |
+| 07 | done | 600b325; subsequent status bookkeeping | this review, packet, REVIEW, plan, progress, acceptance | Fresh1020 and Astra combined accepted; scoped600b325 remote-verified |
 
 All six source milestones are ancestors of reviewed HEAD. Historical rows describe their original bounded acceptance, not additional fresh counts. Current evidence and raw bindings are summarized in `docs/agent-work/isolated-import-runtime/task07-acceptance.md`.
 
@@ -51,7 +51,7 @@ Compared `38bc8bcabd90e23a7518375d7e2087a399f0eec9..eebe89fe00b49895f05cec587f1d
 | Old Worker rejection and cross-storage publication consistency | 04/06 | authority/fault matrices, Worker tests and accepted process boundary | PASS within recorded limits |
 | Ordinary local behavior/logging compatibility | 04a/04b/05a | compatibility247, real migration-before-auth interaction | PASS |
 | Complete exact regression inventory | 07 | four disjoint stages1020,3060 passed phases; historical637 retained/0 missing/383 new | PASS |
-| Scoped branch delivery | 07 | six docs prepared; actual commit/push/ref still pending | pending Git gate only |
+| Scoped branch delivery | 07 | 600b325 actual commit/push/fresh remote ref checks all exit0 | PASS:600b325 remote-verified |
 
 ## Overlap and duplication audit
 
@@ -114,4 +114,10 @@ Each runner spawns fixed-venv `-m pytest -q *STAGES[stage] --basetemp=.runtime/p
 
 ## Decision
 
-`accepted` because all nine predecessor packets and source ancestry, the scoped combined contracts/diff, exact four-stage actual regression and qualified process inheritance pass independent SPEC/QUALITY and root checks. This accepts the intentionally bounded isolated feature, not broader distributed production readiness. No implementation correction is required. Finish the six-file documentary review and scoped commit/push/remote-ref gate before marking packet07 fully done.
+`accepted` because all nine predecessor packets and source ancestry, the scoped combined contracts/diff, exact four-stage actual regression and qualified process inheritance pass independent SPEC/QUALITY and root checks. This accepts the intentionally bounded isolated feature, not broader distributed production readiness. No implementation correction is required. Six-file documentary review and commit/push/remote-ref gate are complete for600b325; packet07 is done, with subsequent status bookkeeping recorded below.
+
+## Scoped delivery observed — 2026-10-22
+
+Six reviewed governance paths were committed as `600b325e7d185abd50a2cdb8d0e4e0c8cf7fc737`. Commit and push actually exited0; a fresh ls-remote actually exited0 and returned that exact authorized branch ref. Tested HEAD eebe89fe… is an ancestor; all431 planning raw inputs and15 protected raw paths remain unchanged. Root receipt `p7-delivery-root-n1.json` records the six-path boundary and observed results. The first add was refused by an old0-byte index.lock; no Git process existed and exclusive open succeeded, then it was preserved as `index.lock.stale-task07-20261022-063351` before the successful add. No protected source was staged.
+
+This later status-only record closes the actual Git gate for the accepted combined delivery; it is not part of the earlier tested packet bytes or n2 documentary review binding. Main/production remain unperformed. A subsequent bookkeeping commit carries this observation and done status; its own SHA cannot be self-embedded and is checked separately at delivery.

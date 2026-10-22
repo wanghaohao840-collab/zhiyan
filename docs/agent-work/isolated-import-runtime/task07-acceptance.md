@@ -1,6 +1,6 @@
 # Task07：组合验收与限定分支交付
 
-2026-10-22：**组合实现与验证已接受；限定 Git 交付待完成。** Sol High 负责实现及验证工具，Astra High 独立审查并发、一致性、运行器和实际证据。测试基点 `eebe89fe00b49895f05cec587f1dee75924e9ef1`；本轮仅更新治理文档，未改产品代码、测试、夹具、依赖或迁移。
+2026-10-22：**组合实现与验证已接受；限定六文档交付已提交、推送并核远端600b325。** Sol High 负责实现及验证工具，Astra High 独立审查并发、一致性、运行器和实际证据。测试基点 `eebe89fe00b49895f05cec587f1dee75924e9ef1`；本轮仅更新治理文档，未改产品代码、测试、夹具、依赖或迁移。
 
 ## 本轮实际验证
 
@@ -59,3 +59,9 @@ Astra COMBINED SPEC ACCEPTED / QUALITY ACCEPTED，无blocking或纠正包；root
 仅准备六份治理文档交付；尚未 commit/push 本轮文档，不将准备状态记成远端交付。测试源HEAD和其六个来源里程碑的祖先关系已核；当前远端授权分支读取仍为测试HEAD。交付时需记录实际commit/push退出、精确远端ref与文档字节。
 
 未合并main或发布生产。新用户初始化、全业务迁移、历史向量忠实性、真实远程嵌入、不同镜像回退、多批次晚写/孤儿GC、真实七轮退避与全机/服务故障验收均不包含在本结论中。原close错误可见性及晚线程超出观察期限的限制保持。历史迁移继续保留文本与元数据，向量回忆标为待补证。
+
+## Scoped delivery observed — 2026-10-22
+
+Six reviewed governance paths were committed as `600b325e7d185abd50a2cdb8d0e4e0c8cf7fc737`. Commit and push actually exited0; a fresh ls-remote actually exited0 and returned that exact authorized branch ref. Tested HEAD eebe89fe… is an ancestor; all431 planning raw inputs and15 protected raw paths remain unchanged. Root receipt `p7-delivery-root-n1.json` records the six-path boundary and observed results. The first add was refused by an old0-byte index.lock; no Git process existed and exclusive open succeeded, then it was preserved as `index.lock.stale-task07-20261022-063351` before the successful add. No protected source was staged.
+
+This later status-only record closes the actual Git gate for the accepted combined delivery; it is not part of the earlier tested packet bytes or n2 documentary review binding. Main/production remain unperformed. A subsequent bookkeeping commit carries this observation and done status; its own SHA cannot be self-embedded and is checked separately at delivery.
