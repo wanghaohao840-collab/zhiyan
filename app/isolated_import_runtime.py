@@ -4,19 +4,21 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field, fields
-import json
 import os
 import re
 from threading import Lock
 from typing import Callable, Literal, Mapping
-from urllib.parse import parse_qsl, unquote, urlsplit
 from uuid import UUID
 
-from psycopg.conninfo import conninfo_to_dict
 from psycopg.errors import InvalidSchemaName, UndefinedTable
 from psycopg.pq import TransactionStatus
 
 from app.object_store import S3ObjectStore
+from app.isolated_resource_settings import (
+    IsolatedResourceSettings, ResourceConfigurationError, _dsn,
+    parse_isolated_resources, validate_isolated_resource_identity,
+    validate_isolated_resource_pool, schema_catalog_ready,
+)
 from app.postgres import PostgresDatabase
 from app.postgres_history_document_witnesses import (
     PostgresHistoryDocumentWitnessRepository, document_evidence,
@@ -32,26 +34,6 @@ from hello_agents.memory.rag.index_identity import IndexIdentity
 from hello_agents.memory.storage.vector_store import QdrantVectorStore
 
 
-_SCHEMA = re.compile(r"[a-z][a-z0-9_]{0,62}\Z")
-_BUCKET = re.compile(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]\Z")
-_HEAD = "20261007_16"
-_RETAINED_SCHEMA = "cutover_combined_refs_20260930_0f7592dc3978"
-_RETAINED_BUCKET = "cutover-paired-bf20-69fcab0f0cbd4300a0545f2008c15779"
-_RELATIONS = (
-    "alembic_version", "users", "auth_sessions", "user_snapshots",
-    "memory_documents", "import_batches", "import_tasks", "import_objects",
-    "import_task_attempts", "import_user_schedule", "user_mutation_leases",
-    "document_objects", "vector_indexes", "vector_heads", "vector_generations",
-    "history_document_witnesses", "import_publication_evidence",
-    "user_publication_gates", "generation_reservations",
-    "import_publication_private_payloads", "import_publication_recovery_queue",
-    "import_publication_recovery_leases",
-    "import_publication_recovery_token_issuance",
-    "import_publication_recovery_schedule",
-)
-_PROFILE_FIELDS = {item.name for item in fields(EmbeddingProfile)}
-
-
 class IsolatedImportConfigurationError(ValueError):
     """A code-only error; untrusted setting values are never included."""
 
@@ -62,95 +44,6 @@ class IsolatedImportConfigurationError(ValueError):
 
 def _reject(code: str) -> None:
     raise IsolatedImportConfigurationError(code)
-
-
-def _endpoint(value: str, key: str) -> None:
-    try:
-        parsed = urlsplit(value)
-        valid = (parsed.scheme in {"http", "https"} and bool(parsed.hostname)
-                 and parsed.username is None and parsed.password is None
-                 and not parsed.query and not parsed.fragment and not parsed.path.strip("/"))
-        _ = parsed.port
-    except Exception:
-        valid = False
-    if not valid or any(char.isspace() for char in value):
-        _reject(key)
-
-
-def _host(value: str) -> str:
-    lowered = value.lower()
-    return "loopback" if lowered in {"localhost", "127.0.0.1", "::1"} else lowered
-
-
-def _connection_identity(value: str, key: str, *, isolated: bool) -> tuple[str, str, str, int, str | None]:
-    if not isinstance(value, str):
-        _reject(key)
-    try:
-        normalized = ("postgresql://" + value[len("postgresql+psycopg://"):]
-                      if not isolated and value.startswith("postgresql+psycopg://") else value)
-        parsed = urlsplit(normalized)
-        if (parsed.scheme != "postgresql" or parsed.fragment or not parsed.hostname
-                or parsed.path in {"", "/"} or any(char.isspace() for char in value)):
-            raise ValueError()
-        pairs = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
-        identity_keys = {"host", "hostaddr", "port", "dbname", "options", "service", "servicefile"}
-        if any(sum(1 for name, _ in pairs if name == key_name) > 1 for key_name in identity_keys):
-            raise ValueError()
-        if isolated and (len(pairs) != 1 or pairs[0][0] != "options"):
-            raise ValueError()
-        effective = conninfo_to_dict(normalized)
-        if (effective.get("service") or effective.get("hostaddr")
-                or any(name in {"service", "hostaddr", "servicefile"} for name, _ in pairs)):
-            raise ValueError()
-        host = effective.get("host")
-        database = effective.get("dbname")
-        port_text = effective.get("port") or "5432"
-        if (not isinstance(host, str) or not host or "," in host
-                or not isinstance(database, str) or not database
-                or any(char in database for char in ("=", "\n", "\r"))
-                or "://" in database or not str(port_text).isdigit()
-                or "," in str(port_text) or not 1 <= int(port_text) <= 65535):
-            raise ValueError()
-        option = effective.get("options", "")
-        if isolated:
-            if not option.startswith("-csearch_path="):
-                raise ValueError()
-            schema = option[len("-csearch_path="):]
-            if not _SCHEMA.fullmatch(schema):
-                raise ValueError()
-        elif option:
-            match = re.fullmatch(r"-c\s*search_path=([a-z][a-z0-9_]{0,62})", option)
-            if match is None:
-                raise ValueError()
-            schema = match.group(1)
-        else:
-            # The effective ordinary path may come from role/database defaults.
-            # A same-database target cannot be proven separate without it.
-            schema = None
-        return _host(host), database, effective.get("user", ""), int(port_text), schema
-    except Exception:
-        _reject(key)
-
-
-def _dsn(value: str, key: str) -> tuple[str, str, str, int, str]:
-    identity = _connection_identity(value, key, isolated=True)
-    return identity  # type: ignore[return-value]
-
-
-def _ordinary_dsn(value: str) -> tuple[str, str, str, int, str | None]:
-    return _connection_identity(value, "DATABASE_URL", isolated=False)
-
-
-def _profile(value: str, key: str) -> EmbeddingProfile:
-    try:
-        parsed = json.loads(value)
-        if not isinstance(parsed, dict) or set(parsed) != _PROFILE_FIELDS:
-            raise ValueError()
-        profile = EmbeddingProfile(**parsed)
-        IndexIdentity("qdrant", "validation", profile)
-        return profile
-    except Exception:
-        _reject(key)
 
 
 def _integer(values: Mapping[str, str], name: str, default: int) -> int:
@@ -196,37 +89,13 @@ class IsolatedImportSettings:
             _reject("role")
         if self.enabled is not True:
             _reject("ISOLATED_IMPORT_ENABLED")
-        if not isinstance(self.schema, str) or not _SCHEMA.fullmatch(self.schema) or self.schema in {"public", _RETAINED_SCHEMA}:
-            _reject("ISOLATED_IMPORT_SCHEMA")
-        identity = _dsn(self.database_url, "ISOLATED_IMPORT_DATABASE_URL")
-        if identity[-1] != self.schema:
-            _reject("ISOLATED_IMPORT_SCHEMA")
-        for value, key in ((self.s3_endpoint_url, "ISOLATED_IMPORT_S3_ENDPOINT_URL"),
-                           (self.qdrant_url, "ISOLATED_IMPORT_QDRANT_URL")):
-            _endpoint(value, key)
-        if (not isinstance(self.s3_bucket, str) or not _BUCKET.fullmatch(self.s3_bucket)
-                or self.s3_bucket in {_RETAINED_BUCKET, self.ordinary_s3_bucket}):
-            _reject("ISOLATED_IMPORT_S3_BUCKET")
-        if bool(self.s3_access_key_id) != bool(self.s3_secret_access_key):
-            _reject("S3_ACCESS_KEY_ID")
-        if not isinstance(self.s3_region, str) or not self.s3_region.strip():
-            _reject("S3_REGION")
         try:
-            rag = IndexIdentity("qdrant", self.rag_collection, self.rag_profile)
-            episode = IndexIdentity("qdrant", self.episode_collection, self.episode_profile)
-        except Exception:
-            _reject("ISOLATED_IMPORT_PROFILE_OR_COLLECTION")
-        if (rag.base_collection == episode.base_collection
-                or rag.physical_collection == episode.physical_collection
-                or self.rag_collection in {self.ordinary_rag_collection, self.ordinary_episode_collection}
-                or self.episode_collection in {self.ordinary_rag_collection, self.ordinary_episode_collection}):
-            _reject("ISOLATED_IMPORT_COLLECTION_IDENTITY")
-        if self.ordinary_database_url is not None:
-            ordinary = _ordinary_dsn(self.ordinary_database_url)
-            if ((ordinary[0], ordinary[1], ordinary[3]) ==
-                    (identity[0], identity[1], identity[3])
-                    and ordinary[4] in {None, identity[4]}):
-                _reject("ISOLATED_IMPORT_DATABASE_IDENTITY")
+            resource_values = {item.name: getattr(self, item.name)
+                               for item in fields(IsolatedResourceSettings)}
+            resources = IsolatedResourceSettings(**resource_values)
+            validate_isolated_resource_identity(resources)
+        except ResourceConfigurationError as error:
+            _reject(error.code)
         if not isinstance(self.trusted_user_ids, frozenset) or len(self.trusted_user_ids) != 2:
             _reject("ISOLATED_IMPORT_TRUSTED_USER_IDS")
         for user_id in self.trusted_user_ids:
@@ -235,11 +104,13 @@ class IsolatedImportSettings:
                     raise ValueError()
             except Exception:
                 _reject("ISOLATED_IMPORT_TRUSTED_USER_IDS")
-        numbers = (self.pg_pool_min, self.pg_pool_max, self.lease_seconds,
-                   self.heartbeat_seconds, self.attempt_seconds,
+        try:
+            validate_isolated_resource_pool(resources)
+        except ResourceConfigurationError:
+            _reject("ISOLATED_IMPORT_TIMING")
+        numbers = (self.lease_seconds, self.heartbeat_seconds, self.attempt_seconds,
                    self.provider_timeout_seconds, self.stop_wait_seconds)
         if (any(type(number) is not int or number < 1 for number in numbers)
-                or self.pg_pool_min > self.pg_pool_max
                 or self.heartbeat_seconds * 3 >= self.lease_seconds
                 or self.provider_timeout_seconds > self.attempt_seconds
                 or type(self.provider_max_retries) is not int
@@ -260,28 +131,14 @@ class IsolatedImportSettings:
         raw_users = required("ISOLATED_IMPORT_TRUSTED_USER_IDS").split(",")
         if len(raw_users) != 2 or any(not part or part.strip() != part for part in raw_users) or len(set(raw_users)) != 2:
             _reject("ISOLATED_IMPORT_TRUSTED_USER_IDS")
+        try:
+            resources = parse_isolated_resources(values)
+        except ResourceConfigurationError as error:
+            _reject(error.code)
         return cls(
             role=role, enabled=True,
-            database_url=required("ISOLATED_IMPORT_DATABASE_URL"),
-            schema=required("ISOLATED_IMPORT_SCHEMA"),
-            s3_endpoint_url=required("ISOLATED_IMPORT_S3_ENDPOINT_URL"),
-            s3_bucket=required("ISOLATED_IMPORT_S3_BUCKET"),
-            qdrant_url=required("ISOLATED_IMPORT_QDRANT_URL"),
-            rag_collection=required("ISOLATED_IMPORT_RAG_COLLECTION"),
-            episode_collection=required("ISOLATED_IMPORT_EPISODE_COLLECTION"),
-            rag_profile=_profile(required("ISOLATED_IMPORT_RAG_PROFILE_JSON"), "ISOLATED_IMPORT_RAG_PROFILE_JSON"),
-            episode_profile=_profile(required("ISOLATED_IMPORT_EPISODE_PROFILE_JSON"), "ISOLATED_IMPORT_EPISODE_PROFILE_JSON"),
+            **resources,
             trusted_user_ids=frozenset(raw_users),
-            s3_region=values.get("S3_REGION", "us-east-1"),
-            s3_access_key_id=values.get("S3_ACCESS_KEY_ID") or None,
-            s3_secret_access_key=values.get("S3_SECRET_ACCESS_KEY") or None,
-            qdrant_api_key=values.get("QDRANT_API_KEY") or None,
-            ordinary_database_url=values.get("DATABASE_URL"),
-            ordinary_s3_bucket=values.get("S3_BUCKET") or None,
-            ordinary_rag_collection=values.get("QDRANT_COLLECTION") or None,
-            ordinary_episode_collection=values.get("EPISODE_QDRANT_COLLECTION") or None,
-            pg_pool_min=_integer(values, "ISOLATED_IMPORT_PG_POOL_MIN", 1),
-            pg_pool_max=_integer(values, "ISOLATED_IMPORT_PG_POOL_MAX", 10),
             lease_seconds=_integer(values, "ISOLATED_IMPORT_LEASE_SECONDS", 60),
             heartbeat_seconds=_integer(values, "ISOLATED_IMPORT_HEARTBEAT_SECONDS", 10),
             attempt_seconds=_integer(values, "ISOLATED_IMPORT_ATTEMPT_SECONDS", 300),
@@ -303,24 +160,11 @@ class ProviderReadiness:
 
 
 def _schema_ready(database: PostgresDatabase, settings: IsolatedImportSettings) -> bool:
-    # The relation names are fixed source literals. to_regclass uses the fully
-    # qualified schema, so a same-named public table cannot satisfy this gate.
     with database.transaction() as cursor:
-        names = [f"{settings.schema}.{name}" for name in _RELATIONS]
-        found = cursor.execute("select to_regclass(relation.name) is not null as present from unnest(%s::text[]) as relation(name)", (names,)).fetchall()
-        if len(found) != len(_RELATIONS) or not all(item["present"] for item in found):
-            return False
-        row = cursor.execute("""select current_database() as database_name,
-            current_schema() as schema_name,current_setting('search_path') as search_path,
-            (select count(*) from alembic_version) as migration_count,
-            (select min(version_num) from alembic_version) as migration_head""").fetchone()
-        if (row is None or row["database_name"] != unquote(urlsplit(settings.database_url).path[1:])
-                or row["schema_name"] != settings.schema
-                or row["search_path"] != settings.schema
-                or row["migration_count"] != 1
-                or row["migration_head"] != _HEAD):
-            return False
-    return True
+        return schema_catalog_ready(
+            cursor, settings.schema,
+            _dsn(settings.database_url, "ISOLATED_IMPORT_DATABASE_URL")[1],
+            allowed_heads={"20261007_16", "20261022_17"})
 
 
 _AUTHORITY_SQL = """select
