@@ -11,11 +11,13 @@ import json
 import re
 from uuid import UUID, uuid4
 
+from app.history import EMPTY_HISTORY
 from app.postgres_coordination import PostgresUserMutationCoordinator, UserMutationLease
 from app.postgres_import_leases import ImportAttempt, PostgresImportLeaseRepository
 from hello_agents.memory.rag.index_identity import IndexIdentity
 
 _DIGEST = re.compile(r"[a-f0-9]{64}\Z")
+_EMPTY_DIGEST = hashlib.sha256(b'[]').hexdigest()
 
 
 class VectorAuthorityError(RuntimeError):
@@ -203,46 +205,51 @@ class PostgresVectorGenerationAuthority:
             raise ValueError('generation_id must be UUID')
         with self.database.transaction() as cursor:
             cursor.execute('begin')
-            lease, task = self._owner(cursor, authority, scope)
-            if live is None:
-                from app.import_publication_evidence import require_no_gate_in_transaction
-                require_no_gate_in_transaction(cursor, scope.tenant_id)
-                if cursor.execute('''select 1 from generation_reservations
-                    where generation_id=%s''',(generation_id,)).fetchone() is not None:
-                    raise VectorAuthorityError('Candidate UUID is permanently reserved')
-            else:
-                from app.import_memory_publication import _require_live_issuer
-                from app.import_publication_evidence import PostgresImportPublicationEvidenceRepository
-                evidence_repository = PostgresImportPublicationEvidenceRepository(self.database)
-                evidence = evidence_repository._read_exact_in_cursor(cursor,
-                    _require_live_issuer(live)[1].key)
-                evidence_repository.require_candidate_in_transaction(cursor, live,
-                    scope.vector_kind, scope, generation_id, operation='stage_before',
-                    expected_phase=evidence.phase, expected_version=evidence.phase_version)
-            index = cursor.execute('''select identity,index_revision from vector_indexes
-                where tenant_id=%s and vector_kind=%s and namespace=%s
-                and index_key=%s''', scope.key).fetchone()
-            if index is None:
-                cursor.execute('''insert into vector_indexes
-                    (tenant_id,vector_kind,namespace,index_key,identity)
-                    values (%s,%s,%s,%s,%s::jsonb)''',
-                    (*scope.key,_canonical(scope.identity.to_dict())))
-            index_revision = self._index(cursor, scope)
-            head = self._head_row(cursor, scope, lock=True)
-            if (None if head is None else head['revision']) != expected_revision:
-                raise VectorAuthorityError('Head revision changed')
-            cursor.execute('''insert into vector_generations
-                (generation_id,tenant_id,vector_kind,namespace,index_key,base_revision,
-                 index_revision,owner,user_lease_token,user_lease_version,
-                 task_id,task_lease_token,task_lease_version,state)
-                values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'staging')''',
-                (generation_id, *scope.key, expected_revision, index_revision,
-                 lease.owner, lease.lease_token, lease.lease_version, *task))
-            self._owner(cursor, authority, scope)
-            if live is not None:
-                evidence_repository.require_candidate_in_transaction(cursor, live,
-                    scope.vector_kind, scope, generation_id, operation='stage_after',
-                    expected_phase=evidence.phase, expected_version=evidence.phase_version)
+            return self._stage_in_transaction(cursor, scope, authority,
+                expected_revision=expected_revision, generation_id=generation_id, live=live)
+
+    def _stage_in_transaction(self, cursor, scope, authority, *, expected_revision,
+                              generation_id: UUID, live=None) -> UUID:
+        lease, task = self._owner(cursor, authority, scope)
+        if live is None:
+            from app.import_publication_evidence import require_no_gate_in_transaction
+            require_no_gate_in_transaction(cursor, scope.tenant_id)
+            if cursor.execute('''select 1 from generation_reservations
+                where generation_id=%s''',(generation_id,)).fetchone() is not None:
+                raise VectorAuthorityError('Candidate UUID is permanently reserved')
+        else:
+            from app.import_memory_publication import _require_live_issuer
+            from app.import_publication_evidence import PostgresImportPublicationEvidenceRepository
+            evidence_repository = PostgresImportPublicationEvidenceRepository(self.database)
+            evidence = evidence_repository._read_exact_in_cursor(cursor,
+                _require_live_issuer(live)[1].key)
+            evidence_repository.require_candidate_in_transaction(cursor, live,
+                scope.vector_kind, scope, generation_id, operation='stage_before',
+                expected_phase=evidence.phase, expected_version=evidence.phase_version)
+        index = cursor.execute('''select identity,index_revision from vector_indexes
+            where tenant_id=%s and vector_kind=%s and namespace=%s
+            and index_key=%s''', scope.key).fetchone()
+        if index is None:
+            cursor.execute('''insert into vector_indexes
+                (tenant_id,vector_kind,namespace,index_key,identity)
+                values (%s,%s,%s,%s,%s::jsonb)''',
+                (*scope.key,_canonical(scope.identity.to_dict())))
+        index_revision = self._index(cursor, scope)
+        head = self._head_row(cursor, scope, lock=True)
+        if (None if head is None else head['revision']) != expected_revision:
+            raise VectorAuthorityError('Head revision changed')
+        cursor.execute('''insert into vector_generations
+            (generation_id,tenant_id,vector_kind,namespace,index_key,base_revision,
+             index_revision,owner,user_lease_token,user_lease_version,
+             task_id,task_lease_token,task_lease_version,state)
+            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'staging')''',
+            (generation_id, *scope.key, expected_revision, index_revision,
+             lease.owner, lease.lease_token, lease.lease_version, *task))
+        self._owner(cursor, authority, scope)
+        if live is not None:
+            evidence_repository.require_candidate_in_transaction(cursor, live,
+                scope.vector_kind, scope, generation_id, operation='stage_after',
+                expected_phase=evidence.phase, expected_version=evidence.phase_version)
         return generation_id
 
     def _candidate(self, cursor, scope, authority, generation_id, *, states):
@@ -265,23 +272,85 @@ class PostgresVectorGenerationAuthority:
             raise ValueError('Verified count and SHA-256 digest are required')
         with self.database.transaction() as cursor:
             cursor.execute('begin')
-            self._candidate(cursor, scope, authority, generation_id, states=('staging',))
-            if live is None:
-                from app.import_publication_evidence import require_no_gate_in_transaction
-                require_no_gate_in_transaction(cursor, scope.tenant_id)
-            else:
-                from app.import_memory_publication import _require_live_issuer
-                from app.import_publication_evidence import PostgresImportPublicationEvidenceRepository
-                repository = PostgresImportPublicationEvidenceRepository(self.database)
-                evidence = repository._read_exact_in_cursor(cursor,
-                    _require_live_issuer(live)[1].key)
-                repository.require_candidate_in_transaction(cursor, live,
-                    scope.vector_kind, scope, generation_id, operation='seal',
-                    expected_phase=evidence.phase, expected_version=evidence.phase_version)
-            cursor.execute('''update vector_generations set state='sealed', expected_count=%s,
-                content_digest=%s,sealed_at=clock_timestamp() where generation_id=%s''',
-                (expected_count, content_digest, generation_id))
-            self._owner(cursor, authority, scope)
+            self._seal_in_transaction(cursor, scope, authority, generation_id,
+                expected_count=expected_count, content_digest=content_digest, live=live)
+
+    def _seal_in_transaction(self, cursor, scope, authority, generation_id: UUID, *,
+                             expected_count: int, content_digest: str, live=None) -> None:
+        self._candidate(cursor, scope, authority, generation_id, states=('staging',))
+        if live is None:
+            from app.import_publication_evidence import require_no_gate_in_transaction
+            require_no_gate_in_transaction(cursor, scope.tenant_id)
+        else:
+            from app.import_memory_publication import _require_live_issuer
+            from app.import_publication_evidence import PostgresImportPublicationEvidenceRepository
+            repository = PostgresImportPublicationEvidenceRepository(self.database)
+            evidence = repository._read_exact_in_cursor(cursor,
+                _require_live_issuer(live)[1].key)
+            repository.require_candidate_in_transaction(cursor, live,
+                scope.vector_kind, scope, generation_id, operation='seal',
+                expected_phase=evidence.phase, expected_version=evidence.phase_version)
+        cursor.execute('''update vector_generations set state='sealed', expected_count=%s,
+            content_digest=%s,sealed_at=clock_timestamp() where generation_id=%s''',
+            (expected_count, content_digest, generation_id))
+        self._owner(cursor, authority, scope)
+
+    def _publish_initial_empty_pair_in_transaction(
+            self, cursor, lease: UserMutationLease, rag_scope: VectorScope,
+            episode_scope: VectorScope) -> tuple[UUID, UUID]:
+        """Publish both empty baselines on the caller's uncommitted cursor."""
+        if (not isinstance(lease, UserMutationLease)
+                or not isinstance(rag_scope, VectorScope)
+                or not isinstance(episode_scope, VectorScope)
+                or rag_scope.tenant_id != lease.user_id
+                or episode_scope.tenant_id != lease.user_id
+                or rag_scope.vector_kind != 'rag'
+                or rag_scope.namespace != 'pdf_' + lease.user_id
+                or episode_scope.vector_kind != 'episode'
+                or episode_scope.namespace != 'episodes'
+                or rag_scope.identity.base_collection == episode_scope.identity.base_collection
+                or rag_scope.identity.physical_collection == episode_scope.identity.physical_collection):
+            raise VectorAuthorityError('Initial vector scopes or lease differ')
+
+        # The lease check locks the user before any vector authority rows.
+        self._owner(cursor, lease, rag_scope)
+        from app.import_publication_evidence import require_no_gate_in_transaction
+        require_no_gate_in_transaction(cursor, lease.user_id)
+        snapshots = cursor.execute('''select kind,version,payload from user_snapshots
+            where user_id=%s and kind in ('history','memory')''',
+            (lease.user_id,)).fetchall()
+        by_kind = {row['kind']: row for row in snapshots}
+        if (len(snapshots) != 2 or set(by_kind) != {'history', 'memory'}
+                or by_kind['history']['version'] != 1
+                or by_kind['history']['payload'] != EMPTY_HISTORY
+                or by_kind['memory']['version'] != 1
+                or by_kind['memory']['payload'] != {
+                    'user_id': lease.user_id, 'memories': []}):
+            raise VectorAuthorityError('Initial snapshots must be exact empty v1 values')
+        existing_index = cursor.execute('''select 1 from vector_indexes
+            where tenant_id=%s limit 1''', (lease.user_id,)).fetchone()
+        existing_head = cursor.execute('''select 1 from vector_heads
+            where tenant_id=%s limit 1''', (lease.user_id,)).fetchone()
+        if existing_index is not None or existing_head is not None:
+            raise VectorAuthorityError('Vector authority already exists for user')
+
+        rag_id = uuid4()
+        episode_id = uuid4()
+        while episode_id == rag_id:
+            episode_id = uuid4()
+        for scope, generation_id in ((rag_scope, rag_id), (episode_scope, episode_id)):
+            self._stage_in_transaction(cursor, scope, lease,
+                expected_revision=None, generation_id=generation_id)
+        for scope, generation_id in ((rag_scope, rag_id), (episode_scope, episode_id)):
+            self._seal_in_transaction(cursor, scope, lease, generation_id,
+                expected_count=0, content_digest=_EMPTY_DIGEST)
+        for scope, generation_id in ((rag_scope, rag_id), (episode_scope, episode_id)):
+            self._publish(cursor, scope, lease, generation_id,
+                expected_revision=None, expected_index_revision=1,
+                snapshot_version=1, expected_count=0, content_digest=_EMPTY_DIGEST)
+        self._owner(cursor, lease, rag_scope)
+        require_no_gate_in_transaction(cursor, lease.user_id)
+        return rag_id, episode_id
 
     def abandon(self, scope, authority, generation_id):
         """Permanently revoke a candidate after failed or ambiguous external I/O."""

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Repository packet review and the user's Sol High implementation/Astra High independent review assignment control execution; this draft plan is not an implementation GO.
 
-**Status:** Task01 implemented and independently accepted on 2026-10-23 after fresh unit32/schema37/regression129 passes (129 distinct tests). Task02–05 remain outstanding; later packets are prepared against accepted actual predecessors. See Task01 handoff and progress for exact source/execution bindings. This plan alone is not execution authorization.
+**Status:** Task01 and Task02 are implemented and independently accepted. Task02 fresh focus34/full regression80 passed on 2026-10-24 (80 distinct tests; 114 executions including repeats). Task03–05 and final feature integration remain outstanding. See packet handoffs/progress for exact bindings; this plan alone is not execution authorization.
 
 **Goal:** Give operations a local, explicit way to create a genuinely new account with complete trusted empty History/Memory and RAG/episode baselines, while keeping public registration closed and isolated import admission gated by the existing allowlist and `ordinary_ready`.
 

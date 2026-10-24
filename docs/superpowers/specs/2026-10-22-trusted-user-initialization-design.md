@@ -1,7 +1,7 @@
 # 受信新用户初始化设计
 
 - 日期：2026-10-22，Asia/Shanghai。
-- 状态：用户“继续执行”采纳推荐范围；首包资源配置/schema17已实施并于2026-10-23获独立验收。双空发布、建户服务、CLI和最终真实进程验收仍待后继包，未运行生产初始化。
+- 状态：用户“继续执行”采纳推荐范围；Task01资源配置/schema17及Task02同cursor双空发布均已实施并获独立验收，Task02于2026-10-24通过focus34/完整regression80。建户服务、CLI和最终真实进程/整体验收仍待后继包，未运行生产初始化。
 - 基点：codex/distributed-cutover-vertical-slice@e24deebb2b06d0b37f3c9dc516fcc4771e4a1e21。
 - 父设计：2026-10-10-isolated-import-runtime-design.md第2/8节；Task07已验收的是具备可证明基线的隔离导入，不包含生产新用户初始化。
 
