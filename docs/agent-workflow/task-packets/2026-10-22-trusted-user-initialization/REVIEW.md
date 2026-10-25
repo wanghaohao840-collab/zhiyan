@@ -3,7 +3,7 @@
 - Source plan: `docs/superpowers/plans/2026-10-22-trusted-user-initialization.md`
 - Reviewed commit: `e24deebb2b06d0b37f3c9dc516fcc4771e4a1e21`，另有本阶段新治理文档。
 - Review date: `2026-10-22`
-- Verdict: `accepted`；首包已实施且获独立 SPEC/QUALITY 验收，后继包仍待交付。
+- Verdict: `accepted`；Task01–03已实施且获独立 SPEC/QUALITY 验收，Task04–05及最终集成仍待交付。
 
 ## Repository evidence
 
@@ -46,18 +46,20 @@ N2 R1 已闭合：Task01 回归和最终 combined 命令完整执行新增 setti
 | --- | --- | --- | --- | --- |
 | `01-resource-settings-schema.md`（done） | none | no | shared resources/settings、migration17、schema/settings tests、runtime seam | 严格资源配置和不可变完成凭据，129独立测试验收 |
 | `02-initial-empty-vector-pair.md`（done） | 01 done | no | vector authority、新 pair test | 同cursor双空基线，focus34/完整回归80验收 |
-| Planned03（未生成） | 02 done | no | init service、auth cursor、新 service test | 原子建户与历史重入 |
+| `03-atomic-new-user-replay.md`（done） | 02 done | no | init service、auth cursor、新 service test | 原子建户/历史重入，focus40/完整五模块回归117验收 |
 | Planned04（未生成） | 03 done | no | ops CLI、新 CLI test | getpass 与条件外部只读预检 |
 | Planned05（未生成） | 04 done | no | 新 process acceptance test | 独立进程、readiness/首次导入及最终审查 |
 
-首包已 done；后继包须基于前序已接受的实际接口重新核对并生成。源计划不能代替自包含任务包。
+Task01–03已 done；Task04–05须基于前序已接受的实际接口重新核对并生成。源计划不能代替自包含任务包。
 
 ## Packet readiness audit
 
 | Packet | Goal/non-goals | Context/interfaces | Prerequisites | Change boundary | Acceptance/tests | Forbidden changes | Handoff | Ready |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 01 done | yes | yes：实际接口已验收 | yes：设计/packet/runner/实现/证据独审接受 | yes | yes：fresh GREEN通过 | yes | yes | yes |
-| 02–05 未生成 | 仅设计层面 | 无实际前序接口 | no | 仅计划范围 | 未冻结 | 仅计划边界 | 未生成 | no |
+| 02 done | yes | yes：实际接口已验收 | yes | yes | yes：focus34/回归80 | yes | yes | yes |
+| 03 done | yes | yes：实际接口已验收 | yes：READY/静态/运行独审接受 | yes：三文件 | yes：focus40/完整回归117 | yes | yes | yes |
+| 04–05 未生成 | 仅设计层面 | 待按已交付前序冻结 | no | 仅计划范围 | 未冻结 | 仅计划边界 | 未生成 | no |
 
 每列满足且 Astra 全文 READY 接受前，不得将任务包标 ready 或实施。
 
@@ -73,7 +75,7 @@ N2 R1 已闭合：Task01 回归和最终 combined 命令完整执行新增 setti
 
 ## Open decisions
 
-首包无未解决阻塞。下一项是基于实际 authority 的同 cursor 双空发布；后继服务/CLI/真实进程及最终集成尚待完成。
+Task03无未解决阻塞。下一项是运维CLI与条件外部只读预检；真实进程/readiness及最终集成尚待完成。
 
 ### 2026-10-23 测试范围现实修正
 
@@ -98,3 +100,11 @@ Astra SPEC/QUALITY接受原draft `102e4e307979b04519a3a77df6ea83f8e5710dae1a596b
 ## 2026-10-24 Task02最终验收
 
 Astra最终报告 `3e24c5e9b30361964f39d17d181c7444843136d4f152e860e75fdaf5c1baae35` SPEC/QUALITY接受Task02原子双空发布和既有wrapper兼容。root全文核报，独立组合receipt `944f66de482f8e9e493d2b70f31a4880bd02517575a002af56e6d2f67b3760a2`，fresh focus34/回归80零FES、80distinct/114执行/342phase；原15dirty不变。原执行READY已保留，packet done/handoff是验收后文档更新。Task03–05尚未交付；旧“02–05未生成”的历史ready审计由本节仅对02的done结论替代，03–05仍不可实施。
+
+## 2026-10-25 Task03静态READY接受
+
+Astra报告 `init-t3-ready-astra-n1.md` SHA256 `bfee27ae047049b4a25b055c6744f50e21ba16e2eb13ec059d79e166d68f7294` SPEC/QUALITY接受最终draft `b6cc1a6e81d93f075777e57a509739da715fb67b273e8b1a74a28beaa72d2ae3` 和runner `e94c3c74d1af7b640c1f21bd2d720ed046b62e11d1a1bbdec1371a586f0f3caf`。同label非RED receipt、test前置循环、RRRO proof有限pool+SQL界限、实际客户端PG身份绑定均明示闭合。root全文读报核hash，保留原稿后仅status改ready；当前ready SHA256 `c3a908577340428ff3359eae359ac9f38de6acd4830c2f5267d4f97261973800`。下一步只授权新测试，独审freeze后真实REDGO，RED接受后才授权产品；无Task03运行/实现验收。
+
+## 2026-10-25 Task03最终验收
+
+Astra最终SPEC/QUALITY报告 `init-t3-runtime-astra-n1.md` SHA256 `bee3c344ee247b76b2cb57c21a86d5266e4ebc56f6376cd6697363ae6f246b4c` 接受三文件实现和真实n2证据；root组合receipt `249082463ebb053e1675dbb10c3d1949c5b95bd5d77cef2b0166303f593abaa2`。fresh focus40/完整五模块回归117零FES，117distinct/157执行/471phase。全部原436无关source与15保护raw不变，资源11schema/27collection/7bucket逐名称前后一致；sourceQ/S3只读metadata且停止。原READY执行字节已保留，packet done/handoff是验收后记账。真实线程竞争、回滚/unknown、加速但真实DBclock跨期、同新用户import后原receipt retired的PG-only重入均通过；OS进程死亡/readiness仍待Task05。Task04 CLI及最终集成尚未交付。

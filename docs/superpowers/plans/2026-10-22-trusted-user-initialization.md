@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Repository packet review and the user's Sol High implementation/Astra High independent review assignment control execution; this draft plan is not an implementation GO.
 
-**Status:** Task01 and Task02 are implemented and independently accepted. Task02 fresh focus34/full regression80 passed on 2026-10-24 (80 distinct tests; 114 executions including repeats). Task03–05 and final feature integration remain outstanding. See packet handoffs/progress for exact bindings; this plan alone is not execution authorization.
+**Status:** Task01–03 are implemented and independently accepted. Task03 fresh focus40/full five-module regression117 passed on 2026-10-25 (117 distinct tests; 157 executions including repeats; zero failures/errors/skips). Task04–05 and final feature integration remain outstanding. See packet handoffs/progress for exact bindings; this plan alone is not execution authorization.
 
 **Goal:** Give operations a local, explicit way to create a genuinely new account with complete trusted empty History/Memory and RAG/episode baselines, while keeping public registration closed and isolated import admission gated by the existing allowlist and `ordinary_ready`.
 
@@ -169,3 +169,7 @@ Astra N2 report `init-design-plan-astra-n2.md` SHA256 `27ce855cce6b9cbc8467bcc90
 ## Task01 verification correction — 2026-10-23
 
 Current `tests/test_isolated_import_runtime.py` includes real PostgreSQL/S3/Qdrant cases through `real_isolated_resources`; a PostgreSQL-only Task01 run cannot accept those cases as skipped passes. The Task01 packet must supersede its provisional commands above with complete new settings/schema modules, complete `tests/integration/test_postgres_schema.py`, and explicit selectors for the existing runtime module's 11 non-real test functions. Independent collection expands parameterized node IDs before execution. Required cases must have zero skips. The original runtime `test_real_*` cases remain required in Task05's multi-service acceptance. This corrects executable test scope without changing product scope; exact packet and runner bytes require new Astra review.
+
+## Task03 acceptance record — 2026-10-25
+
+Task03 is done: atomic new-account publication and immutable historical PostgreSQL replay, preserving current-password verification and existing public auth behavior. Fresh fixed-venv n2 focus40/full five-module regression117 passed with zero failures/errors/skips, 117 distinct nodes, 157 executions including repeats and 471 passing phase records. The historical RED remains absent-service collection evidence only; the reviewed current test delta was freshly collected and executed. Final Astra SPEC/QUALITY report SHA256 `bee3c344ee247b76b2cb57c21a86d5266e4ebc56f6376cd6697363ae6f246b4c`; root combined receipt `249082463ebb053e1675dbb10c3d1949c5b95bd5d77cef2b0166303f593abaa2`. Full resource-name inventory and 436 unrelated source/15 protected hashes are unchanged. See Task03 handoff for exact source hashes, timeout/expiry evidence and commands. Task04 CLI, Task05 real processes/readiness and final integration remain outstanding; no main or production action.

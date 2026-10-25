@@ -1,7 +1,7 @@
 # 受信新用户初始化设计
 
 - 日期：2026-10-22，Asia/Shanghai。
-- 状态：用户“继续执行”采纳推荐范围；Task01资源配置/schema17及Task02同cursor双空发布均已实施并获独立验收，Task02于2026-10-24通过focus34/完整regression80。建户服务、CLI和最终真实进程/整体验收仍待后继包，未运行生产初始化。
+- 状态：用户“继续执行”采纳推荐范围；Task01–03均已实施并获独立验收。Task03原子建户/历史重入于2026-10-25通过focus40及完整五模块regression117，零失败/错误/跳过；CLI、最终真实进程及整体验收仍待后继包，未运行生产初始化。
 - 基点：codex/distributed-cutover-vertical-slice@e24deebb2b06d0b37f3c9dc516fcc4771e4a1e21。
 - 父设计：2026-10-10-isolated-import-runtime-design.md第2/8节；Task07已验收的是具备可证明基线的隔离导入，不包含生产新用户初始化。
 
@@ -94,3 +94,7 @@ Sol High实施，Astra High独审迁移/并发/一致性和实际证据。固定
 ## 10. 独立设计审查接受 — 2026-10-22
 
 Astra合审报告init-design-plan-astra-n2.md SHA256 27ce855cce6b9cbc8467bcc9036896739751c6b84b7dfc9282c74496846aa722，正式接受设计/计划。审阅spec原SHA1e4507122c5271a76b59f76259913929b6afa944a81f1462db01e83af58c9c5f及plan原SHA525de02ea98d0a3c12776e62e299889fcdaa60599865fe935c4e3b43649a8762分别保存为ignored init-spec-reviewed-root-n2.md / init-plan-reviewed-root-n2.md。此状态段仅是审查记账，核心设计未变，不把它冒称原审字节。首任务包仍draft；未冻结DDL/接口/runner不能实施。
+
+## 11. Task03实现与运行接受 — 2026-10-25
+
+单PG原子新建账户/双快照/双空向量receipt及head/原History witness/不可变ledger已实施，按原始receipt/witness验证历史重入，账户正常导入后无需当前head/snapshot仍为空。fresh focus40与完整五模块回归117零失败/错误/跳过；Astra最终SPEC/QUALITY报告SHA256 `bee3c344ee247b76b2cb57c21a86d5266e4ebc56f6376cd6697363ae6f246b4c`，root组合receipt `249082463ebb053e1675dbb10c3d1949c5b95bd5d77cef2b0166303f593abaa2`。真实回滚/未知结果/并发/加速DBclock租约跨期和同新户真实import后retired原凭据重入均验证；Task04CLI、Task05 OS进程死亡/readiness及最终集成仍待完成。原设计受审字节与执行READY副本保留；本节只记当前已验收范围，无生产初始化或main合并。

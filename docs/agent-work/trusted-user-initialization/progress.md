@@ -75,3 +75,37 @@ fixture current17最小修获Astra `d00b1c06d3e59c8e85acb125266911156bf396a6e368
 续接时运行已结束数小时，专用PG/target在regression后停止；root核精确身份后只重启PG核残余init_t2_ schema为0，sourceQ持续停止，cleanup记录 `30461fc386266657b729fa010460523e7967373693c06b7b302793a37e546a88`。当前target停止不替代运行时attestation，regression before/after保留当时target健康的证据。Astra最终验收中，尚未标Task02 done或提交。
 
 Task02最终Astra SPEC/QUALITY接受，报告SHA256 `3e24c5e9b30361964f39d17d181c7444843136d4f152e860e75fdaf5c1baae35`。root全文读报核hash并保留READY执行文档，packet标done并填实际handoff，更新plan/spec/REVIEW的Task02范围状态。即将scoped提交7文件（2实现/测试+5文档），排除15保护和runtime，尚无Task03实施或main/生产操作。
+
+Task02 scoped提交 `72aaf824f89bce4c8a339722e25e52030c5fbd03` 成功且推送，ls-remote精确ref核同SHA；只含2源码/测试+5验收文档，15dirty保护保持raw、排除提交。delivery receipt `init-t2-delivery-root-n1.json` SHA256 `93d1510b12fb5a00a396ed793d11e4c0879ea11213f2a06d85615b9849671008`。下一步基于该已交付HEAD生成Task03原子建户/PG历史重入任务包；当前接口笔记为只读准备，不是实现或ready。
+
+## 2026-10-24：Task03草稿与运行器静态准备
+
+Task03 baseline `init-t3-baseline-root-n1.json` SHA256 `253a6ab0eee748cb0324f5fc2ad6e89eec5731cc814cd636cc0a0726825af0e8` 绑定已交付HEAD72aaf824、437原source及15保护，唯一existing allowed为postgres_auth，新service/test均absent。Sol准备三文件范围自包含draft、完整new+pair+snapshot+authsessions+ImportMemoryPublication回归，后者及真实导入后replay需专用PG+targetQ+S3，不接受skip。S3 metadata核ID68a974…/专用命名卷/data/127.0.0.1:59498，未启动/连接；sourceS3/Q不连接。
+
+Astra事务观察报告 `e757ce4a2d168f9e163e62be34a0d8a50d85f240af29368bb59f8febc52b3a5d` 接受保留database.transaction()+每次独有body-failure sentinel；同sentinel完整逃逸才确证body回滚，opaque commit/rollback/cleanup无法确认则最多一次独立RRRO proof，否则unknown。无需扩数据库基础设施；密码按spec验证当前账户，历史proof查原receipt/witness。此报告不是完整Task03 READY。
+
+Astra审runner发现同label非RED可未绑定独立RED receipt的缺口，已交Sol最小修正：所有非RED阶段均强制绑定accepted RED receipt，RED自身不要求。随后Astra触发usage limit，无法完成整份packet/runner独立复审。root继续完成Sol静态修正、绑定文档并记录，保持packet draft；没有Task03源码/测试写入GO、root阶段GO、pytest或服务执行，不冒充最终READY或改用其他模型代审。437原source再次实查全部不变，新service/test仍不存在。
+
+Task03 Sol运行器最小修已静态冻结：runner `e94c3c74d1af7b640c1f21bd2d720ed046b62e11d1a1bbdec1371a586f0f3caf`，handoff `fe5a40108b6e91e3b1162bb1608b86213235f7d212fbc7c2a67a9509a915f1df`，draft packet `86904bf0a30cf36b528c7feef0431e161c2cfaa5d6590e056ef3b450e51a5508`。root逐项核三个hash/文档绑定/-I五命令、AST提取条件隔离求值10种stage/label组合和437基线，记录 `init-t3-runner-fix-root-n1.json` SHA256 `732688ae894b938277dc0aced4e908e0479b535073b2ebe447647c4133b87166`。未执行runner或pytest/SQL/服务，尚未Astra完整复审；保持draft，不将root静态复核替代用户指定Astra审查。下一步额度可用后对最终packet+runner做Astra READY独审，再tests-only及真实RED。
+
+## 2026-10-25：Task03恢复独审并进入tests-only
+
+Astra恢复可用并完成整包/runner静态独审，报告 `bfee27ae047049b4a25b055c6744f50e21ba16e2eb13ec059d79e166d68f7294` 接受最终draft `b6cc1a6e81d93f075777e57a509739da715fb67b273e8b1a74a28beaa72d2ae3`。新增闭合RRRO proof 5/10/15本地时限+0<pool<=10s、受信原池conninfo及service-owned实际client info绑定、真实同新user导入后重入测试。root完整核报，保存reviewed原稿、仅status改ready SHA `c3a908577340428ff3359eae359ac9f38de6acd4830c2f5267d4f97261973800`，runner仍e94…f3caf。437原source与15保护无漂移，新service/test此刻仍absent。只发新test写入GO，不授权产品；root GO builder已静态准备未运行，尚无真实RED。
+
+## 2026-10-25：Task03测试静态接受与真实RED接受
+
+新测试最终SHA `9570bbb12df53bd62ab91416a374a5533640cc03eb5ab5f191295dc880199808`，33函数/39静态case（不是收集/执行数），Astra报告 `init-t3-tests-astra-n1.md` SHA `0717ef9c927d8c52d81d20865c6a23dd5feaa342731ba9cbb141f56017b3ae5a` SPEC/QUALITY接受。测试增强真实DBclock锁等待跨期、稳定param IDs/tuple row、actualclient端点拒绝、proof真实RRRO+timeoulimits、confirmed失败proof计数和新fixture逐项cleanup。
+
+root实际执行reviewed runner red-focus n1，GO `94450e1723b0d40e471ea2c5162201ae079d50afd38e25b60abf1a889d7ac4ca` 绑定4840map。completion `0e1bddf0d364d39a7825e7a72e472b8457ed88bdca1f5a0692d5d8ee07bc5534` accepted=true，pytestexit2、唯一新service缺失的ModuleNotFoundError collection error、0执行节点/fixture/skip，源/GO/身份/Job空检查通过，无服务URL或运行。root独立receipt `ee5d0ec3e712d40e9b147ff4eec7a3c7fab0d6553a468603b25c0d444467fa03` 重核原件hash/JUnit/reports/source。该RED仅缺实现证据，不证明fixturebody业务SQL正确。
+
+已给Sol High产品GO仅创建trusted_user_initialization及修改postgres_auth，tests冻结、15保护禁止动；产品后须Astra源码独审和fresh collect/GREEN/full5module regression。当前无Task03功能通过或提交。
+
+## 2026-10-25：Task03静态修正、真实GREEN与完整回归最终接受
+
+Sol High实现三文件原子建户/历史重入；Astra静态审查闭合confirmed COMMIT后proof失败统一unavailable，新test仅增加disabled参数，最终源码service `4221a80685e6f460011cc364bb6cb3bffa5cd855e93891b46161566ad3e5219a`、auth `5da98208623acc7a3fb6f8c9a98e13815bb3cc43b6b20d5d0375ad7c24279f90`、test `60e77fdc34f975d60f085ae46bf9c47bed2514bd3b88d016b61e682cbf90164f`。实现静态报告 `b784ae6c4d553c615b6936ad6e9ed91caa9464933c7dd1afa00d91ace4c7ab64`；历史RED仍只证明旧test缺service的collection失败，不冒称当前test执行。
+
+root真实执行固定venv reviewed runner的collect-green-focus/green-focus/collect-regression/regression n2，各有独立GO并绑定历史RED n1。focus40与完整五模块regression117全部PASS/0FES，117distinct、157执行含重复、471全PASS phases；完整回归模块为新40/pair34/snapshot8/authsession7/importmemory28。真实DBclock跨期采用测试事务缩短3秒租约+观察到真实锁等待，非默认60秒soak；进程死亡/readiness仍属Task05。source-map4840项 `faba736bfadee8199b7d8bd39b1bd8f6d516118bee688135e8355174a3846f8a`，focus completion `75af5d3e31b99275e23218e46fb89c70c4b2b9fb19919754188c842e4840a548`、regression completion `4471228eae4a95fa225b501be7a226704cd60e9ebcfcc28c2f52a5eb98188305`。
+
+独立root组合receipt `init-t3-green-accepted-root-n2.json` SHA256 `249082463ebb053e1675dbb10c3d1949c5b95bd5d77cef2b0166303f593abaa2` 重核hash/GO链/nonce/PID/image/creation/exit/Job空/rawXML节点和所有phase。实际专用PG/Q/S3健康；源Q/S3一直exited、metadata only。before/after inventory `513fd9d33d52086746bb47539cc65bbaec1987169fd995bb34dc28a20a287988` / `8c6dd95c22a3b675d2be38a2b0c8bd1817a8753ebb8affc3aba26c83f0d7a089` 逐名称11schema/27collection/7bucket一致，无新增或缺失，不声称历史内容checksum。436无关source及15保护raw均未变。
+
+Astra最终SPEC/QUALITY接受：`init-t3-runtime-astra-n1.md` SHA256 `bee3c344ee247b76b2cb57c21a86d5266e4ebc56f6376cd6697363ae6f246b4c`。root全文读报核hash后保存原执行READY、标packet done/handoff并更新REVIEW/plan/spec。准备scoped提交三源码/测试+五文档，保护15和runtime不暂存。Task04只读现实核对 `init-t4-reality-sol-n1.md` SHA256 `4d592d00176a975cb544c4c4fd39351c944e6c7f2e9c8f9b940c6d6bc44b0784` 已记录rawUUID规范校验、有限客户端和半开清理要求；尚无Task04 packet/实现。main/生产未操作。
