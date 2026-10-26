@@ -109,3 +109,93 @@ root真实执行固定venv reviewed runner的collect-green-focus/green-focus/col
 独立root组合receipt `init-t3-green-accepted-root-n2.json` SHA256 `249082463ebb053e1675dbb10c3d1949c5b95bd5d77cef2b0166303f593abaa2` 重核hash/GO链/nonce/PID/image/creation/exit/Job空/rawXML节点和所有phase。实际专用PG/Q/S3健康；源Q/S3一直exited、metadata only。before/after inventory `513fd9d33d52086746bb47539cc65bbaec1987169fd995bb34dc28a20a287988` / `8c6dd95c22a3b675d2be38a2b0c8bd1817a8753ebb8affc3aba26c83f0d7a089` 逐名称11schema/27collection/7bucket一致，无新增或缺失，不声称历史内容checksum。436无关source及15保护raw均未变。
 
 Astra最终SPEC/QUALITY接受：`init-t3-runtime-astra-n1.md` SHA256 `bee3c344ee247b76b2cb57c21a86d5266e4ebc56f6376cd6697363ae6f246b4c`。root全文读报核hash后保存原执行READY、标packet done/handoff并更新REVIEW/plan/spec。准备scoped提交三源码/测试+五文档，保护15和runtime不暂存。Task04只读现实核对 `init-t4-reality-sol-n1.md` SHA256 `4d592d00176a975cb544c4c4fd39351c944e6c7f2e9c8f9b940c6d6bc44b0784` 已记录rawUUID规范校验、有限客户端和半开清理要求；尚无Task04 packet/实现。main/生产未操作。
+
+## 2026-10-25：Task03交付及Task04静态准备
+
+Task03 scoped提交 `8031bbafbac49cd149c439b1f57ab5d96d097c02` 已推送，root随后ls-remote精确ref核同SHA；仅8文件（3源码/测试+5文档），15保护dirty保持raw且未暂存。delivery receipt `init-t3-delivery-root-n1.json` SHA256 `4f74c1a9133282561871249314ff56fb19a50b97b5fa10e577db0a952fab39f2`。源码冻结末尾空行的纯样式提示保留，未为消除提示改写已运行/独审的测试字节。
+
+Task04 planning baseline `init-t4-baseline-root-n1.json` SHA256 `e0ca32449038432b6fb09fdadd8e61cc53df39e7b839564f76bee89540042fcb` 绑定新HEAD、439现source及15保护，allowed_existing_changes为空；CLI与新test均absent。已授权Sol仅准备04自包含draft及ignored有限runner/handoff，消费现有settings/service和原生pool，补原始UUID校验、客户端有限只读预检/半开关闭。此处未授权产品/测试写入，未有Task04 RED/GREEN或服务操作；待Astra全文READY独审。
+
+## 2026-10-25：Task04草稿静态冻结，独审恢复
+
+Sol草稿 `04-operations-cli.md` SHA256 `0bb5c8dd7c6462a6dfbc03e99b0cafd6b2e34769375faa1994ef0d343ef9452f`、runner `db77876c2f158b5504e03b0a33d45ce2c9d690c115bb34243419b2d89168bbe1`、handoff `984a39537207f2b0fc468786741b86415edd08499047316d20ddedb9248b9ca0` 已生成。原三模块nonreal按AST显式68函数(11/17/40)+完整新focus，无全局-k，无服务调用/凭据注入；有限依赖pin6394项并扩API相关包。root读完整packet及runner与Task03差异、准备独立GO builder但未执行。439现source实查原样、CLI/test仍absent。Astra第一次READY派发遭额度限制未审，本次用户继续后已重试，审查尚在进行；packet保持draft，无Task04 tests-only/RED/实现/服务GO。
+
+## 2026-10-25：Task04静态独审F1修正中
+
+Astra恢复审查并独立重算6394map、439source和15保护，报告 `init-t4-ready-astra-n1.md` SHA256 `5b2fdd4615360d46e66b3af43328b245aecc008e9e29627d942eaf053933bfd5` SPEC/QUALITY changes-required。唯一F1：nonreal回归并非无OS进程，原process模块neutral/partial-startup测试真实创建nested Python并有指定exit3，与旧四核心以外仅git/conhost且exit0的runner模型冲突。root全文核报告，只授权Sol静态修draft/ignoredrunner/handoff及ignoredvalidator参考，必须全量68selectors、439现source保持，准确testnode/nonce/OS身份/退出/清理归属，不宽泛放行extraPython。新CLI/test仍absent，无RED/产品/服务操作。等待修复字节及Astra重新READY审查。
+
+## 2026-10-25：Task04 F1修订冻结与交接恢复
+
+中断后root核磁盘并完成旧交接hash同步，未改修复逻辑：draft04 SHA256 `59c2956aef27ee545fd35689259c1511595c46237485ad9231645f83b5bfb46e`、runner `21fcca63d5424313e11537408603431517882a53c2af3d34a39160207874cfc9`、独立参考validator `08b00365afeafb1906eadc409d40b0a0b8d600b8f56d590d3c7006b38465522f`、handoff `d989f7bce579938e213d5d7a014b59a4451ea9b53304096f03ac26576d136f44`。修复五固定节点originalControlIdentity/OwnedJob旁路capture、逐nestedreceipt/OS身份/退出/清理归属，normal须outer观察、partial短命inner-only明确区分；未知extra拒绝。root同时发现并要求恢复运行器自身固定git/conhost+exit0校验，新版已恢复，不误拒原框架进程。68selectors完整、439baseline不变、CLI/test仍absent。
+
+root独立库存代码重算6394map `377c99a09e00adb099a96c041c67946f16ac394f815c9bf639840934d5535617`，没有import/执行candidate runner、pytest或服务，没有创建GO；原worker合成检查仅保留其声明，本轮未重跑，不冒称Windows实际接受。root GO builder仅更新runner pin、未执行。已派Astra对上述冻结字节做n2完整READY复审；packet保持draft，F1是否闭合以该独审为准，无Task04实现或运行验收。
+
+## 2026-10-25：Task04 F1a角色闭集修正
+
+Astra n2报告 `init-t4-ready-astra-n2.md` SHA256 `b9a84aa4909940d1057cdc1e8bd47ee74609472eb757c926c65ad491f1d05d0e` SPEC/QUALITY仍changes-required。唯一确定阻断F1a：neutral校验将原inner Job的所有Python members直接accepted，未限定launcher/parent/descendant_launcher/descendant四命名角色、未核完整父链，因而inner/outer都见到的未分配角色extraPython可漏过。conhost/forcedaux仅为条件兼容观察，不冒称实际失败。439与15dirty再独核零漂移，两未来文件仍absent；CLI契约无新阻断。root全文读核报告，仅派Sol High最小收紧ignoredrunner/reference/handoff及必要draft描述，增加构建allowed阶段一致注入extraPython的纯合成负例，完整68selector和旧框架aux规则保留，等待重新Astra审查。无产品或测试写入/执行。
+
+## 2026-10-25：Task04 F1a修复最终冻结，n3独审中
+
+Sol最终freeze：runner `d83ac34a1e1179967dd56a48f75d6630081fc640147c7282fcc689d40b3c7306`、参考validator `90e018c3e07af4b7e77804079e869775c13feaf228c218880179a16a3d98eb84`、draft04 `1f03254fef1488abaddb66a2ee7a60645926805d85516a0057bd4694fd341b8b`、handoff `d8fc4a80b442449afc37e33455622444566f39675ebe022abb382f6948215c5e`。neutral现在限定四个不同命名角色、完整parent/descendant launcher链、event nonce/case/stage/hit与固定venv/base映像、创建排序和inner/ledger/retiredlauncher退出一致，再生成accepted。额外inner辅助进程或alias明确failclosed，真实Win兼容仍待授权执行；外层原fixedgit/conhost+exit0保留。
+
+Sol对AST抽取pure role gate实际做合成匹配及内外所有map一致增加第五无角色Python的负例，匹配接受/extra拒绝，错PPID/launcher/image/time/exit/alias亦拒；这不是候选runner整体或pytest执行。root完整读角色gate/accepted调用点/handoff并核四hash，独立库存代码重算6394map `0d3968200f74a66911b602d1033bdfa47ffe28a2dd80165f64ad73d4a5909eeb` 精确相同；439与15原样、两个futurefiles仍absent。root GO builder仅pin同步d83ac34，未执行。已派Astra n3静态完整复审，保持draft，未有Task04写测试/RED/产品/服务GO。
+
+## 2026-10-25：Task04静态READY接受，进入tests-only
+
+Astra n3静态SPEC/QUALITY接受F1/F1a闭合，最终报告 `init-t4-ready-astra-n3.md` SHA256 `f4c9010187e3cd8436bb98b2cdd34db2fbd9bca068ea6bfdac7cf278022cb12a`。状态修改前root严格SHA断言拦下报告/交接人工转录错误（packet摘要多一d为65字符）；Astra独立重核九表格文件并在报告显式勘误，真实受审draft64位 `1f03254fef1488abaddb66a2ee7a60645926805d85516a0057bd4694fd341b8b`，不是文件漂移。root同步纠正文档转录，保存原draft到ignored `init-t4-packet-reviewed-root-n3.md`，只将status改ready，当前packet SHA256 `0544839f9af466e4cad399fe305907ca07dc54de3b2f57f275b07365b7e0cdfb`。runner仍d83ac34、validator仍90e018，逻辑未变。
+
+root全文读核报告/最终hash和角色gate，仅授权Sol High创建 `tests/deploy/test_initialize_trusted_user.py` 与ignored test handoff；CLI产品仍必须absent。测试须完整fake-only覆盖真实wrapper读接口、sanitizedargv/getpass、lazyreplay/预检、有限client/halfopenclose与中断分类，不新增第三生产seam。待测试字节冻结+Astra静态审查后root真实RED，再产品GO；此处尚无Task04 pytest/collection/RED/产品或服务操作。
+
+## 2026-10-25：Task04 tests-only静态审查修正
+
+新test原freeze `8643dbac11498d553b8fda91638d632a8c8465c1fe2dc53d50fdc9b7b6464402`、handoff `ceba05641c2fe30acead2705c4ca85c84130d017006e8651b3467f666fe3c842`，AST16函数/54静态case，非实际收集或执行。Astra test报告 `init-t4-tests-astra-n1.md` SHA256 `e04df8ca09e15ff26b2b505ed510efdc4e495dadcb010beb0a7f30e2b04cbd0c` changes-required：T1成功stdout/stderr缺秘密/DSN断言及normalstderr约束；T2失败只包含expectedcode可被打印allcodes误通过，须精确primary/unknownUUID/显式cleanupwarning。invalidargv settings例外sentinel另建议实计数，防被sanitizer吞掉。原wrapper委托/nativepool/54case结构兼容，439+15无漂移、CLIabsent。root全文读核报告，只授权Sol修test/handoff共享断言与窄caplog观察、保持case主体和directimport，待重审再RED，无Task04实际执行。
+
+## 2026-10-26：Task04测试断点恢复及日志阶段修正
+
+当前HEAD仍为 `8031bbafbac49cd149c439b1f57ab5d96d097c02`。恢复时磁盘test已含T1/T2部分修正，实际SHA256 `969e6a73dfb0283790ae6280ac57c695eb66f0cad1cca2b4e396bdf152773848`，旧交接未同步；Sol High只读核对并写N2交接，确认16函数/54静态case及439现source、15保护零漂移。root独立库存重算6394项map `8b24d1842a44f67143b1c9d598d5dd1043546572fe697b679e108fcad32b6f39`，仅库存，无GO或候选执行。
+
+Astra High续审发现残余T1：fixture teardown的 `caplog.text` 只覆盖当前阶段，遗漏CLI实际call阶段日志。root核对已安装pytest日志插件后授权Sol仅修该fixture，按setup/call/teardown读取并格式化record，包含异常文本；其余测试主体及439现source保持。新test正在重新冻结与独审，CLI仍absent，尚无Task04 pytest/collection/RED/产品实现或服务操作。原Task03运行证据不计入Task04。
+
+## 2026-10-26：Task04测试静态接受及实际RED通过
+
+Sol N3仅修日志fixture，test冻结SHA256 `62ec75b67995364197f4ac8e6fc59b53e0ed3433064e7459e3d1397e5285fbcf`，交接 `c48eaa0c332f0fac41122dafb69fffbbf037a8a0c803d76767b378e911457d33`。Astra N3报告 `init-t4-tests-astra-n3.md` SHA256 `ec5f9c9139c9325875db0359df523ba2c769f2b50f738c327ae2fc88a93f47a9` SPEC/QUALITY ACCEPT；root全文核报告、fixture、runner及GO builder原pin后授权RED n1。
+
+实际固定venv runner `red-focus n1` completion SHA256 `528a01c07380e496d741a5ecdc08da911ac0489e18160f04d6ecf176d942fa8c`，唯一 attributable `ModuleNotFoundError scripts.initialize_trusted_user`，pytest退出2、JUnit 1 collection error、0函数/fixture/skip；四核心进程身份及退出2、固定辅助进程退出0、Job空/无owner、439source及冻结test零漂移。root独立校验原始report/XML/nonce/PID/image/creation/exit/hash链后保存 `init-t4-red-accepted-root-n1.json` SHA256 `2e0bde349c7f78b1f648ee831de632a69a69af664967ff7a5b95b3fef4985b6c`。RED source-map6394项 `d55e6531bed364843397f416308baaa7073faea33d1831e4be7188ac594e28bd`。
+
+已发Sol High产品GO，仅创建 `scripts/initialize_trusted_user.py` 与ignored实现交接，test62ec75及全部现source/保护字节冻结；无产品执行权限。实现后先Astra静态审查，再root分别授权collect/GREEN/nonreal回归。尚无Task04 GREEN、交付、main合并或生产操作。
+
+## 2026-10-26：Task04依赖诊断边界现实冲突与窄修订
+
+Sol实现及root两点修正后，CLI静态候选SHA256 `79092721bd66b4639c6264d461911160061a8105d55ad500e826ed3e0beaf941`：原始UUID格式先于转换检查；预检普通失败后closer中断优先保留unknown。Astra实现N1报告 `c03c4e8bb6e2736e63eba0f48bc9ffe2ccada8c020f657590c8b7baf80baa40a` changes-required：原生PG后台连接警告、Boto DEBUG Authorization凭据绕过主调用异常净化；Qdrant默认HTTP-key警告及未join的兼容性探测线程越出生命周期。旧test精确kwargs不允许 `check_compatibility=False`，属已确认测试契约冲突，未静默绕过断言。
+
+root原样归档RED test62ec75至 `init-t4-tests-reviewed-root-n3.py`；历史RED及原READY04packet/runner不改。仅授权Sol修订新test和新增依赖安全amendment，原54case只改Qdrant kwargs断言，加四个fake日志/警告与状态恢复场景，现18函数/58静态case，test SHA256 `beac7efddce87c6e371eaa96d3397050182f9d539c94af849b52614cbc36ff31`。原RED只证明旧字节missing-module，不重造或冒称新测试RED。amendment受审草稿a56a已归档；root随后明确独立CLI进程生命周期logging guard，以及imported main仅测试seam、恢复调用方状态、不保证残留原生线程返回后的日志保密。理由是原生pool close有限join并不证明线程死亡；不采用无限join或pool补丁。当前amendment `9156a3e5ce83931476165929de70a5811ce75c259362c378178a46e42394ff5c`，正在Astra复审。
+
+Astra另要求root独立读取器精确验证参数节点，不能仅数54或按函数前缀匹配；且不应要求四核心FILETIME互异。root独立AST清单现逐一重建focus58/全回归189预期节点，无项目导入；读取器精确比较全部身份，并接受创建时间非递减、仍要求不同PID和父链。读取器/清单仍待静态复审，无实际collect/GREEN/新增服务操作。候选CLI790927保持不改，待修订测试审查后先真实诊断失败，再修CLI。
+
+## 2026-10-26：Task04修订接受与实际修复前诊断
+
+Astra修订独审 `init-t4-dependency-tests-astra-n1.md` SHA256 `f78195f6bc5ec451dfd99216c9a64aa31ad7ba9bac1f0e811071a9626476c072` 静态接受amendment9156a3/testbeac7及独立reader `370276e681efffd532bee835f95d8abf869967adbf1f8098888a82ca0f95205c`、ASThelper `516ea82dafeb5603cc894f50b6d0d86d2b469aad0c5bd0621e9cdfbb23f46f10`。root全文读报核字节，冻结n2修复前CLI790927/testbeac7/amendment9156和额外stdlib logging原件hash，不改历史RED/原READY。
+
+真实collect-green-focus n2收集58，completion `bc14fd7b76ffce96e655d8399393355fc2b64cbc62543397db233f48872e9bc9`，root精确AST逐节点核对接受 `920790c6f3c74a26f2adc76f12596ab622e929f1975f63e2ac2eaef5240dccce`。随后同修复前CLI执行green-focus n2作为明确授权的诊断，runner completion `bbc3f416caac5e61d0bc52b651e3f587db72b532b9a7bd281cc8a5d3516b67d3` accepted=false、退出1：58 distinct全部执行/174 phases、3 call失败+4 teardown日志canary错误、0 skip；JUnit编码为60项/3F/4E，不把60称为执行用例数。
+
+root核对7个失败phase精确归属（原构造参数断言1、两个新增pool场景teardown、两个新增external场景call+teardown），其余phase全部passed，source/保护/测试不变、四核心身份/exit1与aux0、Job空/无owner/无截断，额外logging原件hash仍一致。诊断receipt `init-t4-dependency-diagnostic-accepted-root-n2.json` SHA256 `cd6a2cc029820e1dc437535db90be1ccd40fd93e896a517b3cc9432a838f01ca` 只授权产品修正，明确is_green=false，不冒称新缺模块RED。已派Sol High仅修CLI诊断guard/compatibility参数及ignored交接；新test与amendment重新冻结。待Astra实现复审和fresh n3各阶段，尚无Task04 GREEN或交付。
+
+## 2026-10-26：Task04 N3功能通过、nested console证据门禁拒绝
+
+Sol修正CLI最终候选 `54a6d5527a5670c188d6fbb5ab0997ff092b0a91fbf584ca356fa7439b0cb9b0`，Astra实现N2报告 `5b5a8ac8712bbbaaa05bc2f98d1695e9006902718a11bfda472a68be92cea2b5` 静态SPEC/QUALITY ACCEPT。root串行执行fresh N3 collect/focus/collect-regression/regression；focus58全PASS，root receipt `3b3a062a416b289b7689c8222563dd5dc056c71a7477b5d9c28f3adfc7ab97e2`。完整回归精确189节点/567phase全PASS，退出0、0FES，source/保护/test/Job空均保持，但runner completion `300df90f73a585bcbe25c0e5c2687b63f7ab13e778f6d882529a962beb05340f` accepted=false、identity_bound=false、validation_error=RuntimeError，未建立组合GREEN验收。
+
+真实neutral normal/forced内部Job各出现四命名Python角色外的一个System32 conhost（normal PID32456/exit0，forced PID26172/exit3）；原静态READY已明示inner aux应failclosed，本次正确拦下。两个console在原始retired/ledger/capture与外层OS记录中image/filetime/exit一致，创建时间均位于所属launcher与parent runtime之间。root只读核189节点/567phase后单独记录 `init-t4-regression-reality-conflict-root-n3.json`，不覆盖原失败receipt或冒称进程证据已接受。
+
+仅授权Sol创建新ignored runner n2/advisory及nested-console amendment草稿：保持原runner/history/product/test/439source冻结，精确四Python角色+一个原生console、case限定0/3、nonce/闭合/外层身份一致，不允许额外Python或宽泛放行aux。root另存n2独立reader/GO builder草稿待匹配新pin并Astra复审；之后必须fresh n4收集与执行，不能事后改写n3通过状态。Task05仅完成静态现实核对，尚无packet/实现/执行；整个升级未完成。
+
+## 2026-10-26：Task04 fresh N4执行及root组合核验通过
+
+Astra console协议独审 `init-t4-console-astra-n1.md` SHA256 `ba539139fc22a466f4b980499772b06d1cf16cd386f8a6602f108ecc09f2c8b0` 静态SPEC/QUALITY接受新runner `31f8a35f0bdfa7b4a46893e9c6b6d25e717f36ee1fef8bf2c91491bc2c0e4970`、root reader `855a21715e9502aa84c9dd7f15da1c1bad5c0e72a59903ff576d0a1b428f1fdd`、GO builder `d78d1ad30edcbcd46cf23fa8adb28eccb2d1881f2f982d092f9ee20aed3b5002` 和console amendment `5d68239e415a652768d056ec8145bcedec819ef6bb9cc26e7a9fe824c671da87`。root重新独立库存6394项map `db8453b27b6806b6b389fc4f53990b64f21bbd105bf6844c25fbe9bdbef12412`，N4 freeze `e579d2d60cd38e4d8e4555dd7a4b6474f00cef1f87ab745d56acc3360e3a3eed`。
+
+fresh N4分别独立GO，collect/focus/collect-regression/regression完整串行：focus58全PASS、regression189全PASS/0FES，189distinct、247执行含重复、741passing phases。focus completion `b5fd064a2497606f1fc00f630dd783c17f2c0438799568244a750032dd2b5468`、regression completion `6420a4c623f0bded3e22efb102bdf75aabaee77a807b2c7576fbd783ce3c1374`。原五节点receipt精确匹配；normal/forced各四Python+一console分别退出0/3，两partial实际launcher退出3，合计12归属PID全部outer-retained、inner-only为空，所有owner/handle/Job清理完成。无未知辅助进程或source漂移。
+
+root独立读取原XML/精确AST节点和phase、五原始retired/ledger/capture及外层native身份/exit、GO/hash链、439+15及额外logging原件before/after，组合receipt `init-t4-green-accepted-root-n4.json` SHA256 `0fff78a06706c9d24fbdd06958bdadfd73981cdebe089068279e9d7968677fe1`。Astra最终实现/运行复审进行中；当前尚未done/commit/push。任务分支远端仍8031bbaf，与本地base一致，main/生产未操作。
+
+## 2026-10-26：Task04最终接受与scoped交付准备
+
+Astra最终报告 `init-t4-runtime-astra-n1.md` SHA256 `349db8a0f2dce16ba6c3fee3062f3cf9b698bc3bc395326712b2ed9156284f77` SPEC/QUALITY ACCEPT。root全文读报核证据后保存原READY及两amendment执行副本，仅做done/handoff/验收记账；CLI54a6和testbeac7保持实际运行字节。拟提交9文件：2产品/测试+7文档，保护15与runtime不暂存。Git暂存首次被昨天遗留0B index.lock阻止，确认无git.exe且锁早于1小时后仅删除该精确失效锁，重试成功；未终止进程或删除其他文件。提交前再次核439+15原始hash无漂移，暂存差异空白检查通过。Task04完成于当前分支，commit/push随后记录ignored delivery receipt；Task05和最终组合验收仍未完成，无main/生产操作。

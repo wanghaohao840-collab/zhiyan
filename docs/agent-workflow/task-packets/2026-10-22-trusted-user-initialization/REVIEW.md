@@ -47,7 +47,7 @@ N2 R1 已闭合：Task01 回归和最终 combined 命令完整执行新增 setti
 | `01-resource-settings-schema.md`（done） | none | no | shared resources/settings、migration17、schema/settings tests、runtime seam | 严格资源配置和不可变完成凭据，129独立测试验收 |
 | `02-initial-empty-vector-pair.md`（done） | 01 done | no | vector authority、新 pair test | 同cursor双空基线，focus34/完整回归80验收 |
 | `03-atomic-new-user-replay.md`（done） | 02 done | no | init service、auth cursor、新 service test | 原子建户/历史重入，focus40/完整五模块回归117验收 |
-| Planned04（未生成） | 03 done | no | ops CLI、新 CLI test | getpass 与条件外部只读预检 |
+| `04-operations-cli.md`（ready） | 03 done | no | ops CLI、新 CLI test | 静态F1/F1a已闭合；待测试、RED和实现 |
 | Planned05（未生成） | 04 done | no | 新 process acceptance test | 独立进程、readiness/首次导入及最终审查 |
 
 Task01–03已 done；Task04–05须基于前序已接受的实际接口重新核对并生成。源计划不能代替自包含任务包。
@@ -59,7 +59,8 @@ Task01–03已 done；Task04–05须基于前序已接受的实际接口重新�
 | 01 done | yes | yes：实际接口已验收 | yes：设计/packet/runner/实现/证据独审接受 | yes | yes：fresh GREEN通过 | yes | yes | yes |
 | 02 done | yes | yes：实际接口已验收 | yes | yes | yes：focus34/回归80 | yes | yes | yes |
 | 03 done | yes | yes：实际接口已验收 | yes：READY/静态/运行独审接受 | yes：三文件 | yes：focus40/完整回归117 | yes | yes | yes |
-| 04–05 未生成 | 仅设计层面 | 待按已交付前序冻结 | no | 仅计划范围 | 未冻结 | 仅计划边界 | 未生成 | no |
+| 04 ready | yes | yes：已按Task03接口冻结 | yes：基点8031bba | yes：仅两新文件 | yes：命令/68选择器已冻结，执行待后续 | yes | yes | yes：Astra n3静态接受 |
+| 05 未生成 | 仅设计层面 | 待按已交付前序冻结 | no | 仅计划范围 | 未冻结 | 仅计划边界 | 未生成 | no |
 
 每列满足且 Astra 全文 READY 接受前，不得将任务包标 ready 或实施。
 
@@ -108,3 +109,19 @@ Astra报告 `init-t3-ready-astra-n1.md` SHA256 `bfee27ae047049b4a25b055c6744f50e
 ## 2026-10-25 Task03最终验收
 
 Astra最终SPEC/QUALITY报告 `init-t3-runtime-astra-n1.md` SHA256 `bee3c344ee247b76b2cb57c21a86d5266e4ebc56f6376cd6697363ae6f246b4c` 接受三文件实现和真实n2证据；root组合receipt `249082463ebb053e1675dbb10c3d1949c5b95bd5d77cef2b0166303f593abaa2`。fresh focus40/完整五模块回归117零FES，117distinct/157执行/471phase。全部原436无关source与15保护raw不变，资源11schema/27collection/7bucket逐名称前后一致；sourceQ/S3只读metadata且停止。原READY执行字节已保留，packet done/handoff是验收后记账。真实线程竞争、回滚/unknown、加速但真实DBclock跨期、同新用户import后原receipt retired的PG-only重入均通过；OS进程死亡/readiness仍待Task05。Task04 CLI及最终集成尚未交付。
+
+## 2026-10-25 Task04独审现实冲突
+
+Astra静态报告 `init-t4-ready-astra-n1.md` SHA256 `5b2fdd4615360d46e66b3af43328b245aecc008e9e29627d942eaf053933bfd5` SPEC/QUALITY为changes-required，NOT READY。CLI产品契约无新增阻断；唯一F1为完整68函数回归含真实nested neutral OwnedJob与partial-startup Python/预期exit3，runner旧四核心外仅git/conhost+exit0模型会误拒绝真实通过。保留全部selectors和439source冻结，只限draft/ignoredrunner/证据契约静态修正，必须精确绑定node/basetemp/nonce/PID/image/creation/expectedexit/retirement，拒绝未知后代，不得宽泛allowPython或删测试。原RED仍严格四核心/零fixture；新版本须Astra复审后才能READY/GO。尚无Task04源码或测试写入及执行。
+
+### 2026-10-25 Task04 F1a复审
+
+n2独审 `init-t4-ready-astra-n2.md` SHA256 `b9a84aa4909940d1057cdc1e8bd47ee74609472eb757c926c65ad491f1d05d0e` 仍NOT READY：nested归属已补，但neutral成员须收紧到原始命名角色闭集与父链；仅OS Job成员身份不足以允许未知Python。保持draft/全68回归/439源码原样，只修ignored验证契约，闭合后再独审；暂无Task04执行。
+
+### 2026-10-25 Task04静态READY接受
+
+Astra n3报告（含packet摘要人工转录勘误）SHA256 `f4c9010187e3cd8436bb98b2cdd34db2fbd9bca068ea6bfdac7cf278022cb12a` SPEC/QUALITY静态接受，F1/F1a闭合。root保留真实draft64SHA `1f03254fef1488abaddb66a2ee7a60645926805d85516a0057bd4694fd341b8b` 原件，status-only ready SHA `0544839f9af466e4cad399fe305907ca07dc54de3b2f57f275b07365b7e0cdfb`。只有新test写入GO，产品仍absent；missingCLI实际RED、GREEN/完整68函数回归及真实nestedOS验收尚未执行，不累计Task03证据。
+
+## 2026-10-26 Task04最终验收
+
+Sol High实现本地CLI，Astra High最终SPEC/QUALITY接受（报告SHA256 `349db8a0f2dce16ba6c3fee3062f3cf9b698bc3bc395326712b2ed9156284f77`）。root实际N4 aggregate `0fff78a06706c9d24fbdd06958bdadfd73981cdebe089068279e9d7968677fe1`：focus58、完整nonreal回归189均0FES，189distinct/247执行/741passing phases；五原始OS收据及12实际outer-retained身份/exit/清理一致，439源文件及15保护字节不变。原missing-module RED、依赖修复前诊断及N3 console拒收各保持原证据；依赖安全和console两项修订显式审查后以fresh N4执行接受。Task04 packet done/handoff是验收后记账，原READY/两修订执行字节已归档。无真实服务/生产初始化/main操作。Task05实际双进程竞争、进程死亡、readiness/allowlist及最终组合验收仍未交付。

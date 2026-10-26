@@ -98,3 +98,7 @@ Astra合审报告init-design-plan-astra-n2.md SHA256 27ce855cce6b9cbc8467bcc9036
 ## 11. Task03实现与运行接受 — 2026-10-25
 
 单PG原子新建账户/双快照/双空向量receipt及head/原History witness/不可变ledger已实施，按原始receipt/witness验证历史重入，账户正常导入后无需当前head/snapshot仍为空。fresh focus40与完整五模块回归117零失败/错误/跳过；Astra最终SPEC/QUALITY报告SHA256 `bee3c344ee247b76b2cb57c21a86d5266e4ebc56f6376cd6697363ae6f246b4c`，root组合receipt `249082463ebb053e1675dbb10c3d1949c5b95bd5d77cef2b0166303f593abaa2`。真实回滚/未知结果/并发/加速DBclock租约跨期和同新户真实import后retired原凭据重入均验证；Task04CLI、Task05 OS进程死亡/readiness及最终集成仍待完成。原设计受审字节与执行READY副本保留；本节只记当前已验收范围，无生产初始化或main合并。
+
+## 12. Task04 CLI实现与运行接受 — 2026-10-26
+
+Sol High实现本地ops CLI及fake-only验收；Astra最终接受源码与fresh N4实际证据，报告 `349db8a0f2dce16ba6c3fee3062f3cf9b698bc3bc395326712b2ed9156284f77`。focus58/完整nonreal回归189零失败/错误/跳过，root组合receipt `0fff78a06706c9d24fbdd06958bdadfd73981cdebe089068279e9d7968677fe1`。支持保存UUID、双hidden prompt、原生PG一次调用、missing-only只读S3/Q预检、PG-only重入、保守unknown及durable result保留。已显式修订依赖日志/警告和Qdrant兼容性线程边界：仅独立CLI进程保持日志guard直到退出，imported main恢复调用方状态，不承诺其返回后残余原生线程日志保密。五中性OS收据采用实际四Python+一console角色闭合；这不替代Task05真实服务与进程死亡/readiness验收。439源文件及15保护字节不变，无main或生产操作。
