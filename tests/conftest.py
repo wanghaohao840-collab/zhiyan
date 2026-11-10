@@ -13,6 +13,6 @@ os.environ["PYTHON_DOTENV_DISABLED"] = "1"
 for _name in tuple(os.environ):
     if _name.startswith(("NEO4J_TEST_", "QDRANT_TEST_")):
         continue
-    if _name.startswith(("LLM_", "OPENAI_", "DEEPSEEK_", "NEO4J_", "QDRANT_", "RAG_")):
+    if _name.startswith(("LLM_", "OPENAI_", "DEEPSEEK_", "NEO4J_", "QDRANT_", "RAG_", "MEMORY_EMBEDDING_")):
         os.environ.pop(_name, None)
 del _name

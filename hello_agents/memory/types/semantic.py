@@ -12,7 +12,9 @@ from hello_agents.memory.base import (
     Entity,
     Relation,
 )
-from hello_agents.memory.embedding import get_text_embedder
+from hello_agents.memory.memory_embedding import (
+    get_memory_embedder as get_text_embedder, memory_vector_collection,
+)
 from hello_agents.memory.storage.qdrant_store import QdrantConnectionManager
 from hello_agents.memory.storage.vector_store import VectorPoint, VectorStore
 from hello_agents.memory.rag.errors import RAGConnectionError
@@ -41,20 +43,22 @@ class SemanticMemory(BaseMemory):
         self.embedding_model = get_text_embedder()
 
         # 向量存储
-        self.vector_collection = getattr(
-            config, "qdrant_collection", "hello_agents_vectors"
+        self.vector_collection = memory_vector_collection(
+            getattr(config, "qdrant_collection", "hello_agents_vectors"),
+            self.embedding_model,
         )
+        dimension = getattr(self.embedding_model, "dimension", config.qdrant_vector_size)
         self.vector_store: VectorStore = storage_backend or QdrantConnectionManager.get_instance(
             qdrant_url=getattr(config, "qdrant_url", None),
             qdrant_api_key=getattr(config, "qdrant_api_key", None),
             collection_name=self.vector_collection,
-            vector_size=getattr(config, "qdrant_vector_size", 384),
+            vector_size=dimension,
             tenant_id=getattr(config, "tenant_id", None),
             rag_namespace=getattr(config, "rag_namespace", None),
         )
         self.vector_store.ensure_collection(
             self.vector_collection,
-            getattr(config, "qdrant_vector_size", 384),
+            dimension,
         )
         self.vector_store.ensure_payload_indexes(
             self.vector_collection,
@@ -72,8 +76,6 @@ class SemanticMemory(BaseMemory):
 
     def add(self, memory_item: MemoryItem) -> str:
         """添加语义记忆"""
-
-        self.memories[memory_item.id] = memory_item
 
         # 1. 生成文本嵌入
         embedding = self.embedding_model.encode(memory_item.content)
@@ -117,6 +119,7 @@ class SemanticMemory(BaseMemory):
             [VectorPoint(memory_item.id, embedding, metadata)],
         )
 
+        self.memories[memory_item.id] = memory_item
         return memory_item.id
 
     def remove(

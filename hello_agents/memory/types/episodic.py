@@ -6,7 +6,10 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
 from hello_agents.memory.base import MemoryConfig, MemoryItem, Episode
-from hello_agents.memory.embedding import create_embedding_model_with_fallback
+from hello_agents.memory.memory_embedding import (
+    get_memory_embedder as create_embedding_model_with_fallback, memory_vector_collection,
+)
+from hello_agents.memory.rag.embedding_profile import EmbeddingFailure
 from hello_agents.memory.storage.document_store import SQLiteDocumentStore
 from hello_agents.memory.storage.qdrant_store import QdrantConnectionManager
 from hello_agents.memory.storage.vector_store import VectorPoint, VectorRange, VectorStore
@@ -28,20 +31,22 @@ class EpisodicMemory:
 
         self.doc_store = SQLiteDocumentStore(config.database_path)
 
-        self.vector_collection = getattr(
-            config, "qdrant_collection", "hello_agents_vectors"
+        self.embedder = create_embedding_model_with_fallback()
+        self.vector_collection = memory_vector_collection(
+            getattr(config, "qdrant_collection", "hello_agents_vectors"), self.embedder,
         )
+        dimension = getattr(self.embedder, "dimension", config.qdrant_vector_size)
         self.vector_store: VectorStore = storage_backend or QdrantConnectionManager.get_instance(
             qdrant_url=getattr(config, "qdrant_url", None),
             qdrant_api_key=getattr(config, "qdrant_api_key", None),
             collection_name=self.vector_collection,
-            vector_size=getattr(config, "qdrant_vector_size", 384),
+            vector_size=dimension,
             tenant_id=getattr(config, "tenant_id", None),
             rag_namespace=getattr(config, "rag_namespace", None),
         )
         self.vector_store.ensure_collection(
             self.vector_collection,
-            getattr(config, "qdrant_vector_size", 384),
+            dimension,
         )
         self.vector_store.ensure_payload_indexes(
             self.vector_collection,
@@ -53,8 +58,6 @@ class EpisodicMemory:
                 "timestamp": "datetime",
             },
         )
-
-        self.embedder = create_embedding_model_with_fallback()
 
         self.sessions: Dict[str, List[str]] = {}
         self._episodes: Dict[str, Episode] = {}
@@ -81,6 +84,8 @@ class EpisodicMemory:
             }
         )
 
+        # Remote failures must be reported before mutating the memory caches.
+        self._persist_episode(episode)
         previous = self._episodes.get(episode.episode_id)
         if previous is not None:
             previous_ids = self.sessions.get(previous.session_id, [])
@@ -97,7 +102,6 @@ class EpisodicMemory:
             self.sessions[episode.session_id].append(episode.episode_id)
         self._episodes[episode.episode_id] = episode
 
-        self._persist_episode(episode)
         return memory_item.id
 
     def retrieve(self, query: str, limit: int = 5, **kwargs) -> List[MemoryItem]:
@@ -255,6 +259,19 @@ class EpisodicMemory:
             **(episode.context or {})
         }
 
+        embedding = self.embedder.encode(episode.content)
+        if hasattr(embedding, "tolist"):
+            embedding = embedding.tolist()
+        if isinstance(embedding, list) and embedding and isinstance(embedding[0], list):
+            embedding = embedding[0]
+        embedding = [float(x) for x in embedding]
+
+        # Publish vectors before recording success in SQLite or memory.
+        self.vector_store.upsert(
+            self.vector_collection,
+            [VectorPoint(episode.episode_id, embedding, metadata)],
+        )
+
         try:
             if hasattr(self.doc_store, "add_document"):
                 self.doc_store.add_document(
@@ -264,25 +281,6 @@ class EpisodicMemory:
                 )
         except Exception as e:
             print(f"[WARNING] SQLite 保存情景记忆失败: {e}")
-
-        try:
-            embedding = self.embedder.encode(episode.content)
-
-            if hasattr(embedding, "tolist"):
-                embedding = embedding.tolist()
-
-            if isinstance(embedding, list) and embedding and isinstance(embedding[0], list):
-                embedding = embedding[0]
-
-            embedding = [float(x) for x in embedding]
-
-            self.vector_store.upsert(
-                self.vector_collection,
-                [VectorPoint(episode.episode_id, embedding, metadata)],
-            )
-
-        except Exception as e:
-            print(f"[WARNING] Qdrant 保存情景记忆失败: {e}")
 
     def _structured_filter(self, **kwargs) -> Optional[Set[str]]:
         """结构化过滤"""
@@ -384,6 +382,8 @@ class EpisodicMemory:
                     for hit in hits
                 ]
 
+        except EmbeddingFailure:
+            raise
         except Exception as e:
             print(f"[WARNING] Qdrant 情景记忆检索失败，改用关键词兜底: {e}")
 

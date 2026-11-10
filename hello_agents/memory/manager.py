@@ -4,6 +4,7 @@ import logging
 from hello_agents.memory.base import MemoryConfig, MemoryItem
 from hello_agents.memory.types.working import WorkingMemory
 from hello_agents.memory.types.episodic import EpisodicMemory
+from hello_agents.memory.rag.embedding_profile import EmbeddingFailure
 
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,8 @@ class MemoryManager:
                     storage_backend=self.store
                 )
 
+            except EmbeddingFailure:
+                raise
             except Exception as e:
                 logger.warning("SemanticMemory 初始化失败，已跳过 semantic 记忆: %s", e)
 
@@ -164,6 +167,8 @@ class MemoryManager:
                     if item.importance >= min_importance:
                         all_results.append(item)
 
+            except EmbeddingFailure:
+                raise
             except Exception as e:
                 logger.warning("检索 %s 记忆失败: %s", memory_type, e)
 

@@ -221,6 +221,11 @@ class MemorySnapshotRepository:
         memory_types = getattr(manager, "memory_types", {})
         failures: list[str] = []
         for memory_type, mem_mod in memory_types.items():
+            embedder = getattr(mem_mod, "embedder", None)
+            if embedder is None:
+                embedder = getattr(mem_mod, "embedding_model", None)
+            if getattr(embedder, "fingerprint", None):
+                staged.setdefault(memory_type, [])
             if memory_type == "episodic" and hasattr(mem_mod, "_episodes"):
                 try:
                     mem_mod._episodes.clear()
@@ -248,6 +253,18 @@ class MemorySnapshotRepository:
                 continue
 
             try:
+                embedder = getattr(memory_module, "embedder", None)
+                if embedder is None:
+                    embedder = getattr(memory_module, "embedding_model", None)
+                if getattr(embedder, "fingerprint", None):
+                    # Snapshots contain original text. Rebuild only this user's
+                    # vectors in the versioned memory collection after restart.
+                    memory_module.vector_store.delete_by_filter(
+                        memory_module.vector_collection,
+                        {"user_id": self.user_id, "memory_type": memory_type},
+                    )
+                    for item in items:
+                        memory_module.add(item)
                 if memory_type == "episodic" and hasattr(memory_module, "_episodes"):
                     episodes = {
                         item.id: Episode(
@@ -290,6 +307,17 @@ class MemorySnapshotRepository:
             # Fail-closed: clear everything so no disk-memory fork
             # can be misinterpreted as success.
             for memory_type, mem_mod in memory_types.items():
+                embedder = getattr(mem_mod, "embedder", None)
+                if embedder is None:
+                    embedder = getattr(mem_mod, "embedding_model", None)
+                if getattr(embedder, "fingerprint", None):
+                    try:
+                        mem_mod.vector_store.delete_by_filter(
+                            mem_mod.vector_collection,
+                            {"user_id": self.user_id, "memory_type": memory_type},
+                        )
+                    except Exception:
+                        pass
                 if memory_type == "episodic" and hasattr(mem_mod, "_episodes"):
                     try:
                         mem_mod._episodes.clear()
