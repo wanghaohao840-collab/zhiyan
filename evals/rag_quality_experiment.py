@@ -1,4 +1,3 @@
-
 """Run scoped retrieval, answer and citation comparisons against a fixed corpus."""
 
 from __future__ import annotations
@@ -30,6 +29,7 @@ class Variant:
     min_score: float = 0.12
     cite: bool = True
     generate: bool = True
+    verify_evidence: bool = False
 
     def search_options(self):
         return {
@@ -68,6 +68,7 @@ class TrialGenerator:
         self.error = None
 
     def generate(self, prompt):
+        self.error = None
         if not self.cite:
             if _CITATION_REQUIREMENT not in prompt:
                 raise ValueError("Citation instruction changed")
@@ -95,6 +96,21 @@ def provider_error(exc):
 
 
 def build_index(chunks, directory, embedder):
+    get_document_vectors = getattr(embedder, "encode_documents", None)
+    build_embedder = embedder
+    if get_document_vectors is not None:
+        contents = list(dict.fromkeys(chunk.content for chunk in chunks))
+        vectors = get_document_vectors(contents)
+
+        class PreparedDocumentVectors:
+            dimension = embedder.dimension
+
+            def encode(self, text):
+                return indexed_vectors[text]
+
+        indexed_vectors = dict(zip(contents, vectors, strict=True))
+        build_embedder = PreparedDocumentVectors()
+
     pipelines = {}
     for chunk in chunks:
         if chunk.namespace not in pipelines:
@@ -102,7 +118,7 @@ def build_index(chunks, directory, embedder):
                 rag_namespace=chunk.namespace,
                 cache_path=str(directory / f"{len(pipelines)}.json"),
             )
-            pipeline.embedder = embedder
+            pipeline.embedder = build_embedder
             pipeline.dimension = embedder.dimension
             pipelines[chunk.namespace] = pipeline
         pipeline = pipelines[chunk.namespace]
@@ -121,6 +137,8 @@ def build_index(chunks, directory, embedder):
             (chunk.id, chunk.content) for chunk in expected
         ]:
             raise ValueError(f"Fixture chunk IDs or contents changed for {document_id}")
+    for pipeline in pipelines.values():
+        pipeline.embedder = embedder
     return pipelines
 
 
@@ -162,7 +180,9 @@ def evaluate_case(pipeline, case, variant, *, generate=None, repeats=1):
     tool.qdrant_api_key = None
     tool.llm = TrialGenerator(generate, variant.cite)
     started = perf_counter()
-    result = tool.execute_result("ask", mode="joint", graph_mode="off", **options)
+    result = tool.execute_result(
+        "ask", mode="joint", graph_mode="off", verify_evidence=variant.verify_evidence, **options,
+    )
     elapsed = (perf_counter() - started) * 1000
     body = extract_answer_body(result.message)
     sources = result.data.get("sources", [])
@@ -172,6 +192,8 @@ def evaluate_case(pipeline, case, variant, *, generate=None, repeats=1):
         answer_scores=score_answer(body, case) if not error else None,
         citations=score_citations(body, sources, hits, case, pipeline),
         sources=sources,
+        evidence_status=result.data.get("evidence_status"),
+        evidence_error=result.data.get("evidence_error"),
     )
     row["scope_leaks"] += sum(source.get("document_id") not in case.scope for source in sources)
     return row
@@ -185,6 +207,9 @@ class RemoteEmbedder:
     def encode(self, text):
         return self.client.embed_query(text)
 
+    def encode_documents(self, texts):
+        return self.client.embed_documents(texts)
+
 
 def configure_embedding(env_file):
     if env_file is None:
@@ -197,12 +222,15 @@ def configure_embedding(env_file):
         settings = EmbeddingSettings.from_env(read_values(env_file), candidate=True)
         client = SiliconFlowEmbedding(settings)
         client.embed_query("Public RAG benchmark embedding check.")
-        return RemoteEmbedder(client), {"status": "available", "model": client.profile.model}
+        return RemoteEmbedder(client), {
+            "status": "available", "model": client.profile.model,
+            "revision": client.profile.revision, "fingerprint": client.profile.fingerprint,
+        }
     except Exception as exc:
         return None, {"status": "unavailable", "reason": provider_error(exc)}
 
 
-def configure_chat(env_file, stack, model_override=None):
+def configure_chat(env_file, stack, model_override=None, *, max_tokens=1536):
     if env_file is None:
         return None, {"status": "unconfigured"}
     from dotenv import dotenv_values
@@ -222,13 +250,13 @@ def configure_chat(env_file, stack, model_override=None):
         def generate(prompt):
             response = client.chat.completions.create(
                 model=model, messages=[{"role": "user", "content": prompt}],
-                temperature=0, max_tokens=1536,
+                temperature=0, max_tokens=max_tokens,
             )
             return response.choices[0].message.content or ""
 
         if not generate("Reply with the word OK.").strip():
             return None, {"status": "unavailable", "reason": "empty_probe"}
-        return generate, {"status": "available", "model": model, "temperature": 0, "max_tokens": 1536}
+        return generate, {"status": "available", "model": model, "temperature": 0, "max_tokens": max_tokens}
     except Exception as exc:
         return None, {"status": "unavailable", "reason": provider_error(exc)}
 

@@ -31,3 +31,15 @@
 - 这些测量来自小型合成语料。离线生成器只抽取首片段，真实聊天组使用回退向量。服务延迟受当次运行和样本数影响。
 
 `RAGTool.execute_result("search", ...)` 和 `RAGTool.execute_result("ask", ...)` 可传 `retrieval_mode="hybrid", use_mmr=False, use_rerank=True` 试用相关性重排。实现只处理作用域内前 24 条候选，根据稀有词项和相邻词项匹配调整排序。现有默认检索配置保持向量检索。
+
+## 独立题集与逐条证据校验
+
+从仓库根目录运行线上 BGE-M3 对照。省略聊天环境文件时只测检索。路径指向已经配置的本地环境文件。
+
+~~~powershell
+.\venv\Scripts\python.exe -m evals.rag_quality_holdout --embedding-env-file deploy/.env --chat-env-file .env --output-dir output/rag-holdout-online
+~~~
+
+固定题集有 24 题和 64 个片段，覆盖改写、版本冲突、跨片段事实和缺证据。多证据题会单独统计前五条是否找齐所有必需片段。问答对照在同一个混合检索与重排配置上比较原有生成和证据校验。定量判断使用人工标注的事实到证据片段映射。
+
+在工具的普通问答入口，选定文档后可传入 `verify_evidence=True`。应用服务可设置 `RAG_QA_VERIFY_EVIDENCE=1` 启用仅使用所选文档的普通问答。模型先选择逐字引文，再给每条事实绑定引用。程序检查范围、原文、数值、常用单位和代号，资料不齐时返回无来源的拒答。文本语义仍由模型判断，结构或引用校验失败时保留独立的问答错误状态。

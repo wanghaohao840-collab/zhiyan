@@ -46,6 +46,9 @@ class QaAnswerEngine(Protocol):
 
 
 class RagQaAnswerEngine:
+    def __init__(self, *, verify_evidence: bool = False):
+        self.verify_evidence = verify_evidence
+
     def answer(
         self,
         runtime: object,
@@ -63,6 +66,8 @@ class RagQaAnswerEngine:
             "min_score": 0.12,
             "structured_output": request.structured_output,
         }
+        if self.verify_evidence and request.mode == "joint":
+            kwargs["verify_evidence"] = True
         if progress_callback is not None:
             kwargs["progress_callback"] = progress_callback
         if cancel_event is not None:

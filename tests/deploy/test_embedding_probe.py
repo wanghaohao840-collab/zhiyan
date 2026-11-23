@@ -126,3 +126,22 @@ def test_unresolved_key_does_not_inherit_process_secret(tmp_path, monkeypatch, c
     output = capsys.readouterr().out
     assert json.loads(output)["code"] == "configuration"
     assert "must-not-be-used" not in output
+
+
+def test_billing_probe_is_terminal_and_actionable(tmp_path, capsys):
+    path = write_env(tmp_path)
+    calls = []
+
+    def handle(request):
+        calls.append(request)
+        return httpx.Response(402, json={"code": 30001, "message": "private-test-token"})
+
+    def factory(settings):
+        return SiliconFlowEmbedding(settings, transport=httpx.MockTransport(handle))
+
+    assert main(["--env-file", str(path), "--probe"], client_factory=factory) == 1
+    data = json.loads(capsys.readouterr().out)
+    assert len(calls) == 1
+    assert data["reason"] == "provider_billing" and data["retryable"] is False
+    assert data["action"] == "check_account_balance_or_key"
+    assert "private-test-token" not in json.dumps(data)

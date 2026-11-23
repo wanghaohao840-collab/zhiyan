@@ -1,4 +1,3 @@
-
 """Gold cases for the scoped retrieval and answer benchmark."""
 
 from dataclasses import dataclass
@@ -7,6 +6,9 @@ from pathlib import Path
 
 
 DEFAULT_DATASET = Path(__file__).with_name("data") / "rag_quality_gold.json"
+HOLDOUT_DATASET = DEFAULT_DATASET.with_name("rag_quality_holdout.json")
+ANSWERABLE = {"answerable", "distractor", "paraphrase", "multihop"}
+UNANSWERABLE = {"unanswerable", "scope_isolated", "partial_evidence"}
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,7 @@ class GoldCase:
     evidence: tuple[str, ...]
     facts: tuple[str, ...]
     forbidden: tuple[str, ...]
+    fact_evidence: dict[str, tuple[str, ...]] | None = None
 
 
 def _strings(value: object, label: str) -> tuple[str, ...]:
@@ -38,6 +41,14 @@ def _strings(value: object, label: str) -> tuple[str, ...]:
     ) or len(value) != len(set(value)):
         raise ValueError(f"Invalid {label}")
     return tuple(value)
+
+
+def _fact_evidence(value: object) -> dict[str, tuple[str, ...]] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("Invalid fact evidence")
+    return {fact: _strings(sources, "fact evidence") for fact, sources in value.items()}
 
 
 def load_gold_dataset(path: Path = DEFAULT_DATASET) -> tuple[list[GoldChunk], list[GoldCase]]:
@@ -49,6 +60,7 @@ def load_gold_dataset(path: Path = DEFAULT_DATASET) -> tuple[list[GoldChunk], li
         GoldCase(**{
             **item,
             **{key: _strings(item[key], key) for key in ("scope", "evidence", "facts", "forbidden")},
+            "fact_evidence": _fact_evidence(item.get("fact_evidence")),
         })
         for item in raw["cases"]
     ]
@@ -64,15 +76,21 @@ def load_gold_dataset(path: Path = DEFAULT_DATASET) -> tuple[list[GoldChunk], li
             raise ValueError(f"Invalid golden chunk {chunk.id}")
 
     for case in cases:
-        answerable = case.category in {"answerable", "distractor"}
+        answerable = case.category in ANSWERABLE
         if (
             not all(isinstance(value, str) and value.strip() for value in (case.id, case.question))
             or case.language not in {"zh", "en"}
-            or case.category not in {"answerable", "distractor", "unanswerable", "scope_isolated"}
+            or case.category not in ANSWERABLE | UNANSWERABLE
             or not 1 <= len(case.scope) <= 10
             or any((case.namespace, doc) not in scopes for doc in case.scope)
             or bool(case.evidence) != answerable
             or bool(case.facts) != answerable
+            or case.category == "multihop" and len(case.evidence) < 2
+            or case.fact_evidence is not None and (
+                set(case.fact_evidence) != set(case.facts)
+                or any(not sources for sources in case.fact_evidence.values())
+                or {item for sources in case.fact_evidence.values() for item in sources} != set(case.evidence)
+            )
             or any(
                 id_ not in by_id
                 or by_id[id_].namespace != case.namespace
