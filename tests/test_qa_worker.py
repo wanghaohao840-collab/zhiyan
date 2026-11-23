@@ -2,14 +2,21 @@ from __future__ import annotations
 
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 
 import app.qa_job_repository as qa_job_repository_module
+from app.bootstrap import ApplicationServices
 from app.database import connect, initialize_database
-from app.qa_answer_engine import QaAnswerResult, QaEngineError
+from app.qa_answer_engine import (
+    QaAnswerRequest,
+    QaAnswerResult,
+    QaEngineError,
+    RagQaAnswerEngine,
+)
 from app.qa_context import QaContextBuilder
 from app.qa_job_repository import QaJobRepository
 from app.qa_memory import QaMemoryLinker
@@ -17,6 +24,8 @@ from app.qa_models import QaDocumentCandidate, QaSourceDraft
 from app.qa_observability import InProcessQaTelemetry
 from app.qa_repository import QaRepository
 from app.qa_worker import QaWorkerPool
+from hello_agents.core.llm import HelloAgentsLLM
+from hello_agents.tools.builtin.rag_tool import RAGTool
 
 
 OWNER = "owner"
@@ -359,3 +368,327 @@ def test_live_worker_reconciles_cancel_requested_expiry_without_notification(
     assert assistant.safe_error_code is None
     assert jobs.get_active_for_conversation(OWNER, conversation.id) is None
     assert engine.calls == []
+
+class SummaryPipeline:
+    def __init__(self, read_error=None, *, ids_with_errors=()):
+        self.reads = []
+        self.ids_with_errors = frozenset(ids_with_errors)
+        self.read_error = read_error
+
+    def get_document_summary_context(self, document_id, limit):
+        self.reads.append(document_id)
+        if document_id in self.ids_with_errors:
+            raise self.read_error
+        return [
+            {
+                "id": f"chunk-{owner}",
+                "content": f"PRIVATE_CONTENT_{owner}",
+                "score": 0.9,
+                "metadata": {
+                    "document_id": owner,
+                    "file_name": f"PRIVATE_FILE_{owner}.pdf",
+                    "page_number": 3,
+                },
+            }
+            for owner in (document_id, "outside-scope")
+        ]
+
+
+class SummaryLlm:
+    def __init__(self):
+        self.prompts = []
+
+    def estimate_tokens(self, text):
+        return len(text)
+
+    def generate(self, prompt):
+        self.prompts.append(prompt)
+        return "PRIVATE_ANSWER_资料不存在其他差异"
+
+
+def summary_runtime(pipeline):
+    tool = RAGTool.__new__(RAGTool)
+    tool.rag_namespace = "test-summary"
+    tool._pipelines = {tool.rag_namespace: pipeline}
+    tool._document_summary_cache = {}
+    tool._document_summary_cache_lock = threading.RLock()
+    tool.llm = SummaryLlm()
+    tool.qdrant_api_key = None
+    tool.graph_service = None
+    return SimpleNamespace(rag_tool=tool)
+
+
+def start_multi_summary(parts, pipeline, *, enable, count=2):
+    qa, jobs, _ = parts
+    documents = tuple(
+        QaDocumentCandidate(f"doc-{index}", f"{index}.pdf", OWNER)
+        for index in range(count)
+    )
+    conversation = qa.create_conversation(OWNER, documents)
+    queued = jobs.create_summary_turn_and_job(
+        OWNER, conversation.id, "PRIVATE_QUESTION", "real-summary"
+    )
+    registry = RuntimeRegistry()
+    registry.runtime = summary_runtime(pipeline)
+    pool, _ = make_pool(
+        parts, RagQaAnswerEngine(enable_summary_workflow=enable), registry
+    )
+    return pool, registry, queued
+
+
+@pytest.mark.parametrize("enable", [False, True])
+def test_real_summary_worker_projects_sources_and_persists_progress(
+    worker_parts, monkeypatch, enable
+):
+    qa, jobs, _ = worker_parts
+    pipeline = SummaryPipeline()
+    pool, registry, queued = start_multi_summary(worker_parts, pipeline, enable=enable)
+    tool = registry.runtime.rag_tool
+    tool.graph_service = SimpleNamespace(
+        get_cross_document_entities=lambda document_ids, query, **kwargs: {
+            "success": True,
+            "data": {
+                "entities": [
+                    {
+                        "canonical_id": "common",
+                        "name": "shared term",
+                        "members": [{"document_id": doc_id} for doc_id in document_ids],
+                    }
+                ]
+            },
+        }
+    )
+    heartbeat = jobs.heartbeat
+    progress = []
+
+    def record(*args, **kwargs):
+        progress.append((kwargs["progress"], kwargs["stage"]))
+        return heartbeat(*args, **kwargs)
+
+    monkeypatch.setattr(jobs, "heartbeat", record)
+    claimed = jobs.claim_next("test-worker", lease_seconds=60)
+    pool._run_job("test-worker", claimed)
+
+    job = jobs.get(OWNER, queued.job.id)
+    message = qa.get_message(OWNER, queued.pending.assistant_message.id)
+    assert job.status == message.status == "completed"
+    assert "PRIVATE_ANSWER" in message.content
+    rag_sources = [source for source in message.sources if source.source_type == "rag"]
+    assert [(source.document_id, source.page_number) for source in rag_sources] == [
+        ("doc-0", 3),
+        ("doc-1", 3),
+    ]
+    graph_source, = [source for source in message.sources if source.source_type == "graph"]
+    assert graph_source.document_id == "doc-0"
+    assert graph_source.citation_id == tool._graph_citation_id(
+        "doc-0|doc-1", "canonical_entity", "common"
+    )
+    assert graph_source.excerpt == "shared term"
+    assert [stage for _, stage in progress] == [
+        "mapping", "mapping", "mapping", "mapping", "reducing", "completed",
+    ]
+    assert [value for value, _ in progress] == sorted(value for value, _ in progress)
+    assert registry.acquired == registry.released == [OWNER]
+    assert set(pipeline.reads) == {"doc-0", "doc-1"}
+
+
+@pytest.mark.parametrize("enable", [False, True])
+def test_real_summary_cancellation_stops_replenishing_map(
+    worker_parts, monkeypatch, enable
+):
+    qa, jobs, _ = worker_parts
+    pipeline = SummaryPipeline()
+    pool, registry, queued = start_multi_summary(
+        worker_parts, pipeline, enable=enable, count=6
+    )
+    heartbeat = jobs.heartbeat
+
+    def cancel_after_first_map(*args, **kwargs):
+        if kwargs["stage"] == "mapping" and kwargs["progress"] > 1:
+            jobs.request_cancel(OWNER, queued.job.id)
+        return heartbeat(*args, **kwargs)
+
+    monkeypatch.setattr(jobs, "heartbeat", cancel_after_first_map)
+    claimed = jobs.claim_next("test-worker", lease_seconds=60)
+    pool._run_job("test-worker", claimed)
+
+    job = jobs.get(OWNER, queued.job.id)
+    message = qa.get_message(OWNER, queued.pending.assistant_message.id)
+    assert job.status == message.status == "cancelled"
+    assert not message.sources
+    assert set(pipeline.reads) <= {"doc-0", "doc-1", "doc-2"}
+    assert all("请给出联合总结" not in prompt for prompt in registry.runtime.rag_tool.llm.prompts)
+    assert registry.acquired == registry.released == [OWNER]
+
+
+def test_summary_graph_calls_each_tool_once_and_uses_job_retry(worker_parts):
+    qa, jobs, _ = worker_parts
+    pipeline = SummaryPipeline(TimeoutError("PRIVATE_PROVIDER"), ids_with_errors=("doc-0", "doc-1"))
+    pool, registry, queued = start_multi_summary(worker_parts, pipeline, enable=True)
+    claimed = jobs.claim_next("test-worker", lease_seconds=60)
+    pool._run_job("test-worker", claimed)
+
+    job = jobs.get(OWNER, queued.job.id)
+    assert job.status == "queued"
+    assert job.safe_error_code == "QA_RAG_TRANSIENT"
+    assert sorted(pipeline.reads) == ["doc-0", "doc-1"]
+    assert registry.runtime.rag_tool.llm.prompts == []
+    assert registry.acquired == registry.released == [OWNER]
+
+
+def test_summary_provider_failure_is_neither_a_cached_summary_nor_a_nested_retry(
+    monkeypatch,
+):
+    from httpx import Request
+    from openai import APIConnectionError
+
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    runtime = summary_runtime(SummaryPipeline())
+    llm = HelloAgentsLLM(max_retries=2, retry_backoff=0)
+    calls = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        raise APIConnectionError(
+            message="PRIVATE_TRANSPORT",
+            request=Request("POST", "https://provider.example/v1/chat/completions"),
+        )
+
+    llm.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    runtime.rag_tool.llm = llm
+    with pytest.raises(QaEngineError) as raised:
+        RagQaAnswerEngine(enable_summary_workflow=True).answer(
+            runtime, QaAnswerRequest("PRIVATE_QUESTION", "", ("doc-0", "doc-1"), "summary")
+        )
+
+    assert raised.value.retryable
+    assert raised.value.code == "rag_operation"
+    assert len(calls) == 2
+    assert runtime.rag_tool._document_summary_cache == {}
+
+
+def test_summary_graph_keeps_partial_result_and_logs_only_metadata(caplog, monkeypatch):
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
+    from langsmith import Client
+    from langsmith.utils import tracing_is_enabled
+
+    def fail_if_traced(*args, **kwargs):
+        pytest.fail("summary data must never be sent to LangSmith")
+
+    monkeypatch.setattr(Client, "create_run", fail_if_traced)
+    monkeypatch.setattr(Client, "update_run", fail_if_traced)
+    runtime = summary_runtime(
+        SummaryPipeline(RuntimeError("PRIVATE_EXCEPTION"), ids_with_errors=("missing",))
+    )
+    engine = RagQaAnswerEngine(enable_summary_workflow=True)
+    request = QaAnswerRequest("PRIVATE_QUESTION", "", ("doc-0", "missing"), "summary")
+    llm = runtime.rag_tool.llm
+    generate = llm.generate
+
+    def check_tracing(prompt):
+        # Map workers and the reduce node must both see disabled tracing.
+        assert not tracing_is_enabled()
+        return generate(prompt)
+
+    llm.generate = check_tracing
+    with caplog.at_level("INFO", logger="hello_agents.tools.builtin.rag_summary_workflow"):
+        first = engine.answer(runtime, request)
+        second = engine.answer(runtime, request)
+
+    assert first == second
+    assert [source.document_id for source in first.sources] == ["doc-0"]
+    assert "以下文档未纳入本次总结：missing" in first.answer
+    assert len(llm.prompts) == 3  # first map + two reductions
+    assert all("PRIVATE_EXCEPTION" not in prompt for prompt in llm.prompts)
+    records = [record for record in caplog.records if hasattr(record, "qa_summary_stage")]
+    assert [record.qa_summary_stage for record in records] == [
+        "prepare", "map_documents", "collect", "reduce",
+    ] * 2
+    assert len({record.qa_summary_run_id for record in records}) == 2
+    assert all("PRIVATE_" not in str(record.__dict__) for record in records)
+    assert "cache_hits=1" in records[-1].getMessage()
+
+
+def test_concurrent_graph_invocations_do_not_mix_sources():
+    pipeline = SummaryPipeline()
+    runtime = summary_runtime(pipeline)
+    engine = RagQaAnswerEngine(enable_summary_workflow=True)
+    barrier = threading.Barrier(2)
+    groups = (("aa", "ab"), ("ba", "bb"))
+
+    def answer(documents):
+        barrier.wait(timeout=5)
+        return engine.answer(
+            runtime, QaAnswerRequest("PRIVATE_QUESTION", "", documents, "summary")
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = tuple(executor.map(answer, groups))
+
+    assert [tuple(source.document_id for source in item.sources) for item in results] == list(groups)
+    assert set(pipeline.reads) == {doc for group in groups for doc in group}
+
+
+@pytest.mark.parametrize("flag", ["", "langgraph"])
+def test_bootstrap_switch_only_applies_to_background_summary(tmp_path, monkeypatch, flag):
+    monkeypatch.setenv("ZHIYAN_MULTI_SUMMARY_WORKFLOW", flag)
+    services = ApplicationServices.create(tmp_path / "default")
+    assert not services.qa_service.answer_engine.enable_summary_workflow
+    assert services.qa_worker_pool.answer_engine.enable_summary_workflow == bool(flag)
+
+    injected = Engine()
+    services = ApplicationServices.create(tmp_path / "injected", qa_answer_engine=injected)
+    assert services.qa_worker_pool.answer_engine is services.qa_service.answer_engine is injected
+
+
+def test_summary_graph_avoids_debug_console_output(capsys, monkeypatch):
+    from langchain_core import globals as langchain_globals
+
+    monkeypatch.setattr(langchain_globals, "_debug", True)
+    runtime = summary_runtime(SummaryPipeline())
+    answer = RagQaAnswerEngine(enable_summary_workflow=True).answer(
+        runtime, QaAnswerRequest("PRIVATE_QUESTION", "", ("doc-0", "doc-1"), "summary")
+    )
+
+    assert "PRIVATE_ANSWER" in answer.answer
+    stdout, stderr = capsys.readouterr()
+    assert "PRIVATE_" not in stdout + stderr
+
+
+def test_summary_job_rejects_late_result_after_lease_takeover(
+    worker_parts, monkeypatch
+):
+    qa, jobs, _ = worker_parts
+    pool, registry, queued = start_multi_summary(
+        worker_parts, SummaryPipeline(), enable=True
+    )
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(qa_job_repository_module, "_utc_now", lambda: now.isoformat())
+    llm = registry.runtime.rag_tool.llm
+    generate = llm.generate
+
+    def take_over_during_reduce(prompt):
+        nonlocal now
+        if "请给出联合总结" in prompt:
+            now += timedelta(seconds=61)
+            replacement = jobs.claim_next("new-worker", lease_seconds=60)
+            assert replacement is not None and replacement.id == queued.job.id
+            assistant = qa.get_message(OWNER, queued.pending.assistant_message.id)
+            jobs.commit_answer(
+                replacement.id, "new-worker", assistant.version, "new result", (), "none"
+            )
+        return generate(prompt)
+
+    llm.generate = take_over_during_reduce
+    claimed = jobs.claim_next("old-worker", lease_seconds=60)
+    pool._run_job("old-worker", claimed)
+
+    job = jobs.get(OWNER, queued.job.id)
+    message = qa.get_message(OWNER, queued.pending.assistant_message.id)
+    assert job.status == message.status == "completed"
+    assert message.content == "new result"
+    assert not message.sources
+    assert registry.acquired == registry.released == [OWNER]

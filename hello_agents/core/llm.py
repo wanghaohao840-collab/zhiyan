@@ -181,11 +181,15 @@ class HelloAgentsLLM:
         system_prompt: str = "你是一个有帮助的AI助手。",
         temperature: float = 0.2,
         max_tokens: int = 1024,
+        *,
+        strict: bool = False,
         **kwargs,
     ) -> str:
-        """Run a non-streaming chat completion."""
+        """Run a chat completion. Strict calls surface failures without retrying."""
 
         if self.client is None:
+            if strict:
+                raise RuntimeError("LLM client is not configured")
             return (
                 "[LLM未配置] 当前没有可用的大模型客户端。"
                 "请检查 .env 中的 LLM_API_KEY、LLM_BASE_URL、LLM_MODEL_ID。"
@@ -198,12 +202,15 @@ class HelloAgentsLLM:
         }
         request_kwargs.update(kwargs)
 
-        for attempt in range(self.max_retries + 1):
+        attempts = 1 if strict else self.max_retries + 1
+        for attempt in range(attempts):
             try:
                 response = self._create_completion(messages, **request_kwargs)
                 return self._completion_text(response)
             except Exception as error:
-                if attempt >= self.max_retries or not self._is_retriable_error(error):
+                if strict:
+                    raise
+                if attempt + 1 >= attempts or not self._is_retriable_error(error):
                     return f"[LLM调用失败] {error}"
                 self._sleep_before_retry(attempt + 1)
 

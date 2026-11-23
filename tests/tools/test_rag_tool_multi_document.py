@@ -961,7 +961,8 @@ class RAGToolMultiDocumentTests(unittest.TestCase):
 
         self.assertEqual(len(tool.llm.prompts), 2)
         self.assertIn("doc-2", tool.llm.prompts[-1])
-        self.assertIn("map boom", tool.llm.prompts[-1])
+        self.assertIn("单篇摘要失败", tool.llm.prompts[-1])
+        self.assertNotIn("map boom", tool.llm.prompts[-1])
         self.assertIn("ANSWER-2", output)
 
     def test_summary_all_failures_skip_reduce(self):

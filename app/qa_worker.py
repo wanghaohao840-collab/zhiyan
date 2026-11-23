@@ -15,6 +15,7 @@ from app.qa_models import QaJob, QaMessage
 from app.qa_observability import QaTelemetry
 from app.qa_repository import QaRepository
 from app.qa_service import QaService
+from hello_agents.tools.builtin.rag_summary_workflow import SummaryProgressAborted
 
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ class LlmQaConversationSummarizer:
         return str(runtime.rag_tool.llm.generate("\n\n".join(parts))).strip()
 
 
-class _LeaseLost(RuntimeError):
+class _LeaseLost(SummaryProgressAborted):
     pass
 
 
@@ -214,13 +215,20 @@ class QaWorkerPool:
                     retryable=retryable,
                 )
             except Exception:
-                logger.warning("QA job failure transition lost", exc_info=True)
+                logger.warning("QA job failure transition lost", extra={"job_id": job.id})
         finally:
             if runtime is not None:
                 self.runtime_registry.release_background(job.user_id)
 
     def _progress_callback(self, worker_id: str, job: QaJob):
-        def update(stage: str, completed: int, total: int, message: str) -> None:
+        def update(
+            stage: str,
+            completed: int,
+            total: int,
+            message: str = "",
+            *,
+            document_id: str | None = None,
+        ) -> None:
             ratio = 0.0 if total <= 0 else min(1.0, max(0.0, completed / total))
             progress = min(95, max(1, int(ratio * 95)))
             if not self.job_repository.heartbeat(

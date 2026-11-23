@@ -46,6 +46,9 @@ class QaAnswerEngine(Protocol):
 
 
 class RagQaAnswerEngine:
+    def __init__(self, *, enable_summary_workflow: bool = False) -> None:
+        self.enable_summary_workflow = enable_summary_workflow
+
     def answer(
         self,
         runtime: object,
@@ -68,6 +71,13 @@ class RagQaAnswerEngine:
         if cancel_event is not None:
             kwargs["cancel_event"] = cancel_event
 
+        if (
+            self.enable_summary_workflow
+            and request.mode == "summary"
+            and len(request.document_ids) > 1
+        ):
+            kwargs["use_summary_workflow"] = True
+
         result = runtime.rag_tool.execute_result("ask", **kwargs)
         if not result.success:
             raise QaEngineError(
@@ -80,7 +90,7 @@ class RagQaAnswerEngine:
             for item in _mapping_items(result.data.get("sources"))
         )
         graph_sources = tuple(
-            _source_draft(item, "graph")
+            _graph_source_draft(item, request.document_ids)
             for item in _mapping_items(result.data.get("graph_sources"))
         )
         comparison = result.data.get("comparison")
@@ -98,6 +108,24 @@ def _mapping_items(value: object) -> tuple[Mapping[str, Any], ...]:
     if not isinstance(value, (list, tuple)):
         return ()
     return tuple(item for item in value if isinstance(item, Mapping))
+
+
+def _graph_source_draft(
+    raw: Mapping[str, Any], document_ids: tuple[str, ...]
+) -> QaSourceDraft:
+    members = raw.get("member_document_ids")
+    if raw.get("kind") == "canonical_entity" and isinstance(members, (list, tuple)):
+        anchors = sorted(doc_id for doc_id in document_ids if doc_id in members)
+        if anchors:
+            # Storage requires one real document per citation. Anchor the shared
+            # citation to a contributing document without changing its stable ID.
+            raw = {
+                **raw,
+                "document_id": anchors[0],
+                "document_name": "跨文档图谱",
+                "excerpt": raw.get("name"),
+            }
+    return _source_draft(raw, "graph")
 
 
 def _source_draft(
