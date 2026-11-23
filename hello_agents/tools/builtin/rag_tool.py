@@ -328,6 +328,10 @@ class RAGTool(Tool):
                     "enum": ["vector", "hybrid"],
                     "description": "hybrid retrieval mode",
                 },
+                "use_rerank": {
+                    "type": "boolean",
+                    "description": "enable bounded relevance reranking before MMR",
+                },
                 "use_mmr": {
                     "type": "boolean",
                     "description": "enable MMR diversity reranking",
@@ -1383,7 +1387,7 @@ class RAGTool(Tool):
         pipeline = self._get_pipeline(rag_namespace)
         retrieval_kwargs = {
             key: kwargs[key]
-            for key in ("retrieval_mode", "use_mmr", "mmr_lambda", "vector_weight")
+            for key in ("retrieval_mode", "use_mmr", "mmr_lambda", "vector_weight", "use_rerank")
             if key in kwargs
         }
         results = pipeline.search(
@@ -1502,7 +1506,7 @@ class RAGTool(Tool):
         conversation_context = str(kwargs.get("conversation_context") or "").strip()
         retrieval_kwargs = {
             key: kwargs[key]
-            for key in ("retrieval_mode", "use_mmr", "mmr_lambda", "vector_weight")
+            for key in ("retrieval_mode", "use_mmr", "mmr_lambda", "vector_weight", "use_rerank")
             if key in kwargs
         }
         graph_mode = str(graph_mode or "auto").strip().lower()

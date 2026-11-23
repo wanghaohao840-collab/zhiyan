@@ -693,3 +693,27 @@ def test_qdrant_upsert_batches_never_exceed_100_points(monkeypatch):
 
     assert result["chunks_added"] == 205
     assert [len(batch) for batch in client.upsert_calls] == [100, 100, 5]
+
+
+def test_qdrant_relevance_rerank_respects_selected_documents():
+    class RankedClient(FakeQdrantClient):
+        def query_points(self, *args, **kwargs):
+            result = super().query_points(*args, **kwargs)
+            for point in result.points:
+                point.score = 0.81 if point.payload["content"] == "frost policy network" else 0.80
+            return result
+
+    client = RankedClient()
+    pipeline = QdrantRAGPipeline(
+        collection_name="rerank", rag_namespace="ns", qdrant_client=client,
+    )
+    pipeline.add_text("frost policy network", document_id="chosen")
+    pipeline.add_text("frost network policy", document_id="chosen", replace_existing=False)
+    pipeline.add_text("frost network policy outside scope", document_id="other")
+
+    query = "frost network policy"
+    original = pipeline.search(query, limit=1, document_ids=["chosen"])
+    reranked = pipeline.search(query, limit=1, document_ids=["chosen"], use_rerank=True)
+    assert original[0]["content"] == "frost policy network"
+    assert reranked[0]["content"] == "frost network policy"
+    assert reranked[0]["metadata"]["document_id"] == "chosen"

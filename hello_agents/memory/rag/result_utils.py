@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections import Counter
 import hashlib
+import math
 import re
 import unicodedata
 from typing import Any, Optional
@@ -173,6 +175,43 @@ def hybrid_rank_results(
     for result in ranked:
         result.pop("_vector_score", None)
     return ranked[: max(0, limit)]
+
+
+RERANK_CANDIDATE_LIMIT = 24
+
+
+def relevance_rerank_results(query: str, results: list[dict], limit: int) -> list[dict]:
+    """Rerank a bounded prefix with rare query terms and adjacent token matches."""
+    query_sequence = _ranking_tokens(query)
+    if not query_sequence or len(results) < 2:
+        return results
+
+    candidates = results[:RERANK_CANDIDATE_LIMIT]
+    sequences = [_ranking_tokens(item.get("content", "")) for item in candidates]
+    token_sets = [set(sequence) for sequence in sequences]
+    frequency = Counter(token for tokens in token_sets for token in tokens)
+    weights = {
+        token: 1 + math.log((1 + len(candidates)) / (1 + frequency[token]))
+        for token in dict.fromkeys(query_sequence)
+    }
+    total_weight = sum(weights.values())
+    query_pairs = set(zip(query_sequence, query_sequence[1:]))
+    ranked = []
+    for item, sequence, tokens in zip(candidates, sequences, token_sets):
+        coverage = sum(weight for token, weight in weights.items() if token in tokens) / total_weight
+        adjacency = (
+            len(query_pairs.intersection(zip(sequence, sequence[1:]))) / len(query_pairs)
+            if query_pairs else coverage
+        )
+        original_score = max(0.0, min(1.0, float(item["score"])))
+        score = 0.5 * original_score + 0.3 * coverage + 0.2 * adjacency
+        ranked.append({**item, "score": score})
+    ranked.sort(key=lambda item: -item["score"])
+    return ranked + results[RERANK_CANDIDATE_LIMIT:max(RERANK_CANDIDATE_LIMIT, limit)]
+
+
+def _ranking_tokens(text: str) -> list[str]:
+    return _LEXICAL_TOKEN_RE.findall(unicodedata.normalize("NFKC", text).lower())
 
 
 def mmr_select(
