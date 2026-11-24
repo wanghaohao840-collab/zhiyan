@@ -10,6 +10,7 @@ import os
 import re
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextvars import ContextVar, copy_context
+from inspect import Parameter, signature
 from pathlib import Path
 from threading import Event, RLock
 from typing import Dict, Any, List, Optional
@@ -182,6 +183,7 @@ class RAGTool(Tool):
         limit: int,
         results: List[Dict[str, Any]],
         max_output_tokens: int,
+        model_id: str,
         graph_mode: str = "off",
         graph_context: Optional[Dict[str, Any]] = None,
     ) -> str:
@@ -204,6 +206,7 @@ class RAGTool(Tool):
             "limit": int(limit),
             "prompt_version": self.SUMMARY_CACHE_PROMPT_VERSION,
             "max_output_tokens": max_output_tokens,
+            "model_id": model_id,
             "revision": revision_parts,
             "graph_mode": str(graph_mode),
             "graph_context": graph_context or {},
@@ -2058,7 +2061,12 @@ class RAGTool(Tool):
         return result if return_details else fitted.context
 
     def _generate(
-        self, prompt: str, *, strict: bool = False, summary_max_tokens: int | None = None
+        self,
+        prompt: str,
+        *,
+        strict: bool = False,
+        summary_max_tokens: int | None = None,
+        summary_model: str | None = None,
     ) -> str:
         capacity_markers = (
             "context length",
@@ -2070,11 +2078,12 @@ class RAGTool(Tool):
             "上下文长度",
             "上下文超限",
         )
+        model_kwargs = {"model": summary_model} if summary_model is not None else {}
         try:
             generate_with_metadata = getattr(self.llm, "generate_with_metadata", None)
             if summary_max_tokens is not None and callable(generate_with_metadata):
                 completion = generate_with_metadata(
-                    prompt, max_tokens=summary_max_tokens, strict=strict
+                    prompt, max_tokens=summary_max_tokens, strict=strict, **model_kwargs
                 )
                 if completion.finish_reason == "length":
                     raise _IncompleteSummaryOutput("模型输出达到额度上限")
@@ -2082,7 +2091,7 @@ class RAGTool(Tool):
                     raise _IncompleteSummaryOutput("模型未正常结束输出")
                 answer = completion.text
             else:
-                answer = self.llm.generate(prompt)
+                answer = self.llm.generate(prompt, **model_kwargs)
         except Exception as error:
             if getattr(error, "status_code", None) == 400 and any(
                 marker in str(error).lower() for marker in capacity_markers
@@ -2095,8 +2104,12 @@ class RAGTool(Tool):
             raise ContextCapacityError("provider rejected the prompt as too large")
         return answer
 
-    def _generate_summary(self, prompt: str, *, max_tokens: int, strict: bool) -> str:
-        answer = self._generate(prompt, strict=strict, summary_max_tokens=max_tokens)
+    def _generate_summary(
+        self, prompt: str, *, max_tokens: int, strict: bool, model: str | None
+    ) -> str:
+        answer = self._generate(
+            prompt, strict=strict, summary_max_tokens=max_tokens, summary_model=model
+        )
         if not answer.strip() or answer.startswith(("[LLM调用失败]", "[LLM未配置]")):
             raise _IncompleteSummaryOutput("模型未返回可用内容")
         return answer
@@ -2348,6 +2361,31 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
             graph_sources=graph_sources,
         )
 
+    def _configured_summary_model(self) -> str | None:
+        model = os.getenv("SUMMARY_MODEL_ID", "").strip()
+        if not model:
+            return None
+        if any(ord(character) < 32 or ord(character) == 127 for character in model):
+            raise RAGConfigError("SUMMARY_MODEL_ID 含有控制字符")
+
+        generate = getattr(self.llm, "generate_with_metadata", None)
+        if not callable(generate):
+            generate = self.llm.generate
+        try:
+            parameters = signature(generate).parameters.values()
+        except (TypeError, ValueError):
+            raise RAGConfigError("当前模型客户端不支持为联合总结指定模型") from None
+        if not any(
+            parameter.kind == Parameter.VAR_KEYWORD
+            or (
+                parameter.name == "model"
+                and parameter.kind in (Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY)
+            )
+            for parameter in parameters
+        ):
+            raise RAGConfigError("当前模型客户端不支持为联合总结指定模型")
+        return model
+
     def _ask_multi_summary(
         self,
         pipeline,
@@ -2367,6 +2405,8 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
             reduce_max_tokens = summary_output_tokens("reduce")
         except ContextCapacityError as error:
             raise RAGConfigError(str(error)) from None
+        summary_model = self._configured_summary_model()
+        effective_model = summary_model or str(getattr(self.llm, "model", "") or "")
         total_documents = len(document_ids)
         work_aborted = Event()
 
@@ -2461,6 +2501,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 graph_mode=graph_mode,
                 graph_context=graph_context_by_document.get(doc_id),
                 max_output_tokens=map_max_tokens,
+                model_id=effective_model,
             )
             cached = self._get_cached_document_summary(cache_key)
             if cached is not None:
@@ -2499,7 +2540,10 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
             graph_sources = self._graph_sources(document_graph_contexts)
             check_cancelled()
             summary = self._generate_summary(
-                f"{prompt}{context}\n", max_tokens=map_max_tokens, strict=use_summary_workflow
+                f"{prompt}{context}\n",
+                max_tokens=map_max_tokens,
+                strict=use_summary_workflow,
+                model=summary_model,
             )
             check_cancelled()
             first_metadata = sources[0].get("metadata", {}) or {}
@@ -2668,6 +2712,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                     prompt + summary_context + suffix,
                     max_tokens=reduce_max_tokens,
                     strict=use_summary_workflow,
+                    model=summary_model,
                 )
             except ContextCapacityError:
                 return {

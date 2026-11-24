@@ -176,8 +176,9 @@ class HelloAgentsLLM:
         return getattr(delta, "content", None) or ""
 
     def _create_completion(self, messages: List[Dict[str, str]], **kwargs) -> Any:
+        model = kwargs.pop("model", None) or self.model
         return self.client.chat.completions.create(
-            model=self.model,
+            model=model,
             messages=messages,
             **kwargs,
         )
@@ -237,7 +238,15 @@ class HelloAgentsLLM:
             except Exception as error:
                 if strict:
                     raise
-                if attempt + 1 >= attempts or not self._is_retriable_error(error):
+                status = getattr(error, "status_code", None)
+                rejected_model_request = bool(request_kwargs.get("model")) and status in (
+                    400, 401, 403, 404, 422
+                )
+                if (
+                    attempt + 1 >= attempts
+                    or rejected_model_request
+                    or not self._is_retriable_error(error)
+                ):
                     if not return_errors:
                         raise
                     return LLMCompletionResult(f"[LLM调用失败] {error}")

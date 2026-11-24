@@ -953,3 +953,80 @@ def test_summary_rejects_invalid_budget_before_model_calls(monkeypatch, limit):
 
     assert not failure.value.retryable
     assert not llm.prompts
+
+
+@pytest.mark.parametrize("enable", [False, True])
+def test_summary_model_override_is_snapshotted_and_cache_is_model_specific(
+    monkeypatch, enable,
+):
+    monkeypatch.setenv("SUMMARY_MODEL_ID", "   ")
+    runtime = summary_runtime(SummaryPipeline())
+    llm = HelloAgentsLLM(model="global-model")
+    calls = []
+
+    def create(model, messages, **kwargs):
+        prompt = messages[-1]["content"]
+        stage = "map" if "请仅根据以下资料总结文档" in prompt else "reduce"
+        calls.append((stage, model))
+        if stage == "map" and model == "summary-model":
+            monkeypatch.setenv("SUMMARY_MODEL_ID", "next-model")
+        return SimpleNamespace(choices=[SimpleNamespace(
+            finish_reason="stop", message=SimpleNamespace(content="完整摘要"),
+        )])
+
+    llm.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    runtime.rag_tool.llm = llm
+    engine = RagQaAnswerEngine(enable_summary_workflow=enable)
+    request = QaAnswerRequest("概括", "", ("doc-0", "doc-1"), "summary")
+    engine.answer(runtime, request)
+    assert calls == [("map", "global-model")] * 2 + [("reduce", "global-model")]
+
+    monkeypatch.setenv("SUMMARY_MODEL_ID", " summary-model ")
+    calls.clear()
+    engine.answer(runtime, request)
+    assert calls == [("map", "summary-model")] * 2 + [("reduce", "summary-model")]
+
+    monkeypatch.setenv("SUMMARY_MODEL_ID", "summary-model")
+    calls.clear()
+    engine.answer(runtime, request)
+    assert calls == [("reduce", "summary-model")]
+    assert llm.generate("普通问答") == "完整摘要"
+    assert calls[-1][1] == llm.model == "global-model"
+
+
+def test_explicit_summary_model_requires_client_support(monkeypatch):
+    monkeypatch.setenv("SUMMARY_MODEL_ID", "different-model")
+    runtime = summary_runtime(SummaryPipeline())
+    request = QaAnswerRequest("概括", "", ("doc-0", "doc-1"), "summary")
+
+    with pytest.raises(QaEngineError) as failure:
+        RagQaAnswerEngine().answer(runtime, request)
+
+    assert failure.value.code == "rag_config"
+    assert not failure.value.retryable
+    assert not runtime.rag_tool.llm.prompts
+
+
+def test_invalid_summary_model_is_not_retried_or_replaced(monkeypatch):
+    monkeypatch.setenv("SUMMARY_MODEL_ID", "missing")
+    runtime = summary_runtime(SummaryPipeline())
+    llm = HelloAgentsLLM(model="global-model", max_retries=2, retry_backoff=0)
+    models = []
+
+    class ModelRejected(Exception):
+        status_code = 400
+
+    def create(model, **kwargs):
+        models.append(model)
+        raise ModelRejected("502 upstream detail must not trigger a retry")
+
+    llm.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    runtime.rag_tool.llm = llm
+    request = QaAnswerRequest("概括", "", ("doc-0", "doc-1"), "summary")
+
+    with pytest.raises(QaEngineError) as failure:
+        RagQaAnswerEngine().answer(runtime, request)
+
+    assert not failure.value.retryable
+    assert models == ["missing", "missing"]
+    assert llm.model == "global-model"
