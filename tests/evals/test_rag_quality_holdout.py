@@ -5,6 +5,7 @@ import pytest
 
 from evals.rag_quality_dataset import HOLDOUT_DATASET, load_gold_dataset
 from evals.rag_quality_experiment import RERANK, build_index, evaluate_case
+from evals.rag_quality_report import grounding_latency_gate
 from hello_agents.memory.embedding import SimpleEmbedding
 from hello_agents.tools.builtin.rag_grounding import EvidenceProtocolError, grounded_answer
 
@@ -160,3 +161,102 @@ def test_fact_citations_cover_fullwidth_brackets_and_following_source_label(tmp_
     )
     assert row["citations"]["valid"] == [left, right]
     assert row["citations"]["facts_supported"] == ["74", "EU-QUAR-REC"]
+
+
+def test_single_pass_verifies_excerpts_and_uses_actual_qa_retrieval(tmp_path):
+    chunks, cases = load_gold_dataset(HOLDOUT_DATASET)
+    case = next(case for case in cases if case.id == "en-02")
+    pipeline = build_index(chunks, tmp_path, SimpleEmbedding())[case.namespace]
+    from hello_agents.tools.builtin.rag_context import citation_id
+
+    hits = [
+        {**pipeline.get_document_chunks(doc)[0], "score": 0.9} for doc in case.scope[:2]
+    ]
+    searches = []
+
+    def search(**options):
+        searches.append(options)
+        return hits
+
+    pipeline.search = search
+    left, right = map(citation_id, hits)
+    output = json.dumps({
+        "quotes": [
+            {"id": left, "quote": "The quarantine hold for archived manifests in the EU operation is 74 hours."},
+            {"id": right, "quote": "dispatch the recovery ticket EU-QUAR-REC."},
+        ],
+        "claims": [
+            {"text": "74 hours.", "ids": [left]},
+            {"text": "Use EU-QUAR-REC.", "ids": [right]},
+        ],
+    })
+    variant = replace(RERANK, verify_evidence=True, evidence_strategy="single_pass")
+    calls = []
+
+    def generate(prompt):
+        calls.append(prompt)
+        return output
+
+    row = evaluate_case(pipeline, case, variant, generate=generate, repeats=0)
+    assert row["answer_scores"]["accuracy"]
+    assert row["citations"]["facts_supported"] == ["74", "EU-QUAR-REC"]
+    assert len(searches) == len(calls) == len(row["llm_call_ms"]) == 1
+    assert row["retrieval_ms"] == row["qa_retrieval_ms"]
+    assert "资料：" in calls[0]
+
+
+def test_single_pass_abstains_without_any_source():
+    result = grounded_answer(
+        lambda _: '{"quotes":[],"claims":[]}', "How long?", "", "Source",
+        [{"citation_id": "S-a", "content": "The room is blue."}],
+        strategy="single_pass",
+    )
+    assert "资料中没有提到" in result.text
+    assert result.quotes == {}
+
+
+@pytest.mark.parametrize(("quote", "claim", "ids"), [
+    ("The final hold is 74 hours.", "74 days", ["S-a"]),
+    ("The final hold is 47 hours.", "47 hours", ["S-a"]),
+    ("The final hold is 74 hours.", "74 hours", ["S-outside"]),
+    ("The final hold is 74 hours.", None, []),
+])
+def test_single_pass_rejects_invalid_evidence_and_limits_retries(quote, claim, ids):
+    output = json.dumps({
+        "quotes": [{"id": "S-a", "quote": quote}],
+        "claims": [{"text": claim, "ids": ids}] if claim else [],
+    })
+    calls = []
+
+    def generate(prompt):
+        calls.append(prompt)
+        return output
+
+    with pytest.raises(EvidenceProtocolError):
+        grounded_answer(
+            generate, "How long?", "", "Source",
+            [{"citation_id": "S-a", "content": "The final hold is 74 hours."}],
+            strategy="single_pass",
+        )
+    assert len(calls) == 2
+
+
+def test_grounding_latency_gate_requires_speed_and_supported_coverage():
+    def row(variant, duration, *, supported=True):
+        return {
+            "variant": variant, "answerable": True, "category": "distractor",
+            "first_gold_rank": 1, "gold_recall": 1, "scope_leaks": 0,
+            "ranked_chunks": ["gold"], "retrieval_ms": [100],
+            "qa_ms": duration, "generation_error": None,
+            "answer_scores": {"accuracy": True, "fact_coverage": 1},
+            "citations": {
+                "expected_facts": 1, "emitted": ["S-x"], "valid": ["S-x"],
+                "supported": ["S-x"] if supported else [],
+                "facts_cited": ["value"], "facts_supported": ["value"] if supported else [],
+            },
+        }
+
+    baseline = row("two_pass", 1000)
+    assert grounding_latency_gate([baseline, row("single_pass", 750)])["passed"]
+    assert not grounding_latency_gate([baseline, row("single_pass", 850)])["passed"]
+    assert not grounding_latency_gate([baseline, row("single_pass", 750, supported=False)])["passed"]

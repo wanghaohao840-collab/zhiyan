@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import perf_counter
+from types import SimpleNamespace
 
 from evals.rag_quality_dataset import DEFAULT_DATASET, load_gold_dataset
 from evals.rag_quality_report import write_report
@@ -30,6 +31,7 @@ class Variant:
     cite: bool = True
     generate: bool = True
     verify_evidence: bool = False
+    evidence_strategy: str = "two_pass"
 
     def search_options(self):
         return {
@@ -66,8 +68,16 @@ class TrialGenerator:
         self.generate_answer = generate
         self.cite = cite
         self.error = None
+        self.call_ms = []
 
     def generate(self, prompt):
+        started = perf_counter()
+        try:
+            return self._generate(prompt)
+        finally:
+            self.call_ms.append((perf_counter() - started) * 1000)
+
+    def _generate(self, prompt):
         self.error = None
         if not self.cite:
             if _CITATION_REQUIREMENT not in prompt:
@@ -147,11 +157,21 @@ def evaluate_case(pipeline, case, variant, *, generate=None, repeats=1):
         "query": case.question, "document_ids": list(case.scope), "limit": 5,
         **variant.search_options(),
     }
+    if repeats < 0 or (repeats == 0 and not variant.generate):
+        raise ValueError("Retrieval-only measurements must run search at least once")
     search_times = []
+    hits = []
     for _ in range(repeats):
         started = perf_counter()
         hits = pipeline.search(**options)
         search_times.append((perf_counter() - started) * 1000)
+
+    if variant.generate:
+        generator, result, qa_ms, qa_retrieval_ms, hits = _measure_qa(
+            pipeline, case, variant, options, generate,
+        )
+        if repeats == 0:
+            search_times = qa_retrieval_ms
     ranks = {
         hit["id"]: rank for rank, hit in enumerate(hits, 1)
         if hit["metadata"].get("rag_namespace") == case.namespace
@@ -171,24 +191,12 @@ def evaluate_case(pipeline, case, variant, *, generate=None, repeats=1):
     if not variant.generate:
         return row
 
-    # Inject only the experiment's owned index and generator, as in the existing
-    # golden QA tests. The normal constructor can open a configured live index.
-    tool = RAGTool.__new__(RAGTool)
-    tool.rag_namespace = case.namespace
-    tool._pipelines = {case.namespace: pipeline}
-    tool.graph_service = None
-    tool.qdrant_api_key = None
-    tool.llm = TrialGenerator(generate, variant.cite)
-    started = perf_counter()
-    result = tool.execute_result(
-        "ask", mode="joint", graph_mode="off", verify_evidence=variant.verify_evidence, **options,
-    )
-    elapsed = (perf_counter() - started) * 1000
     body = extract_answer_body(result.message)
     sources = result.data.get("sources", [])
-    error = tool.llm.error or (None if body else result.error_code or "missing_answer")
+    error = generator.error or (None if body else result.error_code or "missing_answer")
     row.update(
-        answer=body, qa_ms=elapsed, generation_error=error,
+        answer=body, qa_ms=qa_ms, generation_error=error,
+        qa_retrieval_ms=qa_retrieval_ms, llm_call_ms=generator.call_ms,
         answer_scores=score_answer(body, case) if not error else None,
         citations=score_citations(body, sources, hits, case, pipeline),
         sources=sources,
@@ -197,6 +205,35 @@ def evaluate_case(pipeline, case, variant, *, generate=None, repeats=1):
     )
     row["scope_leaks"] += sum(source.get("document_id") not in case.scope for source in sources)
     return row
+
+
+def _measure_qa(pipeline, case, variant, options, generate):
+    qa_retrieval_ms = []
+    hits = []
+
+    def timed_search(**kwargs):
+        nonlocal hits
+        started = perf_counter()
+        try:
+            hits = pipeline.search(**kwargs)
+            return hits
+        finally:
+            qa_retrieval_ms.append((perf_counter() - started) * 1000)
+
+    # Use only the experiment's index. RAGTool's constructor may open a configured live index.
+    tool = RAGTool.__new__(RAGTool)
+    tool.rag_namespace = case.namespace
+    tool._pipelines = {case.namespace: SimpleNamespace(search=timed_search)}
+    tool.graph_service = None
+    tool.qdrant_api_key = None
+    generator = TrialGenerator(generate, variant.cite)
+    tool.llm = generator
+    started = perf_counter()
+    result = tool.execute_result(
+        "ask", mode="joint", graph_mode="off", verify_evidence=variant.verify_evidence,
+        evidence_strategy=variant.evidence_strategy, **options,
+    )
+    return generator, result, (perf_counter() - started) * 1000, qa_retrieval_ms, hits
 
 
 class RemoteEmbedder:

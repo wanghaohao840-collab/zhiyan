@@ -35,6 +35,7 @@ from hello_agents.memory.rag.result_utils import (
 )
 from hello_agents.memory.graph.contracts import graph_response
 from hello_agents.tools.builtin.rag_grounding import (
+    EVIDENCE_STRATEGIES,
     EvidenceProtocolError,
     evidence_prompt,
     grounded_answer,
@@ -336,6 +337,11 @@ class RAGTool(Tool):
                 "verify_evidence": {
                     "type": "boolean",
                     "description": "verify explicit document evidence for joint answers",
+                },
+                "evidence_strategy": {
+                    "type": "string",
+                    "enum": list(EVIDENCE_STRATEGIES),
+                    "description": "generation strategy when verify_evidence is enabled",
                 },
                 "use_rerank": {
                     "type": "boolean",
@@ -1498,6 +1504,7 @@ class RAGTool(Tool):
         graph_node_limit: int = 8,
         graph_relation_limit: int = 16,
         verify_evidence: bool = False,
+        evidence_strategy: str = "two_pass",
         **kwargs,
     ) -> str:
         """Answer with joint, comparison, or summary behavior."""
@@ -1522,6 +1529,9 @@ class RAGTool(Tool):
         graph_mode = str(graph_mode or "auto").strip().lower()
         if graph_mode not in {"off", "auto", "required"}:
             return "鉂?graph_mode must be off, auto, or required"
+
+        if verify_evidence and evidence_strategy not in EVIDENCE_STRATEGIES:
+            return "❌ 不支持的证据校验策略"
 
         if verify_evidence and (selected_mode != "joint" or not scope or graph_mode == "required"):
             return "❌ 证据校验需要选择文档，且只支持普通问答与文档来源"
@@ -1578,7 +1588,7 @@ class RAGTool(Tool):
                 metadata = item.get("metadata") or {}
                 if metadata.get("document_id") not in scope or metadata.get("rag_namespace") != namespace:
                     return "❌ 问答证据超出所选文档"
-            return self._ask_verified_evidence(query, conversation_context, results)
+            return self._ask_verified_evidence(query, conversation_context, results, evidence_strategy)
 
         if not results:
             if scope:
@@ -1669,17 +1679,17 @@ class RAGTool(Tool):
             graph_sources=graph_sources,
         )
 
-    def _ask_verified_evidence(self, query, conversation_context, results) -> str:
+    def _ask_verified_evidence(self, query, conversation_context, results, strategy) -> str:
         if not results:
             self._last_action_data = {"evidence_status": "insufficient"}
             return self._format_answer("资料中没有提到足够的信息，无法回答这个问题。", [])
         history = self._qa_history_section(conversation_context)
         try:
-            budget = self._context_budget(evidence_prompt(query, history, ""))
+            budget = self._context_budget(evidence_prompt(query, history, "", strategy=strategy))
             context, visible, truncated = self._build_context(
                 results, token_budget=budget, return_details=True
             )
-            verified = grounded_answer(self._generate, query, history, context, visible)
+            verified = grounded_answer(self._generate, query, history, context, visible, strategy=strategy)
         except ContextCapacityError:
             return self._capacity_error()
         except EvidenceProtocolError as exc:

@@ -128,6 +128,7 @@ class ApplicationServices:
         qa_telemetry = InProcessQaTelemetry()
         answer_engine = qa_answer_engine or RagQaAnswerEngine(
             verify_evidence=os.getenv("RAG_QA_VERIFY_EVIDENCE", "").strip() == "1",
+            evidence_strategy=os.getenv("RAG_QA_EVIDENCE_STRATEGY", "two_pass").strip(),
         )
         context_builder = QaContextBuilder(max_input_tokens=6000)
         document_library = DocumentLibraryService(

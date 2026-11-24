@@ -205,3 +205,18 @@ def test_verified_evidence_setting_only_applies_to_joint_qa() -> None:
     RagQaAnswerEngine().answer(runtime, request(mode="joint"))
     assert tool.calls[0][1]["verify_evidence"] is True
     assert all("verify_evidence" not in kwargs for _, kwargs in tool.calls[1:])
+
+
+def test_single_pass_evidence_strategy_is_explicit_and_only_used_for_joint_qa():
+    tool = FakeResultTool(RAGActionResult(action="ask", success=True, message="ok", data={}))
+    runtime = SimpleNamespace(rag_tool=tool)
+    engine = RagQaAnswerEngine(verify_evidence=True, evidence_strategy="single_pass")
+    engine.answer(runtime, request(mode="joint"))
+    engine.answer(runtime, request(mode="compare"))
+    RagQaAnswerEngine(verify_evidence=True).answer(runtime, request(mode="joint"))
+    assert tool.calls[0][1]["verify_evidence"] is True
+    assert tool.calls[0][1]["evidence_strategy"] == "single_pass"
+    assert "evidence_strategy" not in tool.calls[1][1]
+    assert "evidence_strategy" not in tool.calls[2][1]
+    with pytest.raises(ValueError, match="RAG_QA_EVIDENCE_STRATEGY"):
+        RagQaAnswerEngine(verify_evidence=True, evidence_strategy="invalid")

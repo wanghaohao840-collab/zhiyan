@@ -5,6 +5,7 @@ from pathlib import PurePath
 from typing import Any, Literal, Mapping, Protocol
 
 from app.qa_models import QaMode, QaSourceDraft
+from hello_agents.tools.builtin.rag_grounding import EVIDENCE_STRATEGIES
 
 
 @dataclass(frozen=True)
@@ -46,8 +47,11 @@ class QaAnswerEngine(Protocol):
 
 
 class RagQaAnswerEngine:
-    def __init__(self, *, verify_evidence: bool = False):
+    def __init__(self, *, verify_evidence: bool = False, evidence_strategy: str = "two_pass") -> None:
+        if verify_evidence and evidence_strategy not in EVIDENCE_STRATEGIES:
+            raise ValueError("RAG_QA_EVIDENCE_STRATEGY must be two_pass or single_pass")
         self.verify_evidence = verify_evidence
+        self.evidence_strategy = evidence_strategy
 
     def answer(
         self,
@@ -68,6 +72,8 @@ class RagQaAnswerEngine:
         }
         if self.verify_evidence and request.mode == "joint":
             kwargs["verify_evidence"] = True
+            if self.evidence_strategy != "two_pass":
+                kwargs["evidence_strategy"] = self.evidence_strategy
         if progress_callback is not None:
             kwargs["progress_callback"] = progress_callback
         if cancel_event is not None:

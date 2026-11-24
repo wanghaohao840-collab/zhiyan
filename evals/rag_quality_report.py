@@ -107,6 +107,8 @@ def _latency_cell(value):
 def write_report(directory, metadata, tracks):
     summaries = {track: summarize(rows) for track, rows in tracks.items()}
     data = {"run": metadata, "summary": summaries, "cases": tracks}
+    if "grounding_latency" in tracks:
+        data["grounding_latency_gate"] = grounding_latency_gate(tracks["grounding_latency"])
     (directory / "results.json").write_text(
         json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8",
     )
@@ -128,6 +130,7 @@ def write_report(directory, metadata, tracks):
     track_labels.update({
         "holdout_retrieval": "独立题集检索（真实 BGE-M3 向量）",
         "holdout_grounding": "独立题集问答（真实聊天模型与 BGE-M3 向量）",
+        "grounding_latency": "单次与双次模型调用的证据校验对照",
     })
     for track, summary in summaries.items():
         lines.extend([
@@ -170,7 +173,7 @@ def write_report(directory, metadata, tracks):
                     f"| {name} | {_percent(row['citation_coverage'])} | {row['emitted_citations']} | "
                     f"{_percent(row['citation_validity'])} | {_percent(row['citation_support'])} |"
                 )
-        if track == "holdout_grounding":
+        if track in {"holdout_grounding", "grounding_latency"}:
             lines.extend([
                 "", "| 组别 | 缺证据题错误作答 | 可答题误拒 | 黄金事实引用覆盖 | 同句引用指向标注证据 |",
                 "|---|---:|---:|---:|---:|",
@@ -181,6 +184,22 @@ def write_report(directory, metadata, tracks):
                     f"{_percent(row['false_abstention_rate'])} | {_percent(row['fact_citation_coverage'])} | "
                     f"{_percent(row['fact_citation_support'])} |"
                 )
+        if track == "grounding_latency":
+            lines.extend([
+                "", "| 组别 | 每题平均模型调用数 | 模型调用总耗时均值 / P50 / P95（ms） |",
+                "|---|---:|---:|",
+            ])
+            for name in summary:
+                samples = [row["llm_call_ms"] for row in tracks[track] if row["variant"] == name]
+                calls = mean(len(sample) for sample in samples)
+                lines.append(f"| {name} | {calls:.2f} | {_latency_cell(_latency([sum(sample) for sample in samples]))} |")
+            gate = data["grounding_latency_gate"]
+            lines.extend([
+                "", f"本轮验收 {'通过' if gate['passed'] else '未通过'}。"
+                f"完整问答 P95 降幅 {gate['p95_reduction']:.1%}。",
+            ])
+            if gate["reasons"]:
+                lines.extend(f"- {reason}" for reason in gate["reasons"])
     lines.extend([
         "", "## 口径", "",
         "- 检索前 k 命中率只统计可回答题。Recall@5 取各题黄金片段召回比例的平均值，"
@@ -192,9 +211,13 @@ def write_report(directory, metadata, tracks):
         "- 各组最终都取五条。向量阈值为 0.12，混合词面通道可以额外召回弱匹配片段。",
         "- 逐题证据、正文、引用、分数与耗时见同目录 results.json。",
     ])
-    if "holdout_retrieval" in tracks:
+    if "grounding_latency" in tracks:
+        lines.append(
+            "- 两组交错执行，问答并发为 2。每题一次真实检索，模型耗时为该题所有生成调用的总时间。"
+        )
+    elif "holdout_retrieval" in tracks:
         lines.append("- 检索顺序执行。完整问答并发为 3，包含向量接口往返与生成时间。")
-    else:
+    elif "offline" in tracks:
         lines.append(
             "- 引用提示词对照固定检索结果。无阈值向量组只做检索。"
         )
@@ -204,3 +227,28 @@ def write_report(directory, metadata, tracks):
             "同句引用支撑按人工标注的事实和对应原文片段计算。接口与格式错误单列。"
         )
     (directory / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def grounding_latency_gate(rows):
+    summary = summarize(rows)
+    baseline = summary["two_pass"]
+    candidate = summary["single_pass"]
+    reduction = 1 - candidate["qa_ms"]["p95"] / baseline["qa_ms"]["p95"]
+    reasons = []
+    for metric, label in (
+        ("answer_accuracy", "可答题准确率"),
+        ("clean_abstention", "干净拒答率"),
+        ("fact_citation_coverage", "标注事实引用覆盖"),
+        ("fact_citation_support", "标注事实的引用支持率"),
+    ):
+        if (candidate[metric] or 0) < (baseline[metric] or 0):
+            reasons.append(f"{label}低于双次调用")
+    if baseline["scope_leaks"] or candidate["scope_leaks"]:
+        reasons.append("检索或来源超出了选定文档")
+    if candidate["qa_errors"]:
+        reasons.append("单次调用组出现问答错误")
+    if candidate["citation_validity"] != 1.0:
+        reasons.append("单次调用组有无法回查的引用")
+    if reduction < 0.2:
+        reasons.append("完整问答 P95 降幅低于 20%")
+    return {"passed": not reasons, "reasons": reasons, "p95_reduction": reduction}

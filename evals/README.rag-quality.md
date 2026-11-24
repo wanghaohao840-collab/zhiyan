@@ -43,3 +43,15 @@
 固定题集有 24 题和 64 个片段，覆盖改写、版本冲突、跨片段事实和缺证据。多证据题会单独统计前五条是否找齐所有必需片段。问答对照在同一个混合检索与重排配置上比较原有生成和证据校验。定量判断使用人工标注的事实到证据片段映射。
 
 在工具的普通问答入口，选定文档后可传入 `verify_evidence=True`。应用服务可设置 `RAG_QA_VERIFY_EVIDENCE=1` 启用仅使用所选文档的普通问答。模型先选择逐字引文，再给每条事实绑定引用。程序检查范围、原文、数值、常用单位和代号，资料不齐时返回无来源的拒答。文本语义仍由模型判断，结构或引用校验失败时保留独立的问答错误状态。
+
+### 证据校验延迟对照
+
+在普通问答工具中，选定文档后可传入 `verify_evidence=True, evidence_strategy="single_pass"`，用一次模型调用同时输出原文与逐条结论。两种策略共用原文、引用、数字、常用单位和代号检查。旧调用仍采用双次策略。单次策略若遇到错误输出，最多再调用一次。
+
+~~~powershell
+.\venv\Scripts\python.exe -m evals.rag_quality_holdout --grounding-latency --embedding-env-file deploy/.env --chat-env-file .env --output-dir output/rag-grounding-latency
+~~~
+
+使用同一份 24 道独立题和同一个聊天模型，交错执行两组。比较完整问答 P95、每题模型调用次数、原文引用覆盖、可答题准确率和干净拒答率。每题只做一次真实检索，问答使用远程 BGE-M3 的当次结果。报告独立记录可用性、质量及延迟，完整逐题输出保存在结果目录。
+
+应用中可将 `RAG_QA_VERIFY_EVIDENCE=1` 和 `RAG_QA_EVIDENCE_STRATEGY=single_pass` 一起配置。校验开启时默认策略为 `two_pass`。
