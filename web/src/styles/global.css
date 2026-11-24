@@ -485,11 +485,203 @@ a:hover {
   }
 }
 
+/* 共享 UI 原语（PageHeader / EmptyState / Skeleton / OverlayDialog） */
+.ui-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.ui-page-header__copy {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.ui-page-header__eyebrow {
+  color: var(--color-brand-700);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ui-page-header__copy h1 {
+  margin: var(--space-0);
+  color: var(--color-text-primary);
+  font-size: 1.5rem;
+  font-weight: 500;
+  line-height: var(--leading-tight);
+  letter-spacing: -0.02em;
+}
+
+.ui-page-header__copy p {
+  margin: var(--space-0);
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+  line-height: var(--leading-ui);
+}
+
+.ui-page-header__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ui-empty-state {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-5);
+  text-align: center;
+}
+
+.ui-empty-state h3 {
+  margin: var(--space-0);
+  color: var(--color-text-primary);
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.ui-empty-state p {
+  max-width: 34rem;
+  margin: var(--space-0);
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+  line-height: var(--leading-body);
+}
+
+.ui-empty-state__action {
+  margin-top: var(--space-1);
+}
+
+.ui-skeleton {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-0);
+}
+
+.ui-skeleton__line {
+  display: block;
+  width: 100%;
+  height: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-subtle);
+  animation: ui-skeleton-pulse 1.6s var(--ease-standard) infinite;
+}
+
+.ui-skeleton__line--short {
+  width: 62%;
+}
+
+@keyframes ui-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+.ui-overlay {
+  position: fixed;
+  z-index: 90;
+  inset: var(--space-0);
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+}
+
+.ui-overlay__scrim {
+  position: absolute;
+  inset: var(--space-0);
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--color-scrim);
+  cursor: pointer;
+}
+
+.ui-overlay__panel {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: min(520px, 100%);
+  max-height: calc(100dvh - var(--space-8));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-elevated);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-dialog);
+}
+
+.ui-overlay__panel--drawer {
+  position: fixed;
+  top: var(--space-0);
+  right: var(--space-0);
+  bottom: var(--space-0);
+  width: min(400px, 100%);
+  max-height: none;
+  border-radius: var(--radius-elevated) var(--space-0) var(--space-0) var(--radius-elevated);
+  align-content: start;
+}
+
+.ui-overlay__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.ui-overlay__header h2 {
+  margin: var(--space-0);
+  color: var(--color-text-primary);
+  font-size: 1.125rem;
+  font-weight: 500;
+}
+
+.ui-overlay__close {
+  display: inline-grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.ui-overlay__close:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-subtle);
+}
+
+.ui-overlay__body {
+  display: grid;
+  gap: var(--space-4);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .form-field input,
   .password-field .password-field__toggle,
   .auth-submit,
-  .session-dialog__actions button {
+  .session-dialog__actions button,
+  .ui-overlay__close {
     transition: none;
+  }
+
+  .ui-skeleton__line {
+    animation: none;
+    opacity: 0.8;
   }
 }

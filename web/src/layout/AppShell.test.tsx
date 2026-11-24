@@ -164,6 +164,7 @@ function renderProductionApp(initialEntry: string) {
 describe("AppShell", () => {
   afterEach(() => {
     document.documentElement.style.fontSize = "";
+    window.localStorage.removeItem("zhiyan.ui.sidebarCollapsed");
     vi.unstubAllGlobals();
     fetchMock.mockReset();
   });
@@ -417,6 +418,39 @@ describe("AppShell", () => {
     expect(
       within(screen.getByLabelText("主导航")).getAllByRole("link", { hidden: true }),
     ).toHaveLength(7);
+    expect(window.localStorage.getItem("zhiyan.ui.sidebarCollapsed")).toBe("true");
+  });
+
+  it("restores persisted sidebar preference and falls back cleanly when storage throws", async () => {
+    window.localStorage.setItem("zhiyan.ui.sidebarCollapsed", "true");
+    mockAuthenticatedSession();
+    const { unmount } = render(
+      <QueryClientProvider client={createTestQueryClient()}>
+        <MemoryRouter initialEntries={["/overview"]}>
+          <AuthProvider>
+            <App />
+          </AuthProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByRole("button", { name: "展开侧栏", hidden: true }),
+    ).toHaveAttribute("aria-expanded", "false");
+    unmount();
+
+    const getItemSpy = vi
+      .spyOn(Storage.prototype, "getItem")
+      .mockImplementation(() => {
+        throw new Error("storage blocked");
+      });
+    try {
+      renderShell();
+      expect(
+        await screen.findByRole("button", { name: "收起侧栏", hidden: true }),
+      ).toHaveAttribute("aria-expanded", "true");
+    } finally {
+      getItemSpy.mockRestore();
+    }
   });
 
   it("keeps a single visible page heading", async () => {

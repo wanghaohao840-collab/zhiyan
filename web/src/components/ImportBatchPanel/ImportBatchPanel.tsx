@@ -79,7 +79,7 @@ export function ImportTaskRow({
   return (
     <li className="import-task-row" data-state={state} aria-label={task.original_name}>
       <span className="import-task-row__icon" aria-hidden="true">
-        <FileUp size={18} strokeWidth={1.6} />
+        <FileUp size={18} strokeWidth={1.6} aria-hidden="true" />
       </span>
       <span className="import-task-row__body">
         <strong>{task.original_name}</strong>

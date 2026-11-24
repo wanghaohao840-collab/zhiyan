@@ -1,3 +1,4 @@
+import { FileText } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { Document } from "../../features/documents/types";
@@ -9,7 +10,7 @@ function DocumentScopeItem({ item, selected, disabled, onToggle }: {
   const format = item.file_suffix?.replace(/^\./, "").toUpperCase() || "文档";
   return <label className={`search-document${selected ? " is-selected" : ""}`}>
     <input type="checkbox" aria-label={item.name} checked={selected} disabled={disabled} onChange={onToggle} />
-    <svg className="scope-file-icon" viewBox="0 0 24 28" fill="none" aria-hidden="true"><path d="M4 1h10l6 6v19H4zM14 1v7h6M8 14h8M8 18h8" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" /></svg>
+    <FileText size={18} strokeWidth={1.6} aria-hidden="true" className="scope-file-icon" />
     <span className="scope-file-text"><strong title={item.name}>{item.name}</strong><small>{format}{item.size_bytes != null ? ` · ${Math.max(1, Math.round(item.size_bytes / 1024))} KB` : ""}</small></span>
     <span className="scope-check" aria-hidden="true">{selected ? "✓" : ""}</span>
   </label>;

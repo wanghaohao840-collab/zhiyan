@@ -7,6 +7,7 @@ const destinations = [
   { path: "/search", desktop: "文献检索", mobile: "检索", heading: "文献检索" },
   { path: "/notes", desktop: "学习笔记", mobile: "学习笔记", heading: "学习笔记" },
   { path: "/insights", desktop: "学习洞察", mobile: "学习洞察", heading: "学习洞察" },
+  { path: "/learning", desktop: "学习中心", mobile: "学习中心", heading: "学习中心" },
 ] as const;
 
 test("registers with a cookie, navigates the shell, and logs out with CSRF", async ({
@@ -23,7 +24,7 @@ test("registers with a cookie, navigates the shell, and logs out with CSRF", asy
   expect(sessionCookie?.httpOnly).toBe(true);
 
   for (const destination of destinations) {
-    if (testInfo.project.name === "mobile" && ["/notes", "/insights"].includes(destination.path)) {
+    if (testInfo.project.name === "mobile" && ["/notes", "/insights", "/learning"].includes(destination.path)) {
       await openMore(page, testInfo.project.name);
       await page.getByRole("dialog", { name: "更多" }).getByRole("link", {
         name: destination.mobile,
@@ -62,7 +63,7 @@ test("registers with a cookie, navigates the shell, and logs out with CSRF", asy
   await expect(page.getByRole("heading", { level: 1, name: "登录" })).toBeVisible();
 });
 
-test("redirects the exact legacy path and opens legacy from the migration CTA", async ({
+test("redirects the exact legacy path and keeps all product routes live", async ({
   appUrl,
   page,
 }, testInfo) => {
@@ -74,13 +75,11 @@ test("redirects the exact legacy path and opens legacy from the migration CTA", 
   expect((await redirectResponse).headers().location).toBe("/legacy/");
   expect(legacyResponse?.status()).toBe(200);
   await expect(page).toHaveURL(`${appUrl}/legacy/`);
+  await expect(page.locator("gradio-app")).toBeVisible();
 
   await registerUser(page, appUrl, uniqueUsername(`legacy_${testInfo.project.name}`));
   await page.goto(`${appUrl}/search`);
-  const legacyAction = page.getByRole("link", { name: "前往旧版" });
-  await expect(legacyAction).toHaveAttribute("href", "/legacy/");
-  await legacyAction.click();
-
-  await expect(page).toHaveURL(`${appUrl}/legacy/`);
-  await expect(page.locator("gradio-app")).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "文献检索" })).toBeVisible();
+  await page.goto(`${appUrl}/learning`);
+  await expect(page.getByRole("heading", { level: 1, name: "学习中心" })).toBeVisible();
 });

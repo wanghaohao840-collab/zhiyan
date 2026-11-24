@@ -6,8 +6,7 @@ import { Link } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/AuthProvider";
 import { Button } from "../components/Button/Button";
-import { ConstellationMark } from "../components/ui/ConstellationMark";
-import { StatusBadge } from "../components/ui/StatusBadge";
+import { EmptyState, PageHeader, Skeleton, StatusBadge } from "../components/ui";
 import type { DocumentListResponse } from "../features/documents/types";
 import { createPlan, updateTask } from "../features/learning/api";
 import type {
@@ -54,7 +53,7 @@ function ResourcePage<T>({
   return (
     <>
       {query.isPending ? (
-        <p className="learning-muted" role="status">正在加载…</p>
+        <Skeleton label="正在加载…" lines={3} />
       ) : query.error ? (
         <div className="learning-alert" role="alert">
           <p>{safeMessage(query.error)}</p>
@@ -73,10 +72,7 @@ function ResourcePage<T>({
           {query.data?.items.length ? (
             <ul className="learning-list">{query.data.items.map(renderItem)}</ul>
           ) : (
-            <div className="learning-empty">
-              <ConstellationMark size="sm" />
-              <p>{empty}</p>
-            </div>
+            <EmptyState className="learning-empty" description={empty} markSize="sm" />
           )}
           <div className="learning-pagination">
             <Button hierarchy="ghost" disabled={!cursor} onClick={() => setCursor(null)}>
@@ -151,9 +147,9 @@ function TaskItem({ task, username }: { task: LearningTask; username: string }) 
             tone={task.completed ? "success" : "warning"}
             icon={
               task.completed ? (
-                <CheckCircle2 size={13} strokeWidth={1.8} />
+                <CheckCircle2 size={13} strokeWidth={1.6} aria-hidden="true" />
               ) : (
-                <Circle size={13} strokeWidth={1.8} />
+                <Circle size={13} strokeWidth={1.6} aria-hidden="true" />
               )
             }
           >
@@ -272,12 +268,11 @@ function LearningWorkspace({ username }: { username: string }) {
 
   return (
     <article className="learning-page">
-      <header className="learning-header">
-        <div>
-          <h1>学习中心</h1>
-          <p>把阅读安排成可执行的小任务。计划分钟数不代表实际学习时长。</p>
-        </div>
-      </header>
+      <PageHeader
+        className="learning-header"
+        title="学习中心"
+        description="把阅读安排成可执行的小任务。计划分钟数不代表实际学习时长。"
+      />
       <nav className="learning-actions" aria-label="学习中心视图">
         <Button
           hierarchy={section === "today" ? "primary" : "secondary"}

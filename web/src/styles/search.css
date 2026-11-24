@@ -215,8 +215,8 @@
 }
 
 .scope-file-icon {
-  width: 22px;
-  height: 26px;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
   color: var(--color-brand-600);
 }

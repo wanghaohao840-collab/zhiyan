@@ -359,6 +359,11 @@ test("Notes approved visuals, accessibility, overflow and mobile primary targets
   test.slow();
   await registerUser(page, appUrl, uniqueUsername(`notes_visual_${testInfo.project.name}`));
   const note = await createManualNote(page, appUrl, "# 间隔复习\n\n用 **Markdown** 整理遗忘曲线与复习节奏。");
+  // NOTE: 等待后台记忆投影收敛到稳定态，避免截图在 pending 与 ready 之间抖动
+  await expect.poll(async () => {
+    const response = await page.request.get(`${appUrl}/api/v1/notes/${note.id}`);
+    return ((await response.json()) as { projection_state?: string }).projection_state;
+  }).toBe("ready");
   await page.goto(`${appUrl}/notes`);
   await expect(page.locator(".notes-list__item")).toHaveCount(1);
 
@@ -430,6 +435,10 @@ test("Notes approved visuals, accessibility, overflow and mobile primary targets
     await expect(editor.getByRole("tab", { name: "编辑" })).toBeFocused();
   } else {
     await page.locator(".notes-list__item").click();
+    await settleVisuals(page);
+    await page.locator(".notes-list time").evaluateAll((items) => items.forEach((item) => item.textContent = "最近更新 9/12 14:20"));
+    await page.locator(".notes-editor__footer > p").evaluateAll((items) => items.forEach((item) => item.textContent = "最近保存于 9/12 14:20"));
+    await expect(page.locator(".notes-editor__footer > p")).toContainText("最近保存于");
     await settleVisuals(page);
     await page.locator(".notes-list time").evaluateAll((items) => items.forEach((item) => item.textContent = "最近更新 9/12 14:20"));
     await page.locator(".notes-editor__footer > p").evaluateAll((items) => items.forEach((item) => item.textContent = "最近保存于 9/12 14:20"));
