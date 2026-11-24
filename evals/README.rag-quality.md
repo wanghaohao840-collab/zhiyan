@@ -68,7 +68,7 @@
 
 ### 按问项选择证据校验策略
 
-临时试用可配置 RAG_QA_VERIFY_EVIDENCE=1、RAG_QA_EVIDENCE_STRATEGY=adaptive 和 RAG_QA_EVIDENCE_MAX_TOKENS=4096。单次适用于单项问题，双次复核用于带明显并列词或多个问号的问题。隐式多项问题可能走单次，实体名中的并列词也可能触发双次。前两种固定策略仍然可选。输出上限留空使用现有生成默认值。提高上限会减少可用于引文和对话的输入预算。
+临时试用可配置 RAG_QA_VERIFY_EVIDENCE=1、RAG_QA_EVIDENCE_STRATEGY=adaptive 和 RAG_QA_EVIDENCE_MAX_TOKENS=4096。单次适用于单项问题。双次复核用于引号外带明显并列词或多个问号的问题。隐式多项问题仍可能走单次。自适应策略优先保留所有去重后的候选片段，空间不足时缩短片段正文。连片段最低长度都装不下时，返回容量不足。双次复核遇到空输出时，可在整次问答共用的一次重试限额内用较短指令重试。前两种固定策略仍然可选。输出上限留空使用现有生成默认值。提高上限会减少可用于引文和对话的输入预算。
 
 ~~~powershell
 .\venv\Scripts\python.exe -m evals.rag_quality_holdout --grounding-adaptive --embedding-env-file deploy/.env --chat-env-file .env --output-dir output/rag-grounding-adaptive

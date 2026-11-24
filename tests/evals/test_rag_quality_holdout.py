@@ -414,6 +414,9 @@ def test_question_about_whether_a_value_is_documented_can_cite_its_absence():
     ("When does the room open, and what code replaces a lost reservation?", "two_pass"),
     ("Which label appears on the entrance sign?", "single_pass"),
     ("补票核验码是什么？", "single_pass"),
+    ('When does the "Horizon and Delta" program open?', "single_pass"),
+    ("「救护与转运」站的值班时段是什么？", "single_pass"),
+    ("「救护与转运」站什么时候开放，以及由谁负责接班？", "two_pass"),
 ])
 def test_adaptive_evidence_route(question, strategy):
     from hello_agents.tools.builtin.rag_grounding import resolve_evidence_strategy

@@ -14,6 +14,7 @@ from evals.rag_quality_experiment import (
     BASELINE, build_index, configure_chat, configure_embedding, run_trials,
 )
 from evals.rag_quality_report import summarize
+from hello_agents.tools.builtin.rag_grounding import EVIDENCE_STRATEGIES
 
 
 STRESS_DATASET = HOLDOUT_DATASET.with_name("rag_quality_stress.json")
@@ -117,7 +118,8 @@ def _write_checkpoint(output, metadata, rows):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--split", choices=("dev", "holdout"), default="holdout")
-    parser.add_argument("--bucket", choices=BUCKETS)
+    parser.add_argument("--bucket", action="append", choices=BUCKETS)
+    parser.add_argument("--strategy", action="append", choices=EVIDENCE_STRATEGIES)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--embedding-env-file", type=Path, required=True)
     parser.add_argument("--chat-env-file", type=Path, required=True)
@@ -125,7 +127,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     chunks, cases = stress_cases(args.split)
     if args.bucket:
-        cases = [case for case in cases if case.bucket == args.bucket]
+        cases = [case for case in cases if case.bucket in args.bucket]
         scope = {doc for case in cases for doc in case.scope}
         chunks = [chunk for chunk in chunks if chunk.document_id in scope]
 
@@ -147,8 +149,8 @@ def main(argv=None):
         }
         base = replace(BASELINE, verify_evidence=True, use_application_engine=True,
                        evidence_max_tokens=args.max_tokens)
-        variants = tuple(replace(base, name=strategy, evidence_strategy=strategy)
-                         for strategy in ("two_pass", "single_pass", "adaptive"))
+        strategies = tuple(dict.fromkeys(args.strategy or ("two_pass", "single_pass", "adaptive")))
+        variants = tuple(replace(base, name=strategy, evidence_strategy=strategy) for strategy in strategies)
         print("Building isolated index", flush=True)
         pipelines = build_index(chunks, Path(directory), embedder)
         rows = []

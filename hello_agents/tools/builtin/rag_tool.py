@@ -35,6 +35,7 @@ from hello_agents.memory.rag.result_utils import (
 )
 from hello_agents.memory.graph.contracts import graph_response
 from hello_agents.tools.builtin.rag_grounding import (
+    EVIDENCE_RETRY_SUFFIX,
     EVIDENCE_STRATEGIES,
     EvidenceProtocolError,
     evidence_prompt,
@@ -1688,6 +1689,7 @@ class RAGTool(Tool):
         )
 
     def _ask_verified_evidence(self, query, conversation_context, results, strategy, max_tokens) -> str:
+        adaptive = strategy == "adaptive"
         strategy = resolve_evidence_strategy(strategy, query)
         if not results:
             self._last_action_data = {"evidence_status": "insufficient", "evidence_strategy": strategy}
@@ -1696,11 +1698,15 @@ class RAGTool(Tool):
         reserve = max(ANSWER_OUTPUT_TOKEN_RESERVE, max_tokens or 0)
         trace = {"evidence_strategy": strategy}
         try:
-            budget = self._context_budget(
-                evidence_prompt(query, history, "", strategy=strategy), output_reserve=reserve,
-            )
+            fixed_prompt = evidence_prompt(query, history, "", strategy=strategy)
+            if adaptive:
+                fixed_prompt += EVIDENCE_RETRY_SUFFIX
+            budget = self._context_budget(fixed_prompt, output_reserve=reserve)
+            if adaptive:
+                # The full-prompt preflight also requires a positive remaining budget.
+                budget -= 1
             context, visible, truncated = self._build_context(
-                results, token_budget=budget, return_details=True
+                results, token_budget=budget, return_details=True, retain_candidates=adaptive,
             )
             trace.update(
                 evidence_context_visible=len(visible),
@@ -1713,7 +1719,10 @@ class RAGTool(Tool):
                 self._context_budget(prompt, output_reserve=reserve)
                 return self._generate(prompt, max_tokens=max_tokens)
 
-            verified = grounded_answer(generate, query, history, context, visible, strategy=strategy)
+            verified = grounded_answer(
+                generate, query, history, context, visible,
+                strategy=strategy, compact_empty_retry=adaptive,
+            )
         except ContextCapacityError:
             self._last_action_data = {**trace, "evidence_status": "capacity"}
             return self._capacity_error()
@@ -2098,6 +2107,7 @@ class RAGTool(Tool):
         results: List[Dict[str, Any]],
         token_budget: Optional[int] = None,
         return_details: bool = False,
+        retain_candidates: bool = False,
     ):
         """Build a bounded context without mutating cached/search result objects."""
 
@@ -2106,7 +2116,7 @@ class RAGTool(Tool):
             results,
             token_budget=budget,
             llm=self.llm,
-            format_source=self._format_source,
+            format_source=self._format_source, retain_candidates=retain_candidates,
         )
         result = (fitted.context, fitted.results, fitted.truncated)
         return result if return_details else fitted.context

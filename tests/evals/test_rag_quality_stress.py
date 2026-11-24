@@ -1,6 +1,8 @@
 import json
 from dataclasses import replace
 
+import pytest
+
 from evals.rag_quality_experiment import BASELINE, Completion, build_index, evaluate_case
 from evals.rag_quality_stress import BUCKETS, stress_cases, summarize_stress
 from hello_agents.memory.embedding import SimpleEmbedding
@@ -41,3 +43,82 @@ def test_stress_summary_preserves_route_tokens_and_protocol_retry(tmp_path):
     assert summary["empty_completions"] == summary["length_finishes"] == summary["protocol_retries"] == 1
     assert summary["reasoning_tokens_mean"] == 637
     assert row["visible_chunk_ids"] == [hit["id"]]
+
+
+def test_adaptive_context_trims_without_silently_dropping_candidates():
+    from types import SimpleNamespace
+
+    from hello_agents.tools.builtin.rag_context import ContextCapacityError, fit_context
+
+    chunks = [
+        {"id": f"chunk-{i}", "content": f"Direct evidence {i}. " + "padding " * 25,
+         "score": 1.0 - i / 10, "metadata": {"document_id": f"doc-{i}"}}
+        for i in (1, 2, 3)
+    ]
+    options = {
+        "llm": SimpleNamespace(), "format_source": lambda *_: "",
+        "min_truncated_chars": 60, "token_budget": 300,
+    }
+    baseline = fit_context(chunks, **options)
+    preserved = fit_context(chunks, retain_candidates=True, **options)
+    assert len(baseline.results) < len(chunks)
+    assert len(preserved.results) == len(chunks)
+    assert preserved.truncated
+    assert len(preserved.context) <= 300
+    for chunk, result in zip(chunks, preserved.results, strict=True):
+        assert chunk["content"].startswith(result["content"])
+        assert len(result["content"]) >= 60
+    with pytest.raises(ContextCapacityError, match="minimum semantic content"):
+        fit_context(chunks, retain_candidates=True, **{**options, "token_budget": 100})
+
+
+def test_adaptive_empty_response_uses_one_shorter_retry_for_both_phases():
+    from hello_agents.tools.builtin.rag_grounding import EvidenceProtocolError, grounded_answer
+
+    prompts = []
+    outputs = iter([
+        "",
+        '{"quotes":[{"id":"S-a","quote":"The check takes 12 minutes."}]}',
+        "",
+    ])
+
+    def generate(prompt):
+        prompts.append(prompt)
+        return next(outputs)
+
+    with pytest.raises(EvidenceProtocolError):
+        grounded_answer(
+            generate, "How long until the check, and which report is used?", "", "Text",
+            [{"citation_id": "S-a", "content": "The check takes 12 minutes."}],
+            strategy="two_pass", compact_empty_retry=True,
+        )
+    assert len(prompts) == 3
+    assert len(prompts[1]) < len(prompts[0])
+    assert "12 minutes" in prompts[2]
+
+
+def test_full_context_keeps_headroom_for_first_prompt_and_retry(tmp_path):
+    chunks, cases = stress_cases("dev")
+    case = next(case for case in cases if case.bucket == "long_context" and case.language == "en")
+    pipeline = build_index(chunks, tmp_path, SimpleEmbedding())[case.namespace]
+    hits = [
+        {**hit, "score": 0.9} for doc in case.scope for hit in pipeline.get_document_chunks(doc)
+    ][:5]
+    pipeline.search = lambda **_: hits
+    observed = []
+
+    def generate(prompt, *, max_tokens):
+        observed.append((prompt, max_tokens))
+        return "" if len(observed) == 1 else '{"quotes":[]}'
+
+    variant = replace(
+        BASELINE, name="adaptive", verify_evidence=True, evidence_strategy="adaptive",
+        evidence_max_tokens=4096, use_application_engine=True,
+    )
+    row = evaluate_case(pipeline, case, variant, generate=generate, repeats=0)
+    assert row["evidence_status"] == "insufficient"
+    assert row["context_cut"]
+    assert row["context_dropped"] == 0
+    assert len(row["visible_chunk_ids"]) == len(hits)
+    assert len(observed) == 2
+    assert all(len(prompt) + cap + 512 < 8192 for prompt, cap in observed)
