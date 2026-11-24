@@ -33,6 +33,7 @@ class GoldCase:
     facts: tuple[str, ...]
     forbidden: tuple[str, ...]
     fact_evidence: dict[str, tuple[str, ...]] | None = None
+    bucket: str | None = None
 
 
 def _strings(value: object, label: str) -> tuple[str, ...]:

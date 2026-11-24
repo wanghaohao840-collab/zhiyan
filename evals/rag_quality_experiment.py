@@ -63,6 +63,15 @@ _CITATION_REQUIREMENT = "只能基于资料回答，并使用资料中的稳定�
 _SOURCE_BLOCK = re.compile(r"(?m)^\[(S-[a-f0-9]{12})(?: \| [^\n]*)?\]\n([^\n]+)")
 
 
+@dataclass(frozen=True)
+class Completion:
+    text: str
+    finish_reason: str | None
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    reasoning_tokens: int | None
+
+
 class TrialGenerator:
     context_window_tokens = 8192
 
@@ -72,9 +81,13 @@ class TrialGenerator:
         self.error = None
         self.call_ms = []
         self.output_caps = []
+        self.completions = []
+        self.protocol_retries = 0
 
     def generate(self, prompt, **kwargs):
         self.output_caps.append(kwargs.get("max_tokens"))
+        if "上一次输出未通过格式或证据检查。" in prompt[-80:]:
+            self.protocol_retries += 1
         started = perf_counter()
         try:
             return self._generate(prompt, **kwargs)
@@ -96,6 +109,13 @@ class TrialGenerator:
             return f"{passage} [{id_}]" if self.cite else passage
         try:
             answer = self.generate_answer(prompt, **kwargs)
+            if isinstance(answer, Completion):
+                self.completions.append({
+                    "finish_reason": answer.finish_reason, "empty": not answer.text.strip(),
+                    "prompt_tokens": answer.prompt_tokens, "completion_tokens": answer.completion_tokens,
+                    "reasoning_tokens": answer.reasoning_tokens,
+                })
+                answer = answer.text
             if not answer.strip():
                 self.error = "empty_generation"
             return answer
@@ -182,7 +202,7 @@ def evaluate_case(pipeline, case, variant, *, generate=None, repeats=1):
         and hit["metadata"].get("document_id") in case.scope
     }
     row = {
-        "case": case.id, "language": case.language, "category": case.category,
+        "case": case.id, "language": case.language, "category": case.category, "bucket": case.bucket,
         "variant": variant.name, "answerable": bool(case.evidence),
         "question": case.question, "scope": case.scope, "gold_facts": case.facts,
         "gold_chunks": case.evidence, "ranked_chunks": [hit["id"] for hit in hits],
@@ -207,7 +227,11 @@ def evaluate_case(pipeline, case, variant, *, generate=None, repeats=1):
         evidence_status=result.data.get("evidence_status"),
         evidence_error=result.data.get("evidence_error"),
         evidence_strategy_used=result.data.get("evidence_strategy"),
-        output_caps=generator.output_caps,
+        output_caps=generator.output_caps, completions=generator.completions,
+        protocol_retries=generator.protocol_retries,
+        visible_chunk_ids=result.data.get("evidence_visible_chunks"),
+        context_dropped=result.data.get("evidence_context_dropped"),
+        context_cut=result.data.get("evidence_context_cut"),
     )
     row["scope_leaks"] += sum(source.get("document_id") not in case.scope for source in sources)
     return row
@@ -298,7 +322,7 @@ def configure_embedding(env_file):
         return None, {"status": "unavailable", "reason": provider_error(exc)}
 
 
-def configure_chat(env_file, stack, model_override=None, *, max_tokens=1536):
+def configure_chat(env_file, stack, model_override=None, *, max_tokens=1536, capture_metrics=False):
     if env_file is None:
         return None, {"status": "unconfigured"}
     from dotenv import dotenv_values
@@ -320,9 +344,19 @@ def configure_chat(env_file, stack, model_override=None, *, max_tokens=1536):
                 model=model, messages=[{"role": "user", "content": prompt}],
                 temperature=0, max_tokens=max_tokens,
             )
-            return response.choices[0].message.content or ""
+            choice = response.choices[0]
+            text = choice.message.content or ""
+            if not capture_metrics:
+                return text
+            usage = response.usage
+            details = getattr(usage, "completion_tokens_details", None)
+            return Completion(
+                text, choice.finish_reason, getattr(usage, "prompt_tokens", None),
+                getattr(usage, "completion_tokens", None), getattr(details, "reasoning_tokens", None),
+            )
 
-        if not generate("Reply with the word OK.").strip():
+        probe = generate("Reply with the word OK.")
+        if not (probe.text if isinstance(probe, Completion) else probe).strip():
             return None, {"status": "unavailable", "reason": "empty_probe"}
         return generate, {"status": "available", "model": model, "temperature": 0, "max_tokens": max_tokens}
     except Exception as exc:

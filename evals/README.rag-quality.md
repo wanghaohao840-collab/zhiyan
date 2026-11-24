@@ -75,3 +75,14 @@
 ~~~
 
 两组走应用问答适配器，均由适配器设置 4096 的输出上限。结果记录每次生成实际收到的上限以及每题选用的校验策略。合成短文本的对照结果需要结合长文本和应用负载验证解读。
+
+
+### 分桶压力测试
+
+固定 40 道中英文合成题，其中 10 道开发题和 30 道验收题分别使用独立命名空间。比较两次校验、单次校验和自适应校验，每组使用同一个模型与输出上限。报告按题型显示准确率、拒答、实际选用策略、输出截断、可见证据及全链引用。在线模型的逐次用量来自评测客户端。
+
+~~~powershell
+.\venv\Scripts\python.exe -m evals.rag_quality_stress --split holdout --max-tokens 4096 --embedding-env-file deploy/.env --chat-env-file .env --output-dir output/rag-grounding-stress-holdout
+~~~
+
+可加 --bucket long_context 和 --max-tokens 1024 抽查长上下文的低预算表现。

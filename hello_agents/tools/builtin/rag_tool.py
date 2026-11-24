@@ -1694,6 +1694,7 @@ class RAGTool(Tool):
             return self._format_answer("资料中没有提到足够的信息，无法回答这个问题。", [])
         history = self._qa_history_section(conversation_context)
         reserve = max(ANSWER_OUTPUT_TOKEN_RESERVE, max_tokens or 0)
+        trace = {"evidence_strategy": strategy}
         try:
             budget = self._context_budget(
                 evidence_prompt(query, history, "", strategy=strategy), output_reserve=reserve,
@@ -1701,27 +1702,30 @@ class RAGTool(Tool):
             context, visible, truncated = self._build_context(
                 results, token_budget=budget, return_details=True
             )
+            trace.update(
+                evidence_context_visible=len(visible),
+                evidence_context_dropped=len(results) - len(visible),
+                evidence_context_cut=truncated,
+                evidence_visible_chunks=[item["id"] for item in visible if item.get("id")],
+            )
+
             def generate(prompt):
                 self._context_budget(prompt, output_reserve=reserve)
                 return self._generate(prompt, max_tokens=max_tokens)
 
             verified = grounded_answer(generate, query, history, context, visible, strategy=strategy)
         except ContextCapacityError:
+            self._last_action_data = {**trace, "evidence_status": "capacity"}
             return self._capacity_error()
         except EvidenceProtocolError as exc:
-            self._last_action_data = {
-                "evidence_status": "invalid", "evidence_error": str(exc), "evidence_strategy": strategy,
-            }
+            self._last_action_data = {**trace, "evidence_status": "invalid", "evidence_error": str(exc)}
             return "❌ 问答证据校验失败"
 
         cited = [
             {**item, "content": verified.quotes[item["citation_id"]]}
             for item in visible if item["citation_id"] in verified.quotes
         ]
-        self._last_action_data = {
-            "evidence_status": "verified" if cited else "insufficient",
-            "evidence_strategy": strategy,
-        }
+        self._last_action_data = {**trace, "evidence_status": "verified" if cited else "insufficient"}
         return self._format_answer(verified.text, cited, truncated=truncated)
 
     @staticmethod
