@@ -39,6 +39,7 @@ from hello_agents.tools.builtin.rag_grounding import (
     EvidenceProtocolError,
     evidence_prompt,
     grounded_answer,
+    resolve_evidence_strategy,
 )
 from hello_agents.tools.builtin.rag_context import (
     ANSWER_OUTPUT_TOKEN_RESERVE,
@@ -1505,6 +1506,7 @@ class RAGTool(Tool):
         graph_relation_limit: int = 16,
         verify_evidence: bool = False,
         evidence_strategy: str = "two_pass",
+        evidence_max_tokens: int | None = None,
         **kwargs,
     ) -> str:
         """Answer with joint, comparison, or summary behavior."""
@@ -1588,7 +1590,13 @@ class RAGTool(Tool):
                 metadata = item.get("metadata") or {}
                 if metadata.get("document_id") not in scope or metadata.get("rag_namespace") != namespace:
                     return "❌ 问答证据超出所选文档"
-            return self._ask_verified_evidence(query, conversation_context, results, evidence_strategy)
+            if evidence_max_tokens is not None and (
+                type(evidence_max_tokens) is not int or not 1 <= evidence_max_tokens <= 8192
+            ):
+                return "❌ 不支持的证据校验输出上限"
+            return self._ask_verified_evidence(
+                query, conversation_context, results, evidence_strategy, evidence_max_tokens,
+            )
 
         if not results:
             if scope:
@@ -1679,21 +1687,31 @@ class RAGTool(Tool):
             graph_sources=graph_sources,
         )
 
-    def _ask_verified_evidence(self, query, conversation_context, results, strategy) -> str:
+    def _ask_verified_evidence(self, query, conversation_context, results, strategy, max_tokens) -> str:
+        strategy = resolve_evidence_strategy(strategy, query)
         if not results:
-            self._last_action_data = {"evidence_status": "insufficient"}
+            self._last_action_data = {"evidence_status": "insufficient", "evidence_strategy": strategy}
             return self._format_answer("资料中没有提到足够的信息，无法回答这个问题。", [])
         history = self._qa_history_section(conversation_context)
+        reserve = max(ANSWER_OUTPUT_TOKEN_RESERVE, max_tokens or 0)
         try:
-            budget = self._context_budget(evidence_prompt(query, history, "", strategy=strategy))
+            budget = self._context_budget(
+                evidence_prompt(query, history, "", strategy=strategy), output_reserve=reserve,
+            )
             context, visible, truncated = self._build_context(
                 results, token_budget=budget, return_details=True
             )
-            verified = grounded_answer(self._generate, query, history, context, visible, strategy=strategy)
+            def generate(prompt):
+                self._context_budget(prompt, output_reserve=reserve)
+                return self._generate(prompt, max_tokens=max_tokens)
+
+            verified = grounded_answer(generate, query, history, context, visible, strategy=strategy)
         except ContextCapacityError:
             return self._capacity_error()
         except EvidenceProtocolError as exc:
-            self._last_action_data = {"evidence_status": "invalid", "evidence_error": str(exc)}
+            self._last_action_data = {
+                "evidence_status": "invalid", "evidence_error": str(exc), "evidence_strategy": strategy,
+            }
             return "❌ 问答证据校验失败"
 
         cited = [
@@ -1702,6 +1720,7 @@ class RAGTool(Tool):
         ]
         self._last_action_data = {
             "evidence_status": "verified" if cited else "insufficient",
+            "evidence_strategy": strategy,
         }
         return self._format_answer(verified.text, cited, truncated=truncated)
 
@@ -2088,8 +2107,9 @@ class RAGTool(Tool):
         result = (fitted.context, fitted.results, fitted.truncated)
         return result if return_details else fitted.context
 
-    def _generate(self, prompt: str) -> str:
-        answer = self.llm.generate(prompt)
+    def _generate(self, prompt: str, *, max_tokens: int | None = None) -> str:
+        kwargs = {"max_tokens": max_tokens} if max_tokens is not None else {}
+        answer = self.llm.generate(prompt, **kwargs)
         normalized = str(answer or "").lower()
         capacity_markers = (
             "context length",

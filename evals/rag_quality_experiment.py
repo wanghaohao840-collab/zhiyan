@@ -32,6 +32,7 @@ class Variant:
     generate: bool = True
     verify_evidence: bool = False
     evidence_strategy: str = "two_pass"
+    evidence_max_tokens: int | None = None
     use_application_engine: bool = False
 
     def search_options(self):
@@ -70,15 +71,17 @@ class TrialGenerator:
         self.cite = cite
         self.error = None
         self.call_ms = []
+        self.output_caps = []
 
-    def generate(self, prompt):
+    def generate(self, prompt, **kwargs):
+        self.output_caps.append(kwargs.get("max_tokens"))
         started = perf_counter()
         try:
-            return self._generate(prompt)
+            return self._generate(prompt, **kwargs)
         finally:
             self.call_ms.append((perf_counter() - started) * 1000)
 
-    def _generate(self, prompt):
+    def _generate(self, prompt, **kwargs):
         self.error = None
         if not self.cite:
             if _CITATION_REQUIREMENT not in prompt:
@@ -92,7 +95,7 @@ class TrialGenerator:
             id_, passage = match.groups()
             return f"{passage} [{id_}]" if self.cite else passage
         try:
-            answer = self.generate_answer(prompt)
+            answer = self.generate_answer(prompt, **kwargs)
             if not answer.strip():
                 self.error = "empty_generation"
             return answer
@@ -203,6 +206,8 @@ def evaluate_case(pipeline, case, variant, *, generate=None, repeats=1):
         sources=sources,
         evidence_status=result.data.get("evidence_status"),
         evidence_error=result.data.get("evidence_error"),
+        evidence_strategy_used=result.data.get("evidence_strategy"),
+        output_caps=generator.output_caps,
     )
     row["scope_leaks"] += sum(source.get("document_id") not in case.scope for source in sources)
     return row
@@ -247,6 +252,7 @@ def _application_qa(tool, case, variant):
 
     engine = RagQaAnswerEngine(
         verify_evidence=variant.verify_evidence, evidence_strategy=variant.evidence_strategy,
+        evidence_max_tokens=variant.evidence_max_tokens,
     )
     try:
         result = engine.answer(
@@ -309,7 +315,7 @@ def configure_chat(env_file, stack, model_override=None, *, max_tokens=1536):
         transport = stack.enter_context(httpx.Client(trust_env=False, timeout=45))
         client = OpenAI(api_key=key, base_url=base, http_client=transport, max_retries=0)
 
-        def generate(prompt):
+        def generate(prompt, *, max_tokens=max_tokens):
             response = client.chat.completions.create(
                 model=model, messages=[{"role": "user", "content": prompt}],
                 temperature=0, max_tokens=max_tokens,

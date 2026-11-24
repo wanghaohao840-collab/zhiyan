@@ -65,3 +65,13 @@
 ~~~
 
 结果包含两组完整问答耗时、回查成功率、事实引用覆盖和额外背景引用。候选组需保持可答准确率和干净拒答率，并为全部标注事实提供对应证据。直接命中标注证据的引用占比需达到 95%，完整问答 P95 需低于同轮双次调用。脚本只运行隔离评测。
+
+### 按问项选择证据校验策略
+
+临时试用可配置 RAG_QA_VERIFY_EVIDENCE=1、RAG_QA_EVIDENCE_STRATEGY=adaptive 和 RAG_QA_EVIDENCE_MAX_TOKENS=4096。单次适用于单项问题，双次复核用于带明显并列词或多个问号的问题。隐式多项问题可能走单次，实体名中的并列词也可能触发双次。前两种固定策略仍然可选。输出上限留空使用现有生成默认值。提高上限会减少可用于引文和对话的输入预算。
+
+~~~powershell
+.\venv\Scripts\python.exe -m evals.rag_quality_holdout --grounding-adaptive --embedding-env-file deploy/.env --chat-env-file .env --output-dir output/rag-grounding-adaptive
+~~~
+
+两组走应用问答适配器，均由适配器设置 4096 的输出上限。结果记录每次生成实际收到的上限以及每题选用的校验策略。合成短文本的对照结果需要结合长文本和应用负载验证解读。

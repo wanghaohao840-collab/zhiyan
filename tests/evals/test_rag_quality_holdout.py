@@ -405,3 +405,74 @@ def test_question_about_whether_a_value_is_documented_can_cite_its_absence():
     )
     assert result.text.endswith("[S-case]")
     assert result.quotes == {"S-case": passage}
+
+
+@pytest.mark.parametrize(("question", "strategy"), [
+    ("什么时候开放，以及补发码是什么？", "two_pass"),
+    ("时限和签收表分别是什么？", "two_pass"),
+    ("营业时间？补票流程？", "two_pass"),
+    ("When does the room open, and what code replaces a lost reservation?", "two_pass"),
+    ("Which label appears on the entrance sign?", "single_pass"),
+    ("补票核验码是什么？", "single_pass"),
+])
+def test_adaptive_evidence_route(question, strategy):
+    from hello_agents.tools.builtin.rag_grounding import resolve_evidence_strategy
+
+    assert resolve_evidence_strategy("adaptive", question) == strategy
+    assert resolve_evidence_strategy("single_pass", question) == "single_pass"
+
+
+def test_adaptive_multihop_uses_two_passes_and_propagates_output_cap(tmp_path):
+    chunks, cases = load_gold_dataset(HOLDOUT_DATASET.with_name("rag_quality_release.json"))
+    case = next(case for case in cases if case.id == "en-04")
+    pipeline = build_index(chunks, tmp_path, SimpleEmbedding())[case.namespace]
+    from hello_agents.tools.builtin.rag_context import citation_id
+
+    hits = [{**pipeline.get_document_chunks(doc)[0], "score": 0.9} for doc in case.scope]
+    pipeline.search = lambda **_: hits
+    first, second = map(citation_id, hits)
+    replies = iter([
+        {"quotes": [
+            {"id": first, "quote": "opens at 09:42 on weekdays"},
+            {"id": second, "quote": "uses Q8-ENTRY as the replacement booking code"},
+        ]},
+        {"claims": [
+            {"text": "Opens at 09:42.", "ids": [first]},
+            {"text": "Use Q8-ENTRY.", "ids": [second]},
+        ]},
+    ])
+    caps = []
+
+    def generate(prompt, *, max_tokens):
+        caps.append(max_tokens)
+        return json.dumps(next(replies))
+
+    variant = replace(
+        BASELINE, verify_evidence=True, evidence_strategy="adaptive", evidence_max_tokens=4096,
+        use_application_engine=True,
+    )
+    row = evaluate_case(pipeline, case, variant, generate=generate, repeats=0)
+    assert row["answer_scores"]["accuracy"]
+    assert row["citations"]["facts_supported"] == ["09:42", "Q8-ENTRY"]
+    assert row["evidence_strategy_used"] == "two_pass"
+    assert caps == row["output_caps"] == [4096, 4096]
+
+
+def test_verified_output_reserve_is_enforced_before_llm_call(tmp_path, monkeypatch):
+    from evals.rag_quality_experiment import TrialGenerator
+
+    chunks, cases = load_gold_dataset(HOLDOUT_DATASET.with_name("rag_quality_adaptive.json"))
+    case = next(case for case in cases if case.id == "en-01")
+    pipeline = build_index(chunks, tmp_path, SimpleEmbedding())[case.namespace]
+    monkeypatch.setattr(TrialGenerator, "context_window_tokens", 4096)
+
+    def generate(prompt, **kwargs):
+        pytest.fail("LLM must not run with no room for input")
+
+    variant = replace(
+        BASELINE, verify_evidence=True, evidence_strategy="adaptive", evidence_max_tokens=4096,
+        use_application_engine=True,
+    )
+    row = evaluate_case(pipeline, case, variant, generate=generate, repeats=0)
+    assert row["generation_error"] is not None
+    assert not row["llm_call_ms"]

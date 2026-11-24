@@ -129,6 +129,7 @@ class ApplicationServices:
         answer_engine = qa_answer_engine or RagQaAnswerEngine(
             verify_evidence=os.getenv("RAG_QA_VERIFY_EVIDENCE", "").strip() == "1",
             evidence_strategy=os.getenv("RAG_QA_EVIDENCE_STRATEGY", "two_pass").strip(),
+            evidence_max_tokens=os.getenv("RAG_QA_EVIDENCE_MAX_TOKENS", "").strip(),
         )
         context_builder = QaContextBuilder(max_input_tokens=6000)
         document_library = DocumentLibraryService(
