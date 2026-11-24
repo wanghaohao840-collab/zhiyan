@@ -309,3 +309,148 @@ def test_claim_pass_cancels_expired_cancel_requested_final_attempt(
     assert terminal.status == "cancelled"
     assert assistant.status == "cancelled"
     assert jobs.get_active_for_conversation(OWNER, created.id) is None
+
+
+def test_commit_checks_expiry_after_acquiring_sqlite_write_lock(repositories, monkeypatch):
+    from app import qa_job_repository as module
+
+    qa, jobs = repositories
+    created = conversation(qa)
+    queued = jobs.create_summary_turn_and_job(OWNER, created.id, "总结", "lock-wait")
+    start = "2026-11-23T00:00:00+00:00"
+    now = start
+    monkeypatch.setattr(module, "_utc_now", lambda: now)
+    claimed = jobs.claim_next("old-worker", lease_seconds=1)
+    real_connect = module.connect
+
+    class AfterLock:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def execute(self, sql, *args):
+            nonlocal now
+            result = self.connection.execute(sql, *args)
+            if sql == "begin immediate":
+                now = "2026-11-23T00:00:02+00:00"
+            return result
+
+        def __getattr__(self, name):
+            return getattr(self.connection, name)
+
+    monkeypatch.setattr(module, "connect", lambda path: AfterLock(real_connect(path)))
+    assert not jobs.commit_answer(
+        claimed.id, "old-worker", queued.pending.assistant_message.version, "late", (), "none"
+    )
+    message = qa.get_message(OWNER, queued.pending.assistant_message.id)
+    assert message.status == "pending"
+
+
+
+def test_same_worker_cannot_write_through_an_old_attempt(repositories):
+    qa, jobs = repositories
+    created = conversation(qa)
+    queued = jobs.create_summary_turn_and_job(OWNER, created.id, "总结", "same-worker")
+    first = jobs.claim_next("worker", lease_seconds=5, now=iso(NOW))
+    later = iso(NOW + timedelta(seconds=6))
+    second = jobs.claim_next("worker", lease_seconds=5, now=later)
+    message = queued.pending.assistant_message
+    assert second.id == first.id
+    assert second.attempt_count == first.attempt_count + 1
+    assert not jobs.heartbeat(first.id, "worker", attempt=first.attempt_count, now=later)
+    assert not jobs.complete(first.id, "worker", attempt=first.attempt_count, now=later)
+    with pytest.raises(QaConflictError, match="QA_JOB_LEASE_LOST"):
+        jobs.fail_or_retry(
+            first.id, "worker", "test", None, attempt=first.attempt_count, now=later
+        )
+    assert not jobs.commit_answer(
+        first.id, "worker", message.version, "late", (), "none",
+        attempt=first.attempt_count, now=later,
+    )
+    assert jobs.heartbeat(second.id, "worker", attempt=second.attempt_count, now=later)
+    assert jobs.commit_answer(
+        second.id, "worker", message.version, "current", (), "none",
+        attempt=second.attempt_count, now=later,
+    )
+    assert qa.get_message(OWNER, message.id).content == "current"
+
+
+
+@pytest.mark.parametrize(
+    ("claim_at", "check_at", "live"),
+    [
+        ("2026-11-23T00:00:00Z", "2026-11-23T00:00:01.750000Z", False),
+        ("2026-11-23T00:00:00.750000Z", "2026-11-23T00:00:01Z", True),
+    ],
+)
+@pytest.mark.parametrize("transition", ("heartbeat", "complete", "commit", "retry", "recover"))
+def test_lease_comparison_preserves_subsecond_order(
+    repositories, claim_at, check_at, live, transition
+):
+    qa, jobs = repositories
+    created = conversation(qa)
+    queued = jobs.create_summary_turn_and_job(OWNER, created.id, "总结", "subsecond")
+    job = jobs.claim_next("worker", lease_seconds=1, now=claim_at)
+    options = {"now": check_at, "attempt": job.attempt_count}
+    if transition == "heartbeat":
+        assert jobs.heartbeat(job.id, "worker", **options) is live
+    elif transition == "complete":
+        jobs.request_cancel(OWNER, job.id, now=claim_at)
+        assert not jobs.complete(job.id, "worker", **options)
+        assert jobs.get(OWNER, job.id).status == ("cancelled" if live else "running")
+    elif transition == "commit":
+        assert jobs.commit_answer(
+            job.id, "worker", queued.pending.assistant_message.version,
+            "answer", (), "none", **options,
+        ) is live
+    elif transition == "recover":
+        assert jobs.recover_expired(now=check_at) == int(not live)
+    elif live:
+        assert jobs.fail_or_retry(job.id, "worker", "test", None, **options).status == "queued"
+    else:
+        with pytest.raises(QaConflictError, match="QA_JOB_LEASE_LOST"):
+            jobs.fail_or_retry(job.id, "worker", "test", None, **options)
+
+
+
+def test_commit_checks_for_shutdown_after_acquiring_write_lock(repositories, monkeypatch):
+    from app import qa_job_repository as module
+
+    qa, jobs = repositories
+    queued = jobs.create_summary_turn_and_job(OWNER, conversation(qa).id, "总结", "stop")
+    job = jobs.claim_next("worker", lease_seconds=60)
+    stopped = False
+    real_connect = module.connect
+
+    class AfterLock:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def execute(self, sql, *args):
+            nonlocal stopped
+            result = self.connection.execute(sql, *args)
+            if sql == "begin immediate":
+                stopped = True
+            return result
+
+        def __getattr__(self, name):
+            return getattr(self.connection, name)
+
+    monkeypatch.setattr(module, "connect", lambda path: AfterLock(real_connect(path)))
+    assert not jobs.commit_answer(
+        job.id, "worker", queued.pending.assistant_message.version, "late", (), "none",
+        attempt=job.attempt_count, stop_requested=lambda: stopped,
+    )
+    assert qa.get_message(OWNER, queued.pending.assistant_message.id).status == "pending"
+
+
+
+def test_offset_timestamp_cannot_split_job_failure_from_assistant_failure(repositories):
+    qa, jobs = repositories
+    queued = jobs.create_summary_turn_and_job(OWNER, conversation(qa).id, "总结", "offset")
+    job = jobs.claim_next("worker", lease_seconds=60, now="2026-11-23T00:00:00Z")
+    failed = jobs.fail_or_retry(
+        job.id, "worker", "test", None,
+        retryable=False, attempt=job.attempt_count, now="2026-11-23T08:00:10+08:00",
+    )
+    assert failed.status == "failed"
+    assert qa.get_message(OWNER, queued.pending.assistant_message.id).status == "failed"

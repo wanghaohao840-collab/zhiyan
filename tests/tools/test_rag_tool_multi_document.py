@@ -476,6 +476,30 @@ class RAGToolMultiDocumentTests(unittest.TestCase):
         self.assertNotIn("alpha selected two", reduce_prompt)
         self.assertIn("ANSWER-3", output)
 
+    def test_summary_keeps_question_evidence_when_context_budget_drops_chunks(self):
+        tool = self.make_tool()
+        pipeline = tool._pipelines["test"]
+        chunks = ["Introduction", "Unrelated first option", "Unrelated middle option",
+                  "Middle anchor", "prioritymax expires", "End anchor"]
+        pipeline.get_document_summary_context = lambda document_id, limit: [
+            {
+                "id": str(index),
+                "content": (text + " ").ljust(120, "x"),
+                "score": 1.0,
+                "metadata": {"document_id": document_id, "page_number": index + 1},
+            }
+            for index, text in enumerate(chunks)
+        ]
+        tool._context_budget = lambda *args, **kwargs: 680
+
+        output = tool.execute(
+            "ask", query="prioritymax expires", document_ids=["doc-1"], mode="summary"
+        )
+
+        self.assertIn("ANSWER-2", output)
+        self.assertIn("prioritymax expires", tool.llm.prompts[0].split("资料：", 1)[1])
+        self.assertNotIn("Unrelated first option", tool.llm.prompts[0])
+
     def test_summary_injects_per_document_graph_and_reduce_citations(self):
         tool = self.make_tool()
         graph = FakeGraphContextService()
@@ -730,7 +754,7 @@ class RAGToolMultiDocumentTests(unittest.TestCase):
         )
         self.assertEqual(len(tool.llm.prompts), 3)
 
-        tool.SUMMARY_CACHE_PROMPT_VERSION = "document-summary-v2"
+        tool.SUMMARY_CACHE_PROMPT_VERSION = "test-next-summary-prompt"
         tool.execute(
             "ask",
             query="prompt cache",
@@ -961,7 +985,8 @@ class RAGToolMultiDocumentTests(unittest.TestCase):
 
         self.assertEqual(len(tool.llm.prompts), 2)
         self.assertIn("doc-2", tool.llm.prompts[-1])
-        self.assertIn("map boom", tool.llm.prompts[-1])
+        self.assertIn("单篇摘要失败", tool.llm.prompts[-1])
+        self.assertNotIn("map boom", tool.llm.prompts[-1])
         self.assertIn("ANSWER-2", output)
 
     def test_summary_all_failures_skip_reduce(self):

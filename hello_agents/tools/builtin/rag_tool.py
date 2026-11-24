@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import itertools
 import json
 import os
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextvars import ContextVar
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextvars import ContextVar, copy_context
 from pathlib import Path
-from threading import RLock
+from threading import Event, RLock
 from typing import Dict, Any, List, Optional
+
+from openai import APIConnectionError
 
 from hello_agents.tools.base import Tool
 from hello_agents.core.llm import HelloAgentsLLM
@@ -30,6 +33,7 @@ from hello_agents.memory.rag.errors import (
 from hello_agents.memory.rag.pipeline import create_rag_pipeline
 from hello_agents.memory.rag.prepare import report_progress
 from hello_agents.memory.rag.result_utils import (
+    lexical_overlap_score,
     normalize_document_scope,
     resolve_qa_mode,
 )
@@ -53,6 +57,13 @@ from hello_agents.tools.builtin.rag_compare import (
     render_comparison_markdown,
 )
 
+from hello_agents.tools.builtin.rag_summary_workflow import (
+    SummaryCancelled,
+    SummaryProgressAborted,
+    SummaryState,
+    run_summary_workflow,
+)
+
 
 class RAGTool(Tool):
     """RAG工具
@@ -66,7 +77,7 @@ class RAGTool(Tool):
     - clear：清空知识库
     """
 
-    SUMMARY_CACHE_PROMPT_VERSION = "document-summary-v1"
+    SUMMARY_CACHE_PROMPT_VERSION = "document-summary-v3"
     SUMMARY_CACHE_MAX_ENTRIES = 256
 
     def __init__(
@@ -442,6 +453,8 @@ class RAGTool(Tool):
 
             return f"❌ 不支持的 RAG 操作: {action}"
 
+        except SummaryProgressAborted:
+            raise
         except Exception as exc:
             self._last_action_error = exc
             safe_error = self._safe_action_error(exc, kwargs.get("file_path"))
@@ -1534,6 +1547,8 @@ class RAGTool(Tool):
                 limit=limit,
                 progress_callback=kwargs.get("progress_callback"),
                 cancel_event=kwargs.get("cancel_event"),
+                use_summary_workflow=bool(kwargs.get("use_summary_workflow"))
+                and len(scope) > 1,
                 graph_mode=graph_mode,
                 graph_node_limit=graph_node_limit,
                 graph_relation_limit=graph_relation_limit,
@@ -1806,6 +1821,13 @@ class RAGTool(Tool):
                             "citation_id": citation_id,
                             "document_id": ", ".join(document_ids),
                             "document_ids": document_ids,
+                            "member_document_ids": sorted(
+                                {
+                                    member["document_id"]
+                                    for member in entity.get("members") or []
+                                    if member.get("document_id") in document_ids
+                                }
+                            ),
                             "kind": "canonical_entity",
                             "type": entity.get("entity_type") or entity.get("type"),
                             "name": entity.get("name") or graph_id,
@@ -2027,9 +2049,7 @@ class RAGTool(Tool):
         result = (fitted.context, fitted.results, fitted.truncated)
         return result if return_details else fitted.context
 
-    def _generate(self, prompt: str) -> str:
-        answer = self.llm.generate(prompt)
-        normalized = str(answer or "").lower()
+    def _generate(self, prompt: str, *, strict: bool = False) -> str:
         capacity_markers = (
             "context length",
             "context window",
@@ -2040,8 +2060,27 @@ class RAGTool(Tool):
             "上下文长度",
             "上下文超限",
         )
+        try:
+            if strict and isinstance(self.llm, HelloAgentsLLM):
+                answer = self.llm.generate(prompt, strict=True)
+            else:
+                answer = self.llm.generate(prompt)
+        except Exception as error:
+            if getattr(error, "status_code", None) == 400 and any(
+                marker in str(error).lower() for marker in capacity_markers
+            ):
+                raise ContextCapacityError("provider rejected the prompt as too large") from None
+            raise
+
+        normalized = str(answer or "").lower()
         if any(marker in normalized for marker in capacity_markers):
             raise ContextCapacityError("provider rejected the prompt as too large")
+        return answer
+
+    def _generate_summary(self, prompt: str, *, strict: bool) -> str:
+        answer = self._generate(prompt, strict=strict)
+        if not answer.strip() or answer.startswith(("[LLM调用失败]", "[LLM未配置]")):
+            raise RAGOperationError("模型未返回可用内容", retryable=False)
         return answer
 
     def _format_answer(
@@ -2302,19 +2341,23 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
         graph_mode: str = "auto",
         graph_node_limit: int = 8,
         graph_relation_limit: int = 16,
+        use_summary_workflow: bool = False,
         **search_kwargs,
     ) -> str:
         total_documents = len(document_ids)
+        work_aborted = Event()
 
-        def is_cancelled() -> bool:
+        def check_cancelled() -> None:
             checker = getattr(cancel_event, "is_set", None)
-            return bool(checker()) if callable(checker) else False
+            if work_aborted.is_set() or (callable(checker) and checker()):
+                raise SummaryCancelled()
 
         def emit_progress(
             stage: str,
             completed: int,
             document_id: Optional[str] = None,
         ) -> None:
+            check_cancelled()
             if callable(progress_callback):
                 progress_callback(
                     completed=completed,
@@ -2323,33 +2366,39 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                     document_id=document_id,
                 )
 
-        if is_cancelled():
-            return "⏹️ 联合总结已取消"
-        graph_contexts, graph_error = self._graph_context_for_documents(
-            document_ids,
-            query=query,
-            mode=graph_mode,
-            node_limit=graph_node_limit,
-            relation_limit=graph_relation_limit,
-        )
-        if graph_error:
-            return graph_error
-        shared_graph_contexts, graph_error = self._cross_document_graph_context(
-            document_ids,
-            query=query,
-            mode=graph_mode,
-        )
-        if graph_error:
-            return graph_error
-        graph_context_by_document = {
-            str(context.get("document_id") or ""): context
-            for context in graph_contexts
-        }
-        emit_progress("mapping", 0)
+        def prepare(_: SummaryState) -> SummaryState:
+            emit_progress("mapping", 0)
+            graph_contexts, graph_error = self._graph_context_for_documents(
+                document_ids,
+                query=query,
+                mode=graph_mode,
+                node_limit=graph_node_limit,
+                relation_limit=graph_relation_limit,
+            )
+            if graph_error:
+                return {"error": graph_error}
+            check_cancelled()
+            shared_graph_contexts, graph_error = self._cross_document_graph_context(
+                document_ids,
+                query=query,
+                mode=graph_mode,
+            )
+            if graph_error:
+                return {"error": graph_error}
+            if graph_mode != "off" and getattr(self, "graph_service", None) is not None:
+                emit_progress("mapping", 0)
+            return {
+                "graph_by_document": {
+                    str(context.get("document_id") or ""): context
+                    for context in graph_contexts
+                },
+                "shared_graph_contexts": shared_graph_contexts,
+            }
 
-        def build_document_summary(doc_id: str) -> Dict[str, Any]:
-            if is_cancelled():
-                return {"document_id": doc_id, "status": "cancelled"}
+        def build_document_summary(
+            doc_id: str, graph_context_by_document: dict[str, dict[str, Any]]
+        ) -> Dict[str, Any]:
+            check_cancelled()
             if hasattr(pipeline, "get_document_summary_context"):
                 doc_results = pipeline.get_document_summary_context(
                     document_id=doc_id,
@@ -2362,6 +2411,12 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                     document_id=doc_id,
                     **search_kwargs,
                 )
+            # Even if a backend returns a stray hit, keep the requested scope.
+            doc_results = [
+                item
+                for item in doc_results
+                if (item.get("metadata") or {}).get("document_id") == doc_id
+            ]
             if not doc_results:
                 return {
                     "document_id": doc_id,
@@ -2373,8 +2428,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                     "error": "文档没有可用的索引内容，可能尚未成功导入或索引已被删除",
                 }
 
-            if is_cancelled():
-                return {"document_id": doc_id, "status": "cancelled"}
+            check_cancelled()
             cache_key = self._summary_cache_key(
                 pipeline=pipeline,
                 document_id=doc_id,
@@ -2393,6 +2447,9 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
             anchor_indexes = {0, len(prepared) // 2, len(prepared) - 1}
             for index, item in enumerate(prepared):
                 item["_protected"] = index in anchor_indexes
+                # When the budget removes chunks, keep the user's requested
+                # evidence ahead of equally ranked page samples.
+                item["score"] = lexical_overlap_score(query, item["content"])
 
             budget = self._context_budget(
                 f"单篇摘要\n文档ID：{doc_id}\n问题：{query}",
@@ -2413,19 +2470,18 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 token_budget=budget,
             )
             graph_sources = self._graph_sources(document_graph_contexts)
-            if is_cancelled():
-                return {"document_id": doc_id, "status": "cancelled"}
-            summary = self._generate(
+            check_cancelled()
+            summary = self._generate_summary(
                 f"""请仅根据以下资料总结文档 {doc_id}。
-保留关键事实后的稳定引用 ID，不得引用未提供的资料。
+优先提取可直接回答用户问题的事实和规则。用简短要点呈现，每项保留稳定引用 ID，不逐条罗列无关或缺失内容。
 
 用户问题：{query}
 资料：
 {context}
-"""
+""",
+                strict=use_summary_workflow,
             )
-            if is_cancelled():
-                return {"document_id": doc_id, "status": "cancelled"}
+            check_cancelled()
             first_metadata = sources[0].get("metadata", {}) or {}
             mapped_result = {
                 "document_id": doc_id,
@@ -2449,108 +2505,108 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
             self._put_cached_document_summary(cache_key, mapped_result)
             return mapped_result
 
-        progress_lock = RLock()
-        completed_count = 0
+        def map_documents(state: SummaryState) -> SummaryState:
+            completed = {}
+            failures = {}
+            retryable = False
+            remaining = iter(document_ids)
+            worker_count = min(SUMMARY_MAX_WORKERS, total_documents)
+            executor = ThreadPoolExecutor(max_workers=worker_count)
 
-        def map_document(doc_id: str) -> Dict[str, Any]:
-            nonlocal completed_count
+            def submit(doc_id: str):
+                check_cancelled()
+                return executor.submit(
+                    copy_context().run,
+                    build_document_summary,
+                    doc_id,
+                    state["graph_by_document"],
+                )
+
             try:
-                return build_document_summary(doc_id)
-            finally:
-                with progress_lock:
-                    completed_count += 1
-                    emit_progress("mapping", completed_count, doc_id)
-
-        completed: Dict[str, Dict[str, Any]] = {}
-        failures: Dict[str, str] = {}
-        worker_count = min(SUMMARY_MAX_WORKERS, len(document_ids))
-        with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            futures = {
-                executor.submit(map_document, doc_id): doc_id
-                for doc_id in document_ids
-            }
-            for future in as_completed(futures):
-                doc_id = futures[future]
-                try:
-                    completed[doc_id] = future.result()
-                except ContextCapacityError:
-                    failures[doc_id] = "单篇摘要超出当前模型容量"
-                except Exception as error:
-                    failures[doc_id] = f"单篇摘要失败: {error}"
-
-        if is_cancelled():
-            return "⏹️ 联合总结已取消"
-
-        mapped = []
-        for doc_id in document_ids:
-            item = completed.get(doc_id)
-            if item and item["status"] == "ok":
-                mapped.append(item)
-            elif item:
-                failures[doc_id] = item.get("error") or item["status"]
-
-        if not mapped:
-            details = "\n".join(
-                f"- {doc_id}: {failures.get(doc_id, '单篇摘要失败')}"
-                for doc_id in document_ids
-            )
-            return f"🔍 所选文档没有可用于联合总结的内容\n{details}"
-
-        shared_graph_sources = self._graph_sources(shared_graph_contexts)
-        self._last_action_data = {
-            "summary_documents": len(mapped),
-            "summary_cache_hits": sum(
-                1 for item in mapped if item.get("cache_hit")
-            ),
-            "summary_cache_misses": sum(
-                1 for item in mapped if not item.get("cache_hit")
-            ),
-            "graph_mode": graph_mode,
-            "graph_documents": list(document_ids),
-            "graph_context_count": len(shared_graph_sources) + sum(
-                len(item.get("graph_sources") or []) for item in mapped
-            ),
-        }
-
-        missing_text = "\n".join(
-            f"- {doc_id}: {reason}" for doc_id, reason in failures.items()
-        ) or "无"
-        all_sources: List[Dict[str, Any]] = []
-        all_graph_sources: List[Dict[str, Any]] = list(shared_graph_sources)
-        summary_parts = []
-        for item in mapped:
-            all_sources.extend(item["sources"])
-            all_graph_sources.extend(item.get("graph_sources") or [])
-            allowed = ", ".join(
-                f"[{source_ref}]" for source_ref in item["source_refs"]
-            )
-            summary_parts.append(
-                {
-                    "document_id": item["document_id"],
-                    "document_name": item["document_name"],
-                    "allowed": allowed,
-                    "summary": str(item["summary"]),
+                check_cancelled()
+                pending = {
+                    submit(doc_id): doc_id for doc_id in itertools.islice(remaining, worker_count)
                 }
-            )
-        try:
-            reduce_budget = self._context_budget(
-                f"联合总结\n问题：{query}\n缺失：{missing_text}"
-            )
-            summary_context, reduce_truncated = self._fit_summary_context(
-                summary_parts, reduce_budget
-            )
-            summary_context = self._append_graph_context(
-                summary_context,
-                self._format_graph_context(shared_graph_contexts),
-                token_budget=reduce_budget,
-            )
-            if is_cancelled():
-                return "⏹️ 联合总结已取消"
-            emit_progress("reducing", total_documents)
-        except ContextCapacityError:
-            return self._capacity_error()
+                while pending:
+                    done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        doc_id = pending.pop(future)
+                        try:
+                            completed[doc_id] = future.result()
+                        except (SummaryCancelled, SummaryProgressAborted):
+                            raise
+                        except ContextCapacityError:
+                            failures[doc_id] = "单篇摘要超出当前模型容量"
+                        except Exception as error:
+                            failures[doc_id] = "单篇摘要失败"
+                            retryable |= self._summary_error_is_retryable(error)
+                        emit_progress("mapping", len(completed) + len(failures), doc_id)
+                    # Replenish only after progress confirms that the job still owns its lease.
+                    for doc_id in itertools.islice(remaining, len(done)):
+                        pending[submit(doc_id)] = doc_id
+            finally:
+                work_aborted.set()
+                executor.shutdown(wait=True, cancel_futures=True)
+                work_aborted.clear()
 
-        prompt = f"""请只基于下列“单篇文档摘要”进行联合总结，不要使用或推测原文。
+            return {"completed": completed, "failures": failures, "retryable": retryable}
+
+        def collect(state: SummaryState) -> SummaryState:
+            check_cancelled()
+            completed, failures = state["completed"], state["failures"]
+            mapped = []
+            ordered_failures = {}
+            for doc_id in document_ids:
+                item = completed.get(doc_id)
+                if item and item["status"] == "ok":
+                    mapped.append(item)
+                else:
+                    ordered_failures[doc_id] = (
+                        item["error"] if item else failures[doc_id]
+                    )
+
+            if not mapped:
+                details = "\n".join(
+                    f"- {doc_id}: {reason}" for doc_id, reason in ordered_failures.items()
+                )
+                return {"error": f"🔍 所选文档没有可用于联合总结的内容\n{details}"}
+
+            return {"mapped": mapped, "failures": ordered_failures}
+
+        def reduce(state: SummaryState) -> SummaryState:
+            check_cancelled()
+            mapped = state["mapped"]
+            shared_graph_contexts = state["shared_graph_contexts"]
+            missing_text = "\n".join(
+                f"- {doc_id}: {reason}" for doc_id, reason in state["failures"].items()
+            ) or "无"
+            summary_parts = []
+            for item in mapped:
+                summary_parts.append(
+                    {
+                        "document_id": item["document_id"],
+                        "document_name": item["document_name"],
+                        "allowed": ", ".join(f"[{ref}]" for ref in item["source_refs"]),
+                        "summary": str(item["summary"]),
+                    }
+                )
+            try:
+                reduce_budget = self._context_budget(
+                    f"联合总结\n问题：{query}\n缺失：{missing_text}"
+                )
+                summary_context, reduce_truncated = self._fit_summary_context(
+                    summary_parts, reduce_budget
+                )
+                summary_context = self._append_graph_context(
+                    summary_context,
+                    self._format_graph_context(shared_graph_contexts),
+                    token_budget=reduce_budget,
+                )
+            except ContextCapacityError:
+                return {"error": self._capacity_error(), "retryable": False}
+            emit_progress("reducing", total_documents)
+
+            prompt = f"""请只基于下列“单篇文档摘要”进行联合总结，不要使用或推测原文。
 
 用户问题：
 {query}
@@ -2560,6 +2616,8 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
 2. 跨文档共同主题
 3. 重要差异或互补信息
 4. 综合结论
+
+第 1 节每篇最多两句。第 2–4 节各写最多两条新增要点，避免重复同一事实。优先回答用户的具体问题。
 
 缺失或失败文档：
 {missing_text}
@@ -2574,17 +2632,82 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
 
 请给出联合总结：
 """
+            try:
+                answer = self._generate_summary(prompt, strict=use_summary_workflow)
+            except ContextCapacityError:
+                return {"error": self._capacity_error(), "retryable": False}
+            except Exception as error:
+                raise RAGOperationError(
+                    "联合总结生成失败",
+                    retryable=self._summary_error_is_retryable(error),
+                ) from None
+            emit_progress("completed", total_documents)
+            return {
+                "answer": answer,
+                "truncated": reduce_truncated or any(item["truncated"] for item in mapped),
+            }
+
         try:
-            answer = self._generate(prompt)
-        except ContextCapacityError:
-            return self._capacity_error()
-        truncated = reduce_truncated or any(item["truncated"] for item in mapped)
-        emit_progress("completed", total_documents)
-        return self._format_answer(
+            state = run_summary_workflow(
+                prepare,
+                map_documents,
+                collect,
+                reduce,
+                use_langgraph=use_summary_workflow,
+                document_count=total_documents,
+            )
+            check_cancelled()
+        except SummaryCancelled:
+            self._last_action_data = {"success": False}
+            self._last_action_error = RAGOperationError("联合总结已中止", retryable=True)
+            return "⏹️ 联合总结已取消"
+
+        if "error" in state:
+            self._last_action_data = {"success": False}
+            self._last_action_error = RAGOperationError(
+                "联合总结无法完成", retryable=state.get("retryable", False)
+            )
+            return state["error"]
+
+        # The structured result is projected in the tool caller's context.
+        mapped = state["mapped"]
+        shared_graph_sources = self._graph_sources(state["shared_graph_contexts"])
+        all_sources = [source for item in mapped for source in item["sources"]]
+        all_graph_sources = shared_graph_sources + [
+            source for item in mapped for source in item.get("graph_sources", [])
+        ]
+        cache_hits = sum(bool(item["cache_hit"]) for item in mapped)
+        self._last_action_data = {
+            "summary_documents": len(mapped),
+            "summary_cache_hits": cache_hits,
+            "summary_cache_misses": len(mapped) - cache_hits,
+            "graph_mode": graph_mode,
+            "graph_documents": list(document_ids),
+            "graph_context_count": len(all_graph_sources),
+        }
+        answer = state["answer"]
+        if state["failures"]:
+            missing = "、".join(state["failures"])
+            answer += f"\n\n⚠️ 以下文档未纳入本次总结：{missing}"
+        rendered = self._format_answer(
             answer,
             all_sources,
-            truncated=truncated,
+            truncated=state["truncated"],
             graph_sources=all_graph_sources,
+        )
+        self._last_action_data = {**self._last_action_data, "success": True}
+        return rendered
+
+    def _summary_error_is_retryable(self, error: Exception) -> bool:
+        if isinstance(error, (RAGConnectionError, APIConnectionError, ConnectionError, TimeoutError)):
+            return True
+        if isinstance(error, RAGOperationError):
+            return self._error_is_transient(error)
+        # SDK exceptions expose a status code. Generic error text is not a
+        # reliable way to classify failures from arbitrary tool implementations.
+        status_code = getattr(error, "status_code", None)
+        return isinstance(status_code, int) and (
+            status_code in {408, 425, 429} or status_code >= 500
         )
 
     def _fit_summary_context(

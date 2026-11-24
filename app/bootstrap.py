@@ -127,6 +127,13 @@ class ApplicationServices:
         qa_legacy_migration = QaLegacyMigrationService(db_path, storage)
         qa_telemetry = InProcessQaTelemetry()
         answer_engine = qa_answer_engine or RagQaAnswerEngine()
+        summary_engine = answer_engine
+        if (
+            qa_answer_engine is None
+            and os.getenv("ZHIYAN_MULTI_SUMMARY_WORKFLOW", "").strip().lower()
+            == "langgraph"
+        ):
+            summary_engine = RagQaAnswerEngine(enable_summary_workflow=True)
         context_builder = QaContextBuilder(max_input_tokens=6000)
         document_library = DocumentLibraryService(
             session_registry,
@@ -145,7 +152,7 @@ class ApplicationServices:
             qa_job_repository,
             qa_repository,
             session_registry.runtime_registry,
-            answer_engine,
+            summary_engine,
             context_builder,
             qa_telemetry,
             memory_linker=QaMemoryLinker(qa_repository),

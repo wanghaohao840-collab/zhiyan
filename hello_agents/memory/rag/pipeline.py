@@ -7,6 +7,7 @@ import os
 import re
 import uuid
 from datetime import datetime
+from itertools import islice, zip_longest
 from pathlib import Path
 from threading import RLock
 from typing import Any, Dict, List, Mapping, Optional
@@ -1143,10 +1144,7 @@ class SimpleRAGPipeline:
     ) -> List[Dict[str, Any]]:
         """为全文总结类问题获取更合适的上下文
 
-        策略：
-        1. 优先取前 3 页
-        2. 再按页码间隔抽样
-        3. 尽量避免同一页重复太多 chunk
+        先按页取样，余量按页轮流补充后续片段。
         """
 
         self._require_managed_active()
@@ -1174,20 +1172,24 @@ class SimpleRAGPipeline:
             except Exception:
                 return 999999
 
-        doc_chunks.sort(key=get_page_number)
+        def original_position(chunk):
+            return get_page_number(chunk), (chunk.get("metadata") or {}).get("chunk_index", 0)
 
-        # 按页聚合，每页只取前 1 个 chunk，避免重复
-        page_map = {}
-
+        doc_chunks.sort(key=original_position)
+        by_page = {}
         for chunk in doc_chunks:
-            page = get_page_number(chunk)
+            by_page.setdefault(get_page_number(chunk), []).append(chunk)
 
-            if page not in page_map:
-                page_map[page] = chunk
-
-        pages = sorted(page_map.keys())
-
-        selected = sample_evenly([page_map[page] for page in pages], limit)
+        selected = sample_evenly([chunks[0] for chunks in by_page.values()], limit)
+        if len(by_page) < limit:
+            round_robin = (
+                chunk
+                for group in zip_longest(*(chunks[1:] for chunks in by_page.values()))
+                for chunk in group
+                if chunk is not None
+            )
+            selected.extend(islice(round_robin, limit - len(selected)))
+            selected.sort(key=original_position)
 
         results = []
 

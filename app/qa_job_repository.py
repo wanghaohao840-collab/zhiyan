@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 from uuid import uuid4
 
 from app.database import connect
@@ -17,6 +17,8 @@ from app.qa_models import (
 from app.qa_repository import QaRepository, _not_fenced_clause, _utc_now
 
 
+# The UTC suffix "+" sorts before fractional seconds, unlike "Z".
+# Accept both existing formats without changing the stored lease.
 class QaJobRepository:
     def __init__(self, db_path: Path | str):
         self.db_path = Path(db_path)
@@ -110,11 +112,11 @@ class QaJobRepository:
             raise QaValidationError(
                 "QA_JOB_LEASE_INVALID", "lease seconds must be positive"
             )
-        timestamp = now or _utc_now()
-        expires_at = _add_seconds(timestamp, lease_seconds)
         conn = connect(self.db_path)
         try:
             conn.execute("begin immediate")
+            timestamp = _lease_timestamp(now)
+            expires_at = _add_seconds(timestamp, lease_seconds)
             self._recover_expired_in_connection(conn, timestamp)
             candidates = conn.execute(
                 f"""
@@ -179,41 +181,50 @@ class QaJobRepository:
         job_id: str,
         worker_id: str,
         *,
-        progress: int,
-        stage: str,
+        progress: int | None = None,
+        stage: str | None = None,
         now: str | None = None,
+        attempt: int | None = None,
     ) -> bool:
-        if not 0 <= progress <= 100:
+        if progress is not None and not 0 <= progress <= 100:
             raise QaValidationError(
                 "QA_JOB_PROGRESS_INVALID", "progress must be between 0 and 100"
             )
-        timestamp = now or _utc_now()
         conn = connect(self.db_path)
         try:
+            if progress is None and stage is None:
+                # Periodic renewal retries contention within a single lease.
+                conn.execute("pragma busy_timeout = 100")
             conn.execute("begin immediate")
+            timestamp = _lease_timestamp(now)
             row = conn.execute(
                 """
                 select lease_duration_seconds from qa_jobs
                 where id = ? and status = 'running' and lease_owner = ?
-                  and lease_expires_at > ? and cancel_requested_at is null
+                  and replace(lease_expires_at, 'Z', '+00:00') > replace(?, 'Z', '+00:00')
+                  and cancel_requested_at is null
+                  and (? is null or attempt_count = ?)
                 """,
-                (job_id, worker_id, timestamp),
+                (job_id, worker_id, timestamp, attempt, attempt),
             ).fetchone()
-            if row is None:
+            duration = row["lease_duration_seconds"] if row is not None else None
+            if not isinstance(duration, int) or duration < 1:
                 conn.commit()
                 return False
-            expires_at = _add_seconds(timestamp, row["lease_duration_seconds"])
+            expires_at = _add_seconds(timestamp, duration)
             updated = conn.execute(
                 """
                 update qa_jobs
-                set progress = ?, stage = ?, lease_expires_at = ?,
+                set progress = coalesce(?, progress), stage = coalesce(?, stage),
+                    lease_expires_at = ?,
                     updated_at = ?, version = version + 1
                 where id = ? and status = 'running' and lease_owner = ?
-                  and lease_expires_at > ? and cancel_requested_at is null
+                  and replace(lease_expires_at, 'Z', '+00:00') > replace(?, 'Z', '+00:00')
+                  and cancel_requested_at is null
                 """,
                 (
                     progress,
-                    str(stage),
+                    str(stage) if stage is not None else None,
                     expires_at,
                     timestamp,
                     job_id,
@@ -236,10 +247,10 @@ class QaJobRepository:
         *,
         now: str | None = None,
     ) -> QaJob | None:
-        timestamp = now or _utc_now()
         conn = connect(self.db_path)
         try:
             conn.execute("begin immediate")
+            timestamp = _lease_timestamp(now)
             row = conn.execute(
                 "select * from qa_jobs where id = ? and user_id = ?",
                 (job_id, user_id),
@@ -295,15 +306,16 @@ class QaJobRepository:
         worker_id: str,
         *,
         now: str | None = None,
+        attempt: int | None = None,
     ) -> bool:
-        timestamp = now or _utc_now()
         conn = connect(self.db_path)
         try:
             conn.execute("begin immediate")
+            timestamp = _lease_timestamp(now)
             row = conn.execute(
                 "select * from qa_jobs where id = ?", (job_id,)
             ).fetchone()
-            if not self._owns_live_lease(row, worker_id, timestamp):
+            if not self._owns_live_lease(row, worker_id, timestamp, attempt):
                 conn.commit()
                 return False
             if row["cancel_requested_at"] is not None:
@@ -318,7 +330,8 @@ class QaJobRepository:
                     lease_duration_seconds = null, finished_at = ?, updated_at = ?,
                     version = version + 1
                 where id = ? and status = 'running' and lease_owner = ?
-                  and lease_expires_at > ? and cancel_requested_at is null
+                  and replace(lease_expires_at, 'Z', '+00:00') > replace(?, 'Z', '+00:00')
+                  and cancel_requested_at is null
                   and exists (
                       select 1 from qa_messages
                       where id = qa_jobs.assistant_message_id
@@ -346,20 +359,25 @@ class QaJobRepository:
         source_state: str,
         *,
         now: str | None = None,
+        attempt: int | None = None,
+        stop_requested: Callable[[], bool] | None = None,
     ) -> bool:
         """Atomically commit a summary answer and its owning durable job."""
 
         if source_state not in {"available", "none", "legacy_unavailable"}:
             raise QaValidationError("QA_SOURCE_STATE_INVALID", "invalid source state")
-        timestamp = now or _utc_now()
         source_list = tuple(sources)
         conn = connect(self.db_path)
         try:
             conn.execute("begin immediate")
+            if stop_requested is not None and stop_requested():
+                conn.rollback()
+                return False
+            timestamp = _lease_timestamp(now)
             job = conn.execute(
                 "select * from qa_jobs where id = ?", (job_id,)
             ).fetchone()
-            if not self._owns_live_lease(job, worker_id, timestamp):
+            if not self._owns_live_lease(job, worker_id, timestamp, attempt):
                 conn.commit()
                 return False
             if job["cancel_requested_at"] is not None:
@@ -444,7 +462,8 @@ class QaJobRepository:
                     lease_duration_seconds = null, finished_at = ?, updated_at = ?,
                     version = version + 1
                 where id = ? and status = 'running' and lease_owner = ?
-                  and lease_expires_at > ? and cancel_requested_at is null
+                  and replace(lease_expires_at, 'Z', '+00:00') > replace(?, 'Z', '+00:00')
+                  and cancel_requested_at is null
                 """,
                 (timestamp, timestamp, job_id, worker_id, timestamp),
             )
@@ -468,15 +487,16 @@ class QaJobRepository:
         *,
         retryable: bool = True,
         now: str | None = None,
+        attempt: int | None = None,
     ) -> QaJob:
-        timestamp = now or _utc_now()
         conn = connect(self.db_path)
         try:
             conn.execute("begin immediate")
+            timestamp = _lease_timestamp(now)
             row = conn.execute(
                 "select * from qa_jobs where id = ?", (job_id,)
             ).fetchone()
-            if not self._owns_live_lease(row, worker_id, timestamp):
+            if not self._owns_live_lease(row, worker_id, timestamp, attempt):
                 raise QaConflictError("QA_JOB_LEASE_LOST")
             if row["cancel_requested_at"] is not None:
                 self._cancel_running(conn, row, timestamp)
@@ -489,12 +509,12 @@ class QaJobRepository:
                         lease_duration_seconds = null, safe_error_code = ?,
                         trace_id = ?, updated_at = ?, version = version + 1
                     where id = ? and status = 'running' and lease_owner = ?
-                      and lease_expires_at > ?
+                      and replace(lease_expires_at, 'Z', '+00:00') > replace(?, 'Z', '+00:00')
                     """,
                     (error_code, trace_id, timestamp, job_id, worker_id, timestamp),
                 )
             else:
-                conn.execute(
+                updated = conn.execute(
                     """
                     update qa_jobs
                     set status = 'failed', stage = 'failed',
@@ -503,7 +523,7 @@ class QaJobRepository:
                         trace_id = ?, finished_at = ?, updated_at = ?,
                         version = version + 1
                     where id = ? and status = 'running' and lease_owner = ?
-                      and lease_expires_at > ?
+                      and replace(lease_expires_at, 'Z', '+00:00') > replace(?, 'Z', '+00:00')
                     """,
                     (
                         error_code,
@@ -515,6 +535,8 @@ class QaJobRepository:
                         timestamp,
                     ),
                 )
+                if not updated.rowcount:
+                    raise QaConflictError("QA_JOB_LEASE_LOST")
                 self._finish_assistant(
                     conn,
                     row["assistant_message_id"],
@@ -536,10 +558,10 @@ class QaJobRepository:
             conn.close()
 
     def recover_expired(self, *, now: str | None = None) -> int:
-        timestamp = now or _utc_now()
         conn = connect(self.db_path)
         try:
             conn.execute("begin immediate")
+            timestamp = _lease_timestamp(now)
             recovered = self._recover_expired_in_connection(conn, timestamp)
             conn.commit()
             return recovered
@@ -555,7 +577,7 @@ class QaJobRepository:
         rows = conn.execute(
             """
             select * from qa_jobs
-            where status = 'running' and lease_expires_at <= ?
+            where status = 'running' and replace(lease_expires_at, 'Z', '+00:00') <= replace(?, 'Z', '+00:00')
             order by created_at, id
             """,
             (timestamp,),
@@ -572,7 +594,7 @@ class QaJobRepository:
                         lease_duration_seconds = null, updated_at = ?,
                         version = version + 1
                     where id = ? and status = 'running'
-                      and lease_expires_at <= ?
+                      and replace(lease_expires_at, 'Z', '+00:00') <= replace(?, 'Z', '+00:00')
                     """,
                     (timestamp, row["id"], timestamp),
                 )
@@ -587,7 +609,7 @@ class QaJobRepository:
                         trace_id = null, finished_at = ?, updated_at = ?,
                         version = version + 1
                     where id = ? and status = 'running'
-                      and lease_expires_at <= ?
+                      and replace(lease_expires_at, 'Z', '+00:00') <= replace(?, 'Z', '+00:00')
                     """,
                     (timestamp, timestamp, row["id"], timestamp),
                 )
@@ -634,14 +656,15 @@ class QaJobRepository:
 
     @staticmethod
     def _owns_live_lease(
-        row: sqlite3.Row | None, worker_id: str, timestamp: str
+        row: sqlite3.Row | None, worker_id: str, timestamp: str, attempt: int | None
     ) -> bool:
         return bool(
             row is not None
             and row["status"] == "running"
             and row["lease_owner"] == worker_id
+            and (attempt is None or row["attempt_count"] == attempt)
             and row["lease_expires_at"] is not None
-            and row["lease_expires_at"] > timestamp
+            and _parse_lease_timestamp(row["lease_expires_at"]) > _parse_lease_timestamp(timestamp)
         )
 
     def _cancel_running(
@@ -699,10 +722,20 @@ class QaJobRepository:
         )
 
 
+def _parse_lease_timestamp(timestamp: str) -> datetime:
+    value = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def _lease_timestamp(timestamp: str | None) -> str:
+    if timestamp is None:
+        return _utc_now()
+    value = _parse_lease_timestamp(timestamp).astimezone(timezone.utc)
+    return value.isoformat().replace("+00:00", "Z")
+
+
 def _add_seconds(timestamp: str, seconds: int) -> str:
-    parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+    parsed = _parse_lease_timestamp(timestamp)
     return (parsed + timedelta(seconds=seconds)).astimezone(timezone.utc).isoformat().replace(
         "+00:00", "Z"
     )
