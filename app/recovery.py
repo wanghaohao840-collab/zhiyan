@@ -504,7 +504,18 @@ class RecoveryService:
                 "Backup validation failed — active file unchanged",
             )
 
-        # ── atomic replacement ─────────────────────────────────────
+        # Rebuild from the validated backup before replacing the active file.
+        # A rejected remote embedding must not overwrite the old snapshot.
+        if getattr(self._memory_manager, "snapshot_restore_failed", None) is not None:
+            candidate = MemorySnapshotRepository(backup_path, self.user_id)
+            candidate.restore_to_manager(
+                self._memory_manager, commit=lambda: write_json_atomic(self._memory.path, data),
+            )
+            return RecoveryResult(
+                True, "restore", "memory",
+                f"Memory restored from backup {backup_id}",
+            )
+
         write_json_atomic(self._memory.path, data)
 
         # Reload the live MemoryManager so in-memory state matches the

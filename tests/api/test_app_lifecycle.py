@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import FrozenInstanceError
 
 import pytest
@@ -25,6 +26,21 @@ def test_health_and_lifespan_start_and_stop_shared_services_once():
         assert api_app.state.services is services
 
     assert services.stop_calls == 1
+
+
+def test_service_startup_can_call_synchronous_embedding(monkeypatch):
+    services = FakeServices(session_registry=FakeSessionRegistry())
+    start = services.start
+
+    def start_outside_event_loop():
+        with pytest.raises(RuntimeError, match="no running event loop"):
+            asyncio.get_running_loop()
+        start()
+
+    monkeypatch.setattr(services, "start", start_outside_event_loop)
+    with TestClient(create_api_app(services)) as client:
+        assert client.get("/healthz").status_code == 200
+        assert services.start_calls == 1
 
 
 def test_api_config_defaults_and_true_only_environment_parsing(monkeypatch):

@@ -15,6 +15,10 @@ from hello_agents.memory.storage.qdrant_store import QdrantConnectionManager
 from hello_agents.memory.storage.vector_store import VectorPoint, VectorRange, VectorStore
 
 
+class EpisodicIndexRecoveryRequired(RuntimeError):
+    """The previous vector could not be restored after a failed write."""
+
+
 class EpisodicMemory:
     """情景记忆实现
 
@@ -246,17 +250,17 @@ class EpisodicMemory:
 
         return len(self._episodes)
 
-    def _persist_episode(self, episode: Episode) -> None:
+    def _persist_episode(self, episode: Episode, *, persist_document: bool = True) -> None:
         """持久化情景记忆到 SQLite 和 Qdrant"""
 
         metadata = {
+            **(episode.context or {}),
             "memory_id": episode.episode_id,
             "episode_id": episode.episode_id,
             "session_id": episode.session_id,
             "timestamp": episode.timestamp,
             "memory_type": "episodic",
             "content": episode.content,
-            **(episode.context or {})
         }
 
         embedding = self.embedder.encode(episode.content)
@@ -266,11 +270,18 @@ class EpisodicMemory:
             embedding = embedding[0]
         embedding = [float(x) for x in embedding]
 
-        # Publish vectors before recording success in SQLite or memory.
+        strict = bool(getattr(self.embedder, "fingerprint", None))
+        filters = {"episode_id": episode.episode_id, "memory_type": "episodic"}
+        previous = self.vector_store.scroll(
+            self.vector_collection, filters=filters, with_vectors=True,
+        ) if strict and persist_document else []
         self.vector_store.upsert(
             self.vector_collection,
             [VectorPoint(episode.episode_id, embedding, metadata)],
         )
+
+        if not persist_document:
+            return
 
         try:
             if hasattr(self.doc_store, "add_document"):
@@ -280,6 +291,15 @@ class EpisodicMemory:
                     metadata=json.dumps(metadata, ensure_ascii=False)
                 )
         except Exception as e:
+            if strict:
+                try:
+                    if previous:
+                        self.vector_store.upsert(self.vector_collection, previous)
+                    else:
+                        self.vector_store.delete_by_filter(self.vector_collection, filters)
+                except Exception as compensation_error:
+                    raise EpisodicIndexRecoveryRequired("Episodic index recovery required") from compensation_error
+                raise
             print(f"[WARNING] SQLite 保存情景记忆失败: {e}")
 
     def _structured_filter(self, **kwargs) -> Optional[Set[str]]:

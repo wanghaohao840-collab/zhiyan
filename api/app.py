@@ -7,6 +7,7 @@ from threading import RLock
 from typing import Callable
 
 from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.types import ASGIApp
@@ -64,11 +65,12 @@ def create_api_app(
         fastapi_app.state.services = resolved_services
         for consumer in fastapi_app.state.service_consumers:
             consumer(resolved_services)
-        resolved_services.start()
+        # Startup can restore snapshots through the synchronous embedding client.
+        await run_in_threadpool(resolved_services.start)
         try:
             yield
         finally:
-            resolved_services.stop()
+            await run_in_threadpool(resolved_services.stop)
 
     api_app = FastAPI(lifespan=lifespan)
     api_app.state.api_config = config

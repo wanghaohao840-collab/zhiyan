@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import RLock
 
 from app.coordination import UserMutationCoordinator
@@ -13,6 +15,9 @@ from app.storage import UserPaths, UserStorage
 from hello_agents.memory.base import MemoryConfig
 from hello_agents.tools.builtin.memory_tool import MemoryTool
 from hello_agents.tools.builtin.rag_tool import RAGTool
+from hello_agents.memory.rag.pipeline import resolve_rag_embedding_dependencies, resolve_rag_backend
+from hello_agents.memory.rag.index_identity import IndexIdentity
+from hello_agents.memory.rag.json_index_cache import JsonIndexCache
 
 
 @dataclass
@@ -76,11 +81,36 @@ class UserRuntimeRegistry:
             if runtime is not None:
                 return runtime
 
+            paths = self.storage.user_paths(user_id)
+            new_user_directory = not paths.root.exists()
+            # Only a newly initialized user can start with an empty managed
+            # JSON index. Existing missing indexes still require recovery.
+            if new_user_directory and resolve_rag_backend(None) == "json":
+                embedding, indexes = resolve_rag_embedding_dependencies(
+                    backend="json", data_root=self.storage.data_root,
+                )
+                if embedding is not None:
+                    identity = IndexIdentity("json", "pdf_learning_collection", embedding.profile)
+                    indexes.require_active(identity)
+                    bootstrap = indexes.registry_root / "user-bootstrap"
+                    bootstrap.mkdir(parents=True, exist_ok=True)
+                    self.storage.users_root.mkdir(parents=True, exist_ok=True)
+                    # Publish both files together. An interrupted first login
+                    # leaves the final user directory absent and can be retried.
+                    with TemporaryDirectory(prefix="new-user-", dir=bootstrap) as temporary:
+                        staged = Path(temporary)
+                        JsonIndexCache(staged / "rag" / "rag_cache.json", identity, f"pdf_{user_id}").write([])
+                        initial_history = HistoryRepository(staged / "history.json")
+                        initial_history.save(initial_history.load())
+                        os.replace(staged, paths.root)
             paths = self.storage.ensure_user_dirs(user_id)
             memory_repo = MemorySnapshotRepository(paths.memory_snapshot, user_id=user_id)
             memory_tool = MemoryTool(
                 user_id=user_id,
-                memory_config=MemoryConfig(database_path=str(paths.root / "memory" / f"memory_{user_id}.db")),
+                memory_config=MemoryConfig(
+                    database_path=str(paths.root / "memory" / f"memory_{user_id}.db"),
+                    qdrant_collection=f"hello_agents_vectors_{user_id}",
+                ),
                 memory_types=["working", "episodic", "semantic"],
                 memory_repository=memory_repo,
             )

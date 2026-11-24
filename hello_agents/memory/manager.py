@@ -1,9 +1,10 @@
 from typing import Optional, Dict, List, Any
 import logging
+import os
 
 from hello_agents.memory.base import MemoryConfig, MemoryItem
 from hello_agents.memory.types.working import WorkingMemory
-from hello_agents.memory.types.episodic import EpisodicMemory
+from hello_agents.memory.types.episodic import EpisodicIndexRecoveryRequired, EpisodicMemory
 from hello_agents.memory.rag.embedding_profile import EmbeddingFailure
 
 
@@ -32,6 +33,7 @@ class MemoryManager:
         self.config = config or MemoryConfig()
         self.user_id = user_id
         self.snapshot_repository = snapshot_repository
+        self.snapshot_restore_failed = False
 
         # 当前阶段先不使用独立 MemoryStore / MemoryRetriever
         # 因为 working / episodic / semantic 各自已经有自己的存储和检索逻辑
@@ -63,8 +65,12 @@ class MemoryManager:
                 )
 
             except EmbeddingFailure:
+                self.close()
                 raise
             except Exception as e:
+                if os.getenv("MEMORY_EMBEDDING_PROVIDER", "simple").strip() != "simple":
+                    self.close()
+                    raise
                 logger.warning("SemanticMemory 初始化失败，已跳过 semantic 记忆: %s", e)
 
         if enable_perceptual:
@@ -85,7 +91,15 @@ class MemoryManager:
         )
 
         if self.snapshot_repository is not None:
-            self.snapshot_repository.restore_to_manager(self)
+            try:
+                self.snapshot_repository.restore_to_manager(self)
+            except Exception:
+                self.close()
+                raise
+
+    def require_restored_snapshot(self) -> None:
+        if self.snapshot_restore_failed:
+            raise RuntimeError("Memory snapshot recovery must succeed before continuing")
 
     def close(self) -> None:
         for memory in self.memory_types.values():
@@ -104,6 +118,7 @@ class MemoryManager:
     ) -> str:
         """添加记忆"""
 
+        self.require_restored_snapshot()
         if not content:
             raise ValueError("记忆内容不能为空")
 
@@ -117,7 +132,7 @@ class MemoryManager:
             "content": content,
             "memory_type": memory_type,
             "importance": importance,
-            "metadata": metadata or {},
+            "metadata": dict(metadata or {}),
         }
         if memory_id is not None:
             item_kwargs["id"] = memory_id
@@ -127,7 +142,11 @@ class MemoryManager:
 
         memory_item.metadata.setdefault("user_id", self.user_id)
 
-        memory_id = self.memory_types[memory_type].add(memory_item)
+        try:
+            memory_id = self.memory_types[memory_type].add(memory_item)
+        except EpisodicIndexRecoveryRequired:
+            self.snapshot_restore_failed = True
+            raise
         self._save_snapshot()
         return memory_id
 
@@ -141,6 +160,7 @@ class MemoryManager:
     ) -> List[MemoryItem]:
         """检索记忆"""
 
+        self.require_restored_snapshot()
         if not query:
             return []
 
@@ -185,6 +205,7 @@ class MemoryManager:
     ) -> bool:
         """Remove one exact memory without broad metadata matching."""
 
+        self.require_restored_snapshot()
         module = self.memory_types.get(memory_type)
         remove = getattr(module, "remove", None)
         if not callable(remove):
@@ -211,6 +232,7 @@ class MemoryManager:
     ) -> int:
         """遗忘记忆"""
 
+        self.require_restored_snapshot()
         total_count = 0
 
         for memory_type, memory_module in self.memory_types.items():
@@ -237,6 +259,7 @@ class MemoryManager:
     ) -> int:
         """整合记忆：将重要的短期记忆提升为长期记忆"""
 
+        self.require_restored_snapshot()
         if from_type not in self.memory_types:
             raise ValueError(f"未启用的来源记忆类型: {from_type}")
 
@@ -267,7 +290,11 @@ class MemoryManager:
                     }
                 )
 
-                target_memory.add(new_item)
+                try:
+                    target_memory.add(new_item)
+                except EpisodicIndexRecoveryRequired:
+                    self.snapshot_restore_failed = True
+                    raise
                 count += 1
 
             else:
@@ -326,6 +353,7 @@ class MemoryManager:
     def clear_all(self) -> str:
         """清空所有记忆"""
 
+        self.require_restored_snapshot()
         for memory_type, memory_module in self.memory_types.items():
             if hasattr(memory_module, "memories"):
                 memory_module.memories.clear()

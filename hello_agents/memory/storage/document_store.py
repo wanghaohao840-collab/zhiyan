@@ -23,12 +23,11 @@ class SQLiteDocumentStore:
         self.conn.commit()
 
     def add_document(self, doc_id: str, content: str, metadata: str = "{}"):
-        cur = self.conn.cursor()
-        cur.execute(
-            "INSERT OR REPLACE INTO documents (id, content, metadata) VALUES (?, ?, ?)",
-            (doc_id, content, metadata)
-        )
-        self.conn.commit()
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO documents (id, content, metadata) VALUES (?, ?, ?)",
+                (doc_id, content, metadata),
+            )
 
     def get_document(self, doc_id: str) -> Optional[Dict[str, Any]]:
         cur = self.conn.cursor()

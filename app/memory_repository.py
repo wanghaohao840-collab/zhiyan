@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from app.storage import read_json, write_json_atomic
 from hello_agents.memory.base import Episode, MemoryItem
@@ -51,6 +51,8 @@ class MemorySnapshotRepository:
         return {"user_id": self.user_id, "memories": memories}
 
     def save_from_manager(self, manager: Any) -> None:
+        if getattr(manager, "snapshot_restore_failed", False) is True:
+            raise RuntimeError("Memory snapshot recovery must succeed before saving")
         memories = []
         for memory_type, memory_module in getattr(manager, "memory_types", {}).items():
             if memory_type not in SUPPORTED_MEMORY_TYPES:
@@ -182,7 +184,16 @@ class MemorySnapshotRepository:
                 "Memory snapshot 'memories' field must be a list"
             )
 
-    def restore_to_manager(self, manager: Any) -> None:
+    def restore_to_manager(self, manager: Any, *, commit: Callable[[], None] | None = None) -> None:
+        if hasattr(manager, "snapshot_restore_failed"):
+            manager.snapshot_restore_failed = True
+        self._restore_to_manager(manager)
+        if commit is not None:
+            commit()
+        if hasattr(manager, "snapshot_restore_failed"):
+            manager.snapshot_restore_failed = False
+
+    def _restore_to_manager(self, manager: Any) -> None:
         """Restore snapshot data into *manager*, fail-closed.
 
         **Fail-closed contract (Item 4):**
@@ -256,15 +267,14 @@ class MemorySnapshotRepository:
                 embedder = getattr(memory_module, "embedder", None)
                 if embedder is None:
                     embedder = getattr(memory_module, "embedding_model", None)
-                if getattr(embedder, "fingerprint", None):
+                rebuild_vectors = bool(getattr(embedder, "fingerprint", None))
+                if rebuild_vectors:
                     # Snapshots contain original text. Rebuild only this user's
                     # vectors in the versioned memory collection after restart.
                     memory_module.vector_store.delete_by_filter(
                         memory_module.vector_collection,
                         {"user_id": self.user_id, "memory_type": memory_type},
                     )
-                    for item in items:
-                        memory_module.add(item)
                 if memory_type == "episodic" and hasattr(memory_module, "_episodes"):
                     episodes = {
                         item.id: Episode(
@@ -284,9 +294,18 @@ class MemorySnapshotRepository:
                     sessions: dict[str, list[str]] = {}
                     for episode in episodes.values():
                         sessions.setdefault(episode.session_id, []).append(episode.episode_id)
+                        if rebuild_vectors:
+                            # The snapshot owns the restored text. Rebuild the
+                            # derived index without changing the SQLite copy.
+                            memory_module._persist_episode(episode, persist_document=False)
                     memory_module._episodes = episodes
                     memory_module.sessions = sessions
                 elif hasattr(memory_module, "memories"):
+                    if rebuild_vectors:
+                        memory_module.entities.clear()
+                        memory_module.relations.clear()
+                        for item in items:
+                            memory_module.add(item)
                     memory_module.memories = (
                         {item.id: item for item in items}
                         if memory_type == "semantic"
