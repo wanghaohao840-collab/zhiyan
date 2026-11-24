@@ -1,3 +1,4 @@
+import { Trash2 } from "lucide-react";
 import type { Document } from "../../features/documents/types";
 
 type DocumentRowProps = {
@@ -61,7 +62,7 @@ export function DocumentRow({ deleting, document, onDelete, onAsk }: DocumentRow
         aria-busy={deleting || undefined}
         onClick={(event) => onDelete(document, event.currentTarget)}
       >
-        ×
+        <Trash2 size={16} strokeWidth={1.6} aria-hidden="true" />
       </button>
     </li>
   );

@@ -10,6 +10,7 @@ import {
   importStageText,
 } from "../components/ImportBatchPanel/ImportBatchPanel";
 import { ImportDialog } from "../components/ImportDialog/ImportDialog";
+import { ConstellationMark } from "../components/ui/ConstellationMark";
 import {
   useDocumentMutations,
   useDocumentsQuery,
@@ -287,6 +288,7 @@ export function DocumentsPage() {
           {!documents.length ? (
             <div className="documents-empty-state">
               <section className="documents-empty" aria-labelledby="documents-empty-title">
+                <ConstellationMark size="md" />
                 <h2 id="documents-empty-title">还没有文档</h2>
                 <p>导入 PDF、TXT、Markdown 或 DOCX，开始构建你的知识库。</p>
                 <Button hierarchy="secondary" onClick={(event) => openImport(event.currentTarget)}>

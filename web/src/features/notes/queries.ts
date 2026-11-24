@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { useAuth } from "../../auth/AuthProvider";
 import * as api from "./api";
@@ -33,6 +33,8 @@ export function useNotesQuery(filters: NoteFilters, enabled = true) {
     initialPageParam: null as string | null,
     queryFn: ({ pageParam, signal }) => api.listNotes(request, { ...filters, cursor: pageParam }, signal),
     getNextPageParam: (page) => page.next_cursor ?? undefined,
+    // NOTE: 筛选参数切换时保留上一份列表数据，防止 NotesPage 因 isPending 瞬间切回加载态而卸载工作区和移动端筛选弹层
+    placeholderData: keepPreviousData,
     enabled,
     retry: false,
   });

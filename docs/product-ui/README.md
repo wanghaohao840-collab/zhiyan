@@ -26,10 +26,10 @@
 
 ## Penpot 连接与交接
 
-2026-09-10 起，本轮浅色界面的视觉依据为用户确认的左侧参考图及
-[浅色知识感设计](../superpowers/specs/2026-09-09-light-knowledge-ui-design.md)。
-登录、外壳、概览、问答和文档库按此设计调整；旧 Penpot 画板尚未同步，
-其画板导出仅作为历史参考，不能宣称新界面与旧画板一致。
+2026-11-24 起，知研产品界面升级至 **Paper & Forest v2.0** 统一设计体系，仓库单一事实源为根目录 [`DESIGN.md`](../../DESIGN.md) 与 W3C DTCG 契约 [`design/tokens/zhiyan.tokens.json`](../../design/tokens/zhiyan.tokens.json)（经 [`scripts/design_tokens.mjs`](../../scripts/design_tokens.mjs) 编译为 [`web/src/styles/tokens.css`](../../web/src/styles/tokens.css)）。全站 7 个业务路由（含 `/learning`）与 2 个认证页已完成暖纸 × 森林绿 Token 收口、WCAG 2.1 AA 对比度校准、Lucide 线性图标统一、桌面侧栏折叠及 QA Markdown / 引用编号联动升级；旧 Penpot 画板仅保留历史参考与导出映射契约，未同步改动远端画板。
+
+（历史记录：2026-09-10 浅色界面视觉依据为用户确认的左侧参考图及
+[浅色知识感设计](../superpowers/specs/2026-09-09-light-knowledge-ui-design.md)。）
 
 以下为保留的 Penpot 历史交接流程。使用已登录的浏览器会话打开规范化文件
 链接，不把登录 Cookie、`userToken`、API Key 或其他凭据复制到命令、日志、

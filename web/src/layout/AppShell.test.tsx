@@ -398,6 +398,27 @@ describe("AppShell", () => {
     expect(await screen.findByRole("heading", { name: heading, level: 1 })).toBeVisible();
   });
 
+  it("toggles desktop sidebar collapsed state without hiding navigation links", async () => {
+    mockAuthenticatedSession();
+    renderShell();
+    const user = userEvent.setup();
+
+    const collapseButton = await screen.findByRole("button", {
+      name: "收起侧栏",
+      hidden: true,
+    });
+    expect(collapseButton).toHaveAttribute("aria-expanded", "true");
+    await user.click(collapseButton);
+    expect(screen.getByRole("button", { name: "展开侧栏", hidden: true })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(document.querySelector(".app-shell")).toHaveClass("app-shell--collapsed");
+    expect(
+      within(screen.getByLabelText("主导航")).getAllByRole("link", { hidden: true }),
+    ).toHaveLength(7);
+  });
+
   it("keeps a single visible page heading", async () => {
     mockAuthenticatedSession();
     renderProductionApp("/overview");

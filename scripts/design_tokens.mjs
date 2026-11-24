@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const dimensionUnits = ["px", "rem", "%"];
+const durationUnits = ["ms", "s"];
 
 function formatDimension(value) {
   if (
@@ -11,6 +12,63 @@ function formatDimension(value) {
     dimensionUnits.includes(value.unit)
   ) {
     return `${value.value}${value.unit}`;
+  }
+  return null;
+}
+
+function formatDuration(value) {
+  if (
+    value &&
+    Number.isFinite(value.value) &&
+    value.value >= 0 &&
+    durationUnits.includes(value.unit)
+  ) {
+    return `${value.value}${value.unit}`;
+  }
+  return null;
+}
+
+function formatSingleShadow(value) {
+  const dimensions = [
+    formatDimension(value?.offsetX),
+    formatDimension(value?.offsetY),
+    formatDimension(value?.blur),
+    formatDimension(value?.spread),
+  ];
+  if (typeof value?.color === "string" && dimensions.every(Boolean)) {
+    return `${dimensions.join(" ")} ${value.color}`;
+  }
+  return null;
+}
+
+function formatFontFamily(value) {
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  if (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((entry) => typeof entry === "string" && entry.trim())
+  ) {
+    return value
+      .map((entry) => {
+        const trimmed = entry.trim();
+        return /\s/.test(trimmed) && !/^["'].*["']$/.test(trimmed)
+          ? `"${trimmed}"`
+          : trimmed;
+      })
+      .join(", ");
+  }
+  return null;
+}
+
+function formatCubicBezier(value) {
+  if (
+    Array.isArray(value) &&
+    value.length === 4 &&
+    value.every((entry) => Number.isFinite(entry))
+  ) {
+    return `cubic-bezier(${value.join(", ")})`;
   }
   return null;
 }
@@ -24,16 +82,40 @@ function formatValue(path, token) {
     if (dimension) return dimension;
   }
   if (token.$type === "shadow") {
-    const value = token.$value;
-    const dimensions = [
-      formatDimension(value?.offsetX),
-      formatDimension(value?.offsetY),
-      formatDimension(value?.blur),
-      formatDimension(value?.spread),
-    ];
-    if (typeof value?.color === "string" && dimensions.every(Boolean)) {
-      return `${dimensions.join(" ")} ${value.color}`;
+    if (Array.isArray(token.$value) && token.$value.length > 0) {
+      const layers = token.$value.map(formatSingleShadow);
+      if (layers.every(Boolean)) return layers.join(", ");
+    } else {
+      const single = formatSingleShadow(token.$value);
+      if (single) return single;
     }
+  }
+  if (token.$type === "fontFamily") {
+    const family = formatFontFamily(token.$value);
+    if (family) return family;
+  }
+  if (token.$type === "fontWeight") {
+    if (
+      Number.isInteger(token.$value) &&
+      token.$value >= 100 &&
+      token.$value <= 900
+    ) {
+      return String(token.$value);
+    }
+    if (typeof token.$value === "string" && token.$value.trim()) {
+      return token.$value.trim();
+    }
+  }
+  if (token.$type === "number" && Number.isFinite(token.$value)) {
+    return String(token.$value);
+  }
+  if (token.$type === "duration") {
+    const duration = formatDuration(token.$value);
+    if (duration) return duration;
+  }
+  if (token.$type === "cubicBezier") {
+    const bezier = formatCubicBezier(token.$value);
+    if (bezier) return bezier;
   }
   throw new Error(`Unsupported or invalid token: ${path}`);
 }

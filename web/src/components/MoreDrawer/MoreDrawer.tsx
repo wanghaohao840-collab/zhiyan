@@ -1,3 +1,4 @@
+import { X } from "lucide-react";
 import { NavigationIcon } from "../NavigationIcon/NavigationIcon";
 import { type KeyboardEvent, useEffect, useRef } from "react";
 import { NavLink } from "react-router-dom";
@@ -97,7 +98,9 @@ export function MoreDrawer({
       >
         <header className="more-drawer__header">
           <h2 id="more-drawer-title">更多</h2>
-          <button type="button" aria-label="关闭更多" onClick={onClose}>×</button>
+          <button type="button" aria-label="关闭更多" onClick={onClose}>
+            <X size={18} strokeWidth={1.6} aria-hidden="true" />
+          </button>
         </header>
         <nav className="more-drawer__nav" aria-label="更多导航">
           {navigationItems.slice(4).map((item, index) => (

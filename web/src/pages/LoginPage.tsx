@@ -1,3 +1,4 @@
+import { Eye, EyeOff } from "lucide-react";
 import {
   type FormEvent,
   type KeyboardEvent,
@@ -150,6 +151,7 @@ export function LoginPage() {
               id="login-username"
               name="username"
               autoComplete="username"
+              spellCheck={false}
               required
               minLength={3}
               maxLength={32}
@@ -180,7 +182,11 @@ export function LoginPage() {
                 aria-pressed={passwordVisible}
                 onClick={() => setPasswordVisible((visible) => !visible)}
               >
-                <span className="password-field__eye" aria-hidden="true" />
+                {passwordVisible ? (
+                  <EyeOff size={18} strokeWidth={1.6} aria-hidden="true" />
+                ) : (
+                  <Eye size={18} strokeWidth={1.6} aria-hidden="true" />
+                )}
               </button>
             </div>
             <p id="login-password-help" className="field-help">请输入 8–128 个字符的密码</p>

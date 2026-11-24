@@ -12,6 +12,7 @@ export function AppShell() {
   const auth = useAuth();
   const mainRef = useRef<HTMLElement>(null);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [drawerTrigger, setDrawerTrigger] = useState<HTMLButtonElement | null>(null);
   const username = auth.status === "authenticated" ? auth.username : "用户";
 
@@ -34,11 +35,16 @@ export function AppShell() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${sidebarCollapsed ? " app-shell--collapsed" : ""}`}>
       <a className="skip-link" href="#main-content" onClick={skipToMain}>
         跳到主要内容
       </a>
-      <Sidebar isLogoutPending={auth.isLogoutPending} onLogout={logout} />
+      <Sidebar
+        collapsed={sidebarCollapsed}
+        isLogoutPending={auth.isLogoutPending}
+        onLogout={logout}
+        onToggleCollapse={() => setSidebarCollapsed((current) => !current)}
+      />
       <MobileBottomNav moreOpen={moreOpen} onOpenMore={openMore} />
       <div className="app-shell__body">
         <TopBar username={username} moreOpen={moreOpen} onOpenMore={openMore} />

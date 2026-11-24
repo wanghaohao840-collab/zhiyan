@@ -112,6 +112,45 @@ describe("QA workspace components", () => {
     expect(document.querySelector(".qa-summary-status__skeleton")).not.toBeInTheDocument();
   });
 
+  it("renders markdown safely and numbers multi-citation chips and actions", async () => {
+    const secondSource: QaSource = {
+      ...source,
+      citation_id: "citation-2",
+      document_name: "实验.pdf",
+      page_number: 7,
+      reference: "实验.pdf#P7",
+    };
+    const onSources = vi.fn();
+    const rich: QaMessage = {
+      ...failed,
+      message_id: "rich-1",
+      status: "completed",
+      content: "### 核心结论\n\n- 支持 **Markdown** 渲染\n- <script>alert(1)</script>",
+      sources: [source, secondSource],
+    };
+    render(
+      <>
+        <MessageList messages={[rich]} activeCitationId="citation-2" onSources={onSources} onRetry={vi.fn()} />
+        <SourcePanel sources={[source, secondSource]} activeCitationId="citation-2" messageId="rich-1" notesEnabled />
+      </>,
+    );
+
+    expect(screen.getByRole("heading", { level: 3, name: "核心结论" })).toBeVisible();
+    expect(document.querySelector("script")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "记录引用 [1]" })).toHaveAttribute(
+      "href",
+      "/notes?source_kind=qa_citation&qa_message_id=rich-1&citation_id=citation-1",
+    );
+    expect(screen.getByRole("link", { name: "记录引用 [2]" })).toHaveAttribute(
+      "href",
+      "/notes?source_kind=qa_citation&qa_message_id=rich-1&citation_id=citation-2",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /\[2\]/ }));
+    expect(onSources).toHaveBeenCalledWith(rich, expect.any(HTMLButtonElement), "citation-2");
+    expect(document.querySelector('li[data-citation-id="citation-2"]')).toHaveClass("is-active");
+    expect(screen.getAllByRole("link", { name: "存入笔记" })).toHaveLength(2);
+  });
+
   it("traps focus, closes on Escape and returns focus", async () => {
     const close = vi.fn();
     const trigger = document.createElement("button");

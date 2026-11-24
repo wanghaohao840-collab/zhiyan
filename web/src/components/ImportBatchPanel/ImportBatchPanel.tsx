@@ -1,3 +1,4 @@
+import { FileUp } from "lucide-react";
 import type {
   ImportBatch,
   ImportStage,
@@ -77,7 +78,9 @@ export function ImportTaskRow({
   const state = taskState(task);
   return (
     <li className="import-task-row" data-state={state} aria-label={task.original_name}>
-      <span className="import-task-row__icon" aria-hidden="true">↑</span>
+      <span className="import-task-row__icon" aria-hidden="true">
+        <FileUp size={18} strokeWidth={1.6} />
+      </span>
       <span className="import-task-row__body">
         <strong>{task.original_name}</strong>
         <span>{taskStatusText(task)}</span>

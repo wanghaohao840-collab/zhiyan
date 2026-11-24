@@ -1,3 +1,4 @@
+import { X } from "lucide-react";
 import {
   type ChangeEvent,
   type DragEvent,
@@ -250,7 +251,7 @@ export function ImportDialog({
             disabled={submitting}
             onClick={onClose}
           >
-            ×
+            <X size={18} strokeWidth={1.6} aria-hidden="true" />
           </button>
         </header>
         <p className="import-dialog__intro">选择文件后立即创建持久任务；不同文件独立成功或失败。</p>
@@ -275,7 +276,7 @@ export function ImportDialog({
                   disabled={submitting}
                   onClick={() => removeFile(key)}
                 >
-                  ×
+                  <X size={16} strokeWidth={1.6} aria-hidden="true" />
                 </button>
               </li>
             ))}
