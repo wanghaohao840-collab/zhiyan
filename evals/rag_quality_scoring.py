@@ -96,7 +96,7 @@ def score_citations(body, sources, hits, case, pipeline):
             or source.get("document_id") not in case.scope
             or source.get("document_id") != meta["document_id"]
             or source.get("page_number") != meta["page_number"]
-            or source.get("file_name") != meta["file_name"]
+            or (source.get("file_name") or source.get("document_name")) != meta["file_name"]
             or not source.get("excerpt")
         ):
             continue

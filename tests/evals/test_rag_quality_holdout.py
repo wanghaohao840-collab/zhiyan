@@ -4,7 +4,7 @@ import json
 import pytest
 
 from evals.rag_quality_dataset import HOLDOUT_DATASET, load_gold_dataset
-from evals.rag_quality_experiment import RERANK, build_index, evaluate_case
+from evals.rag_quality_experiment import BASELINE, RERANK, build_index, evaluate_case
 from evals.rag_quality_report import grounding_latency_gate
 from hello_agents.memory.embedding import SimpleEmbedding
 from hello_agents.tools.builtin.rag_grounding import EvidenceProtocolError, grounded_answer
@@ -260,3 +260,148 @@ def test_grounding_latency_gate_requires_speed_and_supported_coverage():
     assert grounding_latency_gate([baseline, row("single_pass", 750)])["passed"]
     assert not grounding_latency_gate([baseline, row("single_pass", 850)])["passed"]
     assert not grounding_latency_gate([baseline, row("single_pass", 750, supported=False)])["passed"]
+
+
+def test_release_trial_checks_sources_returned_by_the_application_engine(tmp_path):
+    chunks, cases = load_gold_dataset(HOLDOUT_DATASET.with_name("rag_quality_release.json"))
+    assert len(chunks) == 40 and len(cases) == 16
+    case = next(case for case in cases if case.id == "en-01")
+    pipeline = build_index(chunks, tmp_path, SimpleEmbedding())[case.namespace]
+    from hello_agents.tools.builtin.rag_context import citation_id
+
+    hit = {**pipeline.get_document_chunks(case.scope[0])[0], "score": 0.9}
+    citation = citation_id(hit)
+    searches = []
+
+    def search(**options):
+        searches.append(options)
+        return [hit]
+
+    pipeline.search = search
+    payload = {
+        "quotes": [{"id": citation, "quote": "47 minutes"}],
+        "claims": [{"text": "47 minutes", "ids": [citation]}],
+    }
+    variant = replace(
+        BASELINE, verify_evidence=True, evidence_strategy="single_pass", use_application_engine=True,
+    )
+    row = evaluate_case(pipeline, case, variant, generate=lambda _: json.dumps(payload), repeats=0)
+    assert row["generation_error"] is None
+    assert row["answer_scores"]["accuracy"]
+    assert row["citations"]["facts_supported"] == ["47"]
+    assert row["sources"][0]["document_name"] == "Coastal Hub Manual.pdf"
+    assert row["sources"][0]["page_number"] == 1
+    assert row["sources"][0]["excerpt"] == "47 minutes"
+    assert len(searches) == 1
+    assert searches[0]["min_score"] == 0.12
+    assert "retrieval_mode" not in searches[0]
+    assert searches[0]["document_ids"] == list(case.scope)
+
+
+def test_application_single_pass_preserves_qdrant_sources_and_namespace():
+    from qdrant_client import QdrantClient
+
+    from hello_agents.memory.rag.qdrant_pipeline import QdrantRAGPipeline
+    from hello_agents.tools.builtin.rag_context import citation_id
+
+    _, cases = load_gold_dataset(HOLDOUT_DATASET.with_name("rag_quality_release.json"))
+    case = next(case for case in cases if case.id == "en-01")
+    client = QdrantClient(":memory:")
+    try:
+        pipeline = QdrantRAGPipeline(qdrant_client=client, rag_namespace=case.namespace)
+        outside = QdrantRAGPipeline(qdrant_client=client, rag_namespace="different-user")
+        pipeline._to_vector = outside._to_vector = lambda _: [1.0] * pipeline.dimension
+        metadata = {"file_name": "Coastal Hub Manual.pdf", "page_number": 3}
+        pipeline.add_text("Current rule: check within 47 minutes.", document_id=case.scope[0], metadata=metadata)
+        outside.add_text("Outside document: 74 minutes.", document_id=case.scope[0], metadata=metadata)
+        hit = pipeline.search(case.question, document_ids=list(case.scope))[0]
+        evidence_id = citation_id(hit)
+        output = {
+            "quotes": [{"id": evidence_id, "quote": "47 minutes"}],
+            "claims": [{"text": "47 minutes", "ids": [evidence_id]}],
+        }
+
+        def generate(prompt):
+            assert "Outside document" not in prompt
+            return json.dumps(output)
+
+        variant = replace(
+            BASELINE, verify_evidence=True, evidence_strategy="single_pass", use_application_engine=True,
+        )
+        row = evaluate_case(pipeline, case, variant, generate=generate, repeats=0)
+        assert row["generation_error"] is None
+        assert row["scope_leaks"] == 0
+        assert row["ranked_chunks"] == [hit["id"]]
+        assert row["citations"]["valid"] == [evidence_id]
+        assert row["sources"][0]["page_number"] == 3
+    finally:
+        client.close()
+
+
+
+@pytest.mark.parametrize("strategy", ["two_pass", "single_pass"])
+@pytest.mark.parametrize("claim", [
+    "Revision 6 does not specify a fixed maximum waiting time.",
+    "The manual gives context, but no published compensation amount is given.",
+    "文档未给出所问的具体阈值。",
+])
+def test_explicitly_undocumented_values_get_a_clean_refusal(strategy, claim):
+    quotes = [{"id": "S-case", "quote": claim}]
+    claims = [{"text": claim, "ids": ["S-case"]}]
+    replies = (
+        [{"quotes": quotes}, {"claims": claims}]
+        if strategy == "two_pass" else [{"quotes": quotes, "claims": claims}]
+    )
+    outputs = iter(map(json.dumps, replies))
+    result = grounded_answer(
+        lambda _: next(outputs), "What is the value?", "", "Source",
+        [{"citation_id": "S-case", "content": claim}], strategy=strategy,
+    )
+    assert "资料中没有提到" in result.text
+    assert result.quotes == {}
+
+
+@pytest.mark.parametrize("passage", [
+    "Revision 6 does not require a second check.",
+    "The museum does not provide refunds after admission.",
+])
+def test_negative_requirement_remains_a_cited_answer(passage):
+    result = grounded_answer(
+        lambda _: json.dumps({
+            "quotes": [{"id": "S-case", "quote": passage}],
+            "claims": [{"text": passage, "ids": ["S-case"]}],
+        }),
+        "Does revision 6 require a second check?", "", "Source",
+        [{"citation_id": "S-case", "content": passage}], strategy="single_pass",
+    )
+    assert result.text.endswith("[S-case]")
+    assert result.quotes == {"S-case": passage}
+
+
+
+def test_single_pass_rejects_background_source_on_atomic_claim():
+    passages = {"S-direct": "The access code is ENTRY-A.", "S-context": "The gate is to the north."}
+    sources = [{"citation_id": id_, "content": text} for id_, text in passages.items()]
+    quotes = [{"id": id_, "quote": text} for id_, text in passages.items()]
+    with pytest.raises(EvidenceProtocolError, match="exactly one"):
+        grounded_answer(
+            lambda _: json.dumps({
+                "quotes": quotes,
+                "claims": [{"text": "ENTRY-A", "ids": ["S-direct", "S-context"]}],
+            }),
+            "What is the access code?", "", "Source", sources, strategy="single_pass",
+        )
+
+
+def test_question_about_whether_a_value_is_documented_can_cite_its_absence():
+    passage = "The manual does not specify a fixed waiting time."
+    result = grounded_answer(
+        lambda _: json.dumps({
+            "quotes": [{"id": "S-case", "quote": passage}],
+            "claims": [{"text": passage, "ids": ["S-case"]}],
+        }),
+        "Does the manual specify a waiting time?", "", "Source",
+        [{"citation_id": "S-case", "content": passage}], strategy="single_pass",
+    )
+    assert result.text.endswith("[S-case]")
+    assert result.quotes == {"S-case": passage}

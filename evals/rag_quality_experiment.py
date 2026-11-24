@@ -32,6 +32,7 @@ class Variant:
     generate: bool = True
     verify_evidence: bool = False
     evidence_strategy: str = "two_pass"
+    use_application_engine: bool = False
 
     def search_options(self):
         return {
@@ -229,11 +230,35 @@ def _measure_qa(pipeline, case, variant, options, generate):
     generator = TrialGenerator(generate, variant.cite)
     tool.llm = generator
     started = perf_counter()
-    result = tool.execute_result(
-        "ask", mode="joint", graph_mode="off", verify_evidence=variant.verify_evidence,
-        evidence_strategy=variant.evidence_strategy, **options,
-    )
+    if variant.use_application_engine:
+        result = _application_qa(tool, case, variant)
+    else:
+        result = tool.execute_result(
+            "ask", mode="joint", graph_mode="off", verify_evidence=variant.verify_evidence,
+            evidence_strategy=variant.evidence_strategy, **options,
+        )
     return generator, result, (perf_counter() - started) * 1000, qa_retrieval_ms, hits
+
+
+def _application_qa(tool, case, variant):
+    from dataclasses import asdict
+
+    from app.qa_answer_engine import QaAnswerRequest, QaEngineError, RagQaAnswerEngine
+
+    engine = RagQaAnswerEngine(
+        verify_evidence=variant.verify_evidence, evidence_strategy=variant.evidence_strategy,
+    )
+    try:
+        result = engine.answer(
+            SimpleNamespace(rag_tool=tool),
+            QaAnswerRequest(case.question, "", case.scope, mode="joint"),
+        )
+    except QaEngineError as exc:
+        return SimpleNamespace(message="", error_code=exc.code, data=tool._last_action_data)
+    return SimpleNamespace(
+        message=result.answer, error_code=None,
+        data={**tool._last_action_data, "sources": [asdict(source) for source in result.sources]},
+    )
 
 
 class RemoteEmbedder:

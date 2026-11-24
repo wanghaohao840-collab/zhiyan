@@ -55,3 +55,13 @@
 使用同一份 24 道独立题和同一个聊天模型，交错执行两组。比较完整问答 P95、每题模型调用次数、原文引用覆盖、可答题准确率和干净拒答率。每题只做一次真实检索，问答使用远程 BGE-M3 的当次结果。报告独立记录可用性、质量及延迟，完整逐题输出保存在结果目录。
 
 应用中可将 `RAG_QA_VERIFY_EVIDENCE=1` 和 `RAG_QA_EVIDENCE_STRATEGY=single_pass` 一起配置。校验开启时默认策略为 `two_pass`。
+
+### 应用入口上线前验收
+
+使用下一批预先标注的 16 道双语题和 40 个片段，从实际应用问答适配器进入，按应用的默认向量检索参数比较单次与双次校验。语料写入临时 JSON 索引。测试覆盖内存 Qdrant 中跨用户空间的同一文档 ID 隔离及来源字段。
+
+~~~powershell
+.\venv\Scripts\python.exe -m evals.rag_quality_holdout --grounding-release --embedding-env-file deploy/.env --chat-env-file .env --output-dir output/rag-grounding-release
+~~~
+
+结果包含两组完整问答耗时、回查成功率、事实引用覆盖和额外背景引用。候选组需保持可答准确率和干净拒答率，并为全部标注事实提供对应证据。直接命中标注证据的引用占比需达到 95%，完整问答 P95 需低于同轮双次调用。脚本只运行隔离评测。
