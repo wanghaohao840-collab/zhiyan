@@ -26,6 +26,7 @@ class SummaryState(TypedDict, total=False):
     failures: dict[str, str]
     mapped: list[dict[str, Any]]
     retryable: bool
+    incomplete_output: bool
     error: str
     answer: str
     truncated: bool

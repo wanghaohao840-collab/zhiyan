@@ -843,3 +843,113 @@ def test_summary_shutdown_does_not_commit_inflight_answer(worker_parts):
     assert jobs.recover_expired(now=job.lease_expires_at) == 1
     assert jobs.get(OWNER, job.id).status == "queued"
     assert registry.acquired == registry.released == [OWNER]
+
+
+@pytest.mark.parametrize("enable", [False, True])
+@pytest.mark.parametrize(("stage", "finish_reason"), [
+    ("map", "length"), ("reduce", "length"), ("reduce", "content_filter"),
+    ("reduce", "tool_calls"), ("reduce", "function_call"),
+])
+def test_summary_does_not_save_incomplete_model_output(
+    worker_parts, monkeypatch, caplog, enable, stage, finish_reason
+):
+    qa, jobs, _ = worker_parts
+    pool, registry, queued = start_multi_summary(
+        worker_parts, SummaryPipeline(), enable=enable
+    )
+    monkeypatch.setenv("SUMMARY_MAP_MAX_OUTPUT_TOKENS", "640")
+    monkeypatch.setenv("SUMMARY_REDUCE_MAX_OUTPUT_TOKENS", "1280")
+    llm = HelloAgentsLLM(max_retries=2, retry_backoff=0)
+    calls = []
+
+    def create(messages, max_tokens, **kwargs):
+        current = "map" if "请仅根据以下资料总结文档" in messages[-1]["content"] else "reduce"
+        calls.append((current, max_tokens))
+        invalid = current == stage
+        content = None if invalid and stage == "map" else (
+            "TRUNCATED_OUTPUT_SENTINEL" if invalid else "模型摘要已生成。"
+        )
+        return SimpleNamespace(choices=[SimpleNamespace(
+            finish_reason=finish_reason if invalid else "stop",
+            message=SimpleNamespace(content=content, reasoning_content="PRIVATE_REASONING"),
+        )])
+
+    llm.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    tool = registry.runtime.rag_tool
+    tool.llm = llm
+    reserves = []
+    context_budget = tool._context_budget
+
+    def budget(fixed_prompt, *, output_reserve=1024):
+        reserves.append(output_reserve)
+        return context_budget(fixed_prompt, output_reserve=output_reserve)
+
+    monkeypatch.setattr(tool, "_context_budget", budget)
+    claimed = jobs.claim_next("test-worker", lease_seconds=60)
+    pool.lease_seconds = 60
+    pool._run_job("test-worker", claimed)
+
+    job = jobs.get(OWNER, queued.job.id)
+    answer = qa.get_message(OWNER, queued.pending.assistant_message.id)
+    assert job.status == answer.status == "failed"
+    assert job.safe_error_code == answer.safe_error_code == "QA_SUMMARY_INCOMPLETE"
+    assert job.attempt_count == 1
+    assert not answer.content and not answer.sources
+    assert calls == ([("map", 640)] * 2 + ([("reduce", 1280)] if stage == "reduce" else []))
+    assert reserves == ([640] * 2 + ([1280] if stage == "reduce" else []))
+    assert len(tool._document_summary_cache) == (2 if stage == "reduce" else 0)
+    assert "TRUNCATED_OUTPUT_SENTINEL" not in caplog.text
+    assert "PRIVATE_REASONING" not in caplog.text
+
+
+@pytest.mark.parametrize("reason", ["stop", None])
+def test_summary_reuses_only_completed_maps_at_the_same_budget(monkeypatch, reason):
+    monkeypatch.delenv("SUMMARY_MAP_MAX_OUTPUT_TOKENS", raising=False)
+    monkeypatch.delenv("SUMMARY_REDUCE_MAX_OUTPUT_TOKENS", raising=False)
+    runtime = summary_runtime(SummaryPipeline())
+    llm = HelloAgentsLLM()
+    calls = []
+
+    def create(messages, max_tokens, **kwargs):
+        prompt = messages[-1]["content"]
+        calls.append(max_tokens)
+        is_bad_map = "请仅根据以下资料总结文档 doc-1。" in prompt
+        choice = SimpleNamespace(message=SimpleNamespace(content="前半句"))
+        if reason:
+            choice.finish_reason = reason
+        if is_bad_map:
+            choice.finish_reason = "length"
+        return SimpleNamespace(choices=[choice])
+
+    llm.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    runtime.rag_tool.llm = llm
+    engine = RagQaAnswerEngine(enable_summary_workflow=True)
+    request = QaAnswerRequest("概括", "", ("doc-0", "doc-1"), "summary")
+
+    for expected_calls in (3, 2):
+        calls.clear()
+        answer = engine.answer(runtime, request)
+        assert calls == [1024] * expected_calls
+        assert {source.document_id for source in answer.sources} == {"doc-0"}
+        assert "以下文档未纳入本次总结：doc-1" in answer.answer
+
+    monkeypatch.setenv("SUMMARY_MAP_MAX_OUTPUT_TOKENS", "640")
+    calls.clear()
+    engine.answer(runtime, request)
+    assert calls == [640, 640, 1024]
+    assert len(runtime.rag_tool._document_summary_cache) == 2
+
+
+@pytest.mark.parametrize("limit", ["invalid", "0", "8193", "4096"])
+def test_summary_rejects_invalid_budget_before_model_calls(monkeypatch, limit):
+    monkeypatch.setenv("SUMMARY_MAP_MAX_OUTPUT_TOKENS", limit)
+    runtime = summary_runtime(SummaryPipeline())
+    llm = runtime.rag_tool.llm
+    llm.context_window_tokens = 4096
+    request = QaAnswerRequest("概括", "", ("doc-0", "doc-1"), "summary")
+
+    with pytest.raises(QaEngineError) as failure:
+        RagQaAnswerEngine().answer(runtime, request)
+
+    assert not failure.value.retryable
+    assert not llm.prompts

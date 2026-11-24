@@ -42,7 +42,6 @@ from hello_agents.tools.builtin.rag_context import (
     ANSWER_OUTPUT_TOKEN_RESERVE,
     COMPARE_BASE_CHUNKS_PER_DOC,
     COMPARE_EXTRA_CHUNKS_PER_DOC,
-    DOCUMENT_SUMMARY_OUTPUT_TOKEN_RESERVE,
     MAX_SELECTED_DOCUMENTS,
     MIN_TRUNCATED_CHARS,
     SUMMARY_MAX_WORKERS,
@@ -51,6 +50,7 @@ from hello_agents.tools.builtin.rag_context import (
     context_budget,
     estimate_tokens,
     fit_context,
+    summary_output_tokens,
 )
 from hello_agents.tools.builtin.rag_compare import (
     parse_structured_comparison,
@@ -63,6 +63,10 @@ from hello_agents.tools.builtin.rag_summary_workflow import (
     SummaryState,
     run_summary_workflow,
 )
+
+
+class _IncompleteSummaryOutput(RuntimeError):
+    """A completion ended without a usable document summary."""
 
 
 class RAGTool(Tool):
@@ -177,6 +181,7 @@ class RAGTool(Tool):
         query: str,
         limit: int,
         results: List[Dict[str, Any]],
+        max_output_tokens: int,
         graph_mode: str = "off",
         graph_context: Optional[Dict[str, Any]] = None,
     ) -> str:
@@ -198,6 +203,7 @@ class RAGTool(Tool):
             "query": str(query),
             "limit": int(limit),
             "prompt_version": self.SUMMARY_CACHE_PROMPT_VERSION,
+            "max_output_tokens": max_output_tokens,
             "revision": revision_parts,
             "graph_mode": str(graph_mode),
             "graph_context": graph_context or {},
@@ -509,6 +515,8 @@ class RAGTool(Tool):
     def _classify_action_failure(
         failure: BaseException | None, action: str
     ) -> tuple[str, bool]:
+        if isinstance(failure, _IncompleteSummaryOutput):
+            return "QA_SUMMARY_INCOMPLETE", False
         if isinstance(failure, RAGConnectionError):
             return "rag_connection", True
         if isinstance(failure, RAGAuthenticationError):
@@ -2049,7 +2057,9 @@ class RAGTool(Tool):
         result = (fitted.context, fitted.results, fitted.truncated)
         return result if return_details else fitted.context
 
-    def _generate(self, prompt: str, *, strict: bool = False) -> str:
+    def _generate(
+        self, prompt: str, *, strict: bool = False, summary_max_tokens: int | None = None
+    ) -> str:
         capacity_markers = (
             "context length",
             "context window",
@@ -2061,8 +2071,16 @@ class RAGTool(Tool):
             "上下文超限",
         )
         try:
-            if strict and isinstance(self.llm, HelloAgentsLLM):
-                answer = self.llm.generate(prompt, strict=True)
+            generate_with_metadata = getattr(self.llm, "generate_with_metadata", None)
+            if summary_max_tokens is not None and callable(generate_with_metadata):
+                completion = generate_with_metadata(
+                    prompt, max_tokens=summary_max_tokens, strict=strict
+                )
+                if completion.finish_reason == "length":
+                    raise _IncompleteSummaryOutput("模型输出达到额度上限")
+                if completion.finish_reason not in (None, "", "stop"):
+                    raise _IncompleteSummaryOutput("模型未正常结束输出")
+                answer = completion.text
             else:
                 answer = self.llm.generate(prompt)
         except Exception as error:
@@ -2077,10 +2095,10 @@ class RAGTool(Tool):
             raise ContextCapacityError("provider rejected the prompt as too large")
         return answer
 
-    def _generate_summary(self, prompt: str, *, strict: bool) -> str:
-        answer = self._generate(prompt, strict=strict)
+    def _generate_summary(self, prompt: str, *, max_tokens: int, strict: bool) -> str:
+        answer = self._generate(prompt, strict=strict, summary_max_tokens=max_tokens)
         if not answer.strip() or answer.startswith(("[LLM调用失败]", "[LLM未配置]")):
-            raise RAGOperationError("模型未返回可用内容", retryable=False)
+            raise _IncompleteSummaryOutput("模型未返回可用内容")
         return answer
 
     def _format_answer(
@@ -2344,6 +2362,11 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
         use_summary_workflow: bool = False,
         **search_kwargs,
     ) -> str:
+        try:
+            map_max_tokens = summary_output_tokens("map")
+            reduce_max_tokens = summary_output_tokens("reduce")
+        except ContextCapacityError as error:
+            raise RAGConfigError(str(error)) from None
         total_documents = len(document_ids)
         work_aborted = Event()
 
@@ -2437,6 +2460,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 results=doc_results,
                 graph_mode=graph_mode,
                 graph_context=graph_context_by_document.get(doc_id),
+                max_output_tokens=map_max_tokens,
             )
             cached = self._get_cached_document_summary(cache_key)
             if cached is not None:
@@ -2451,10 +2475,13 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 # evidence ahead of equally ranked page samples.
                 item["score"] = lexical_overlap_score(query, item["content"])
 
-            budget = self._context_budget(
-                f"单篇摘要\n文档ID：{doc_id}\n问题：{query}",
-                output_reserve=DOCUMENT_SUMMARY_OUTPUT_TOKEN_RESERVE,
-            )
+            prompt = f"""请仅根据以下资料总结文档 {doc_id}。
+优先提取可直接回答用户问题的事实和规则。用简短要点呈现，每项保留稳定引用 ID，不逐条罗列无关或缺失内容。
+
+用户问题：{query}
+资料：
+"""
+            budget = self._context_budget(prompt, output_reserve=map_max_tokens)
             context, sources, truncated = self._build_context(
                 prepared, token_budget=budget, return_details=True
             )
@@ -2472,14 +2499,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
             graph_sources = self._graph_sources(document_graph_contexts)
             check_cancelled()
             summary = self._generate_summary(
-                f"""请仅根据以下资料总结文档 {doc_id}。
-优先提取可直接回答用户问题的事实和规则。用简短要点呈现，每项保留稳定引用 ID，不逐条罗列无关或缺失内容。
-
-用户问题：{query}
-资料：
-{context}
-""",
-                strict=use_summary_workflow,
+                f"{prompt}{context}\n", max_tokens=map_max_tokens, strict=use_summary_workflow
             )
             check_cancelled()
             first_metadata = sources[0].get("metadata", {}) or {}
@@ -2509,6 +2529,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
             completed = {}
             failures = {}
             retryable = False
+            incomplete_output = False
             remaining = iter(document_ids)
             worker_count = min(SUMMARY_MAX_WORKERS, total_documents)
             executor = ThreadPoolExecutor(max_workers=worker_count)
@@ -2535,6 +2556,9 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                             completed[doc_id] = future.result()
                         except (SummaryCancelled, SummaryProgressAborted):
                             raise
+                        except _IncompleteSummaryOutput as error:
+                            failures[doc_id] = str(error)
+                            incomplete_output = True
                         except ContextCapacityError:
                             failures[doc_id] = "单篇摘要超出当前模型容量"
                         except Exception as error:
@@ -2549,7 +2573,12 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 executor.shutdown(wait=True, cancel_futures=True)
                 work_aborted.clear()
 
-            return {"completed": completed, "failures": failures, "retryable": retryable}
+            return {
+                "completed": completed,
+                "failures": failures,
+                "retryable": retryable,
+                "incomplete_output": incomplete_output,
+            }
 
         def collect(state: SummaryState) -> SummaryState:
             check_cancelled()
@@ -2590,22 +2619,6 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                         "summary": str(item["summary"]),
                     }
                 )
-            try:
-                reduce_budget = self._context_budget(
-                    f"联合总结\n问题：{query}\n缺失：{missing_text}"
-                )
-                summary_context, reduce_truncated = self._fit_summary_context(
-                    summary_parts, reduce_budget
-                )
-                summary_context = self._append_graph_context(
-                    summary_context,
-                    self._format_graph_context(shared_graph_contexts),
-                    token_budget=reduce_budget,
-                )
-            except ContextCapacityError:
-                return {"error": self._capacity_error(), "retryable": False}
-            emit_progress("reducing", total_documents)
-
             prompt = f"""请只基于下列“单篇文档摘要”进行联合总结，不要使用或推测原文。
 
 用户问题：
@@ -2628,14 +2641,42 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
 3. 不得创造引用 ID。
 
 单篇文档摘要：
-{summary_context}
-
-请给出联合总结：
 """
+            suffix = "\n\n请给出联合总结：\n"
             try:
-                answer = self._generate_summary(prompt, strict=use_summary_workflow)
+                reduce_budget = self._context_budget(
+                    prompt + suffix, output_reserve=reduce_max_tokens
+                )
+                summary_context, reduce_truncated = self._fit_summary_context(
+                    summary_parts, reduce_budget
+                )
+                summary_context = self._append_graph_context(
+                    summary_context,
+                    self._format_graph_context(shared_graph_contexts),
+                    token_budget=reduce_budget,
+                )
             except ContextCapacityError:
-                return {"error": self._capacity_error(), "retryable": False}
+                return {
+                    "error": self._capacity_error(),
+                    "retryable": False,
+                    "incomplete_output": False,
+                }
+            emit_progress("reducing", total_documents)
+
+            try:
+                answer = self._generate_summary(
+                    prompt + summary_context + suffix,
+                    max_tokens=reduce_max_tokens,
+                    strict=use_summary_workflow,
+                )
+            except ContextCapacityError:
+                return {
+                    "error": self._capacity_error(),
+                    "retryable": False,
+                    "incomplete_output": False,
+                }
+            except (_IncompleteSummaryOutput, SummaryCancelled, SummaryProgressAborted):
+                raise
             except Exception as error:
                 raise RAGOperationError(
                     "联合总结生成失败",
@@ -2664,9 +2705,11 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
 
         if "error" in state:
             self._last_action_data = {"success": False}
-            self._last_action_error = RAGOperationError(
-                "联合总结无法完成", retryable=state.get("retryable", False)
-            )
+            retryable = state.get("retryable", False)
+            if state.get("incomplete_output", False) and not retryable:
+                self._last_action_error = _IncompleteSummaryOutput("模型未生成完整摘要")
+            else:
+                self._last_action_error = RAGOperationError("联合总结无法完成", retryable=retryable)
             return state["error"]
 
         # The structured result is projected in the tool caller's context.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
 try:
@@ -17,6 +18,12 @@ try:
     from openai import OpenAI
 except Exception:
     OpenAI = None
+
+
+@dataclass(frozen=True)
+class LLMCompletionResult:
+    text: str
+    finish_reason: str | None = None
 
 
 class HelloAgentsLLM:
@@ -185,12 +192,28 @@ class HelloAgentsLLM:
         strict: bool = False,
         **kwargs,
     ) -> str:
+        return self._chat_with_metadata(
+            prompt, system_prompt, temperature, max_tokens,
+            strict=strict, return_errors=True, **kwargs,
+        ).text
+
+    def _chat_with_metadata(
+        self,
+        prompt: Any,
+        system_prompt: str = "你是一个有帮助的AI助手。",
+        temperature: float = 0.2,
+        max_tokens: int = 1024,
+        *,
+        strict: bool = False,
+        return_errors: bool = False,
+        **kwargs,
+    ) -> LLMCompletionResult:
         """Run a chat completion. Strict calls surface failures without retrying."""
 
         if self.client is None:
-            if strict:
+            if strict or not return_errors:
                 raise RuntimeError("LLM client is not configured")
-            return (
+            return LLMCompletionResult(
                 "[LLM未配置] 当前没有可用的大模型客户端。"
                 "请检查 .env 中的 LLM_API_KEY、LLM_BASE_URL、LLM_MODEL_ID。"
             )
@@ -206,15 +229,21 @@ class HelloAgentsLLM:
         for attempt in range(attempts):
             try:
                 response = self._create_completion(messages, **request_kwargs)
-                return self._completion_text(response)
+                reason = getattr(response.choices[0], "finish_reason", None)
+                return LLMCompletionResult(
+                    self._completion_text(response),
+                    reason.strip().lower() if isinstance(reason, str) else None,
+                )
             except Exception as error:
                 if strict:
                     raise
                 if attempt + 1 >= attempts or not self._is_retriable_error(error):
-                    return f"[LLM调用失败] {error}"
+                    if not return_errors:
+                        raise
+                    return LLMCompletionResult(f"[LLM调用失败] {error}")
                 self._sleep_before_retry(attempt + 1)
 
-        return "[LLM调用失败] 未知错误"
+        return LLMCompletionResult("[LLM调用失败] 未知错误")
 
     def stream_invoke(
         self,
@@ -280,6 +309,10 @@ class HelloAgentsLLM:
         """Compatibility wrapper for generate calls."""
 
         return self.chat(prompt, **kwargs)
+
+    def generate_with_metadata(self, prompt: Any, **kwargs) -> LLMCompletionResult:
+        """Generate text with its finish reason, keeping transport errors typed."""
+        return self._chat_with_metadata(prompt, **kwargs)
 
     def think(self, prompt: Any, **kwargs) -> str:
         """Compatibility wrapper for think calls."""

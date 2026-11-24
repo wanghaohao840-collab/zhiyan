@@ -45,6 +45,18 @@ def estimate_tokens(llm: Any, text: str) -> int:
     return len(str(text or ""))
 
 
+def summary_output_tokens(stage: str) -> int:
+    key = f"SUMMARY_{stage.upper()}_MAX_OUTPUT_TOKENS"
+    raw = os.getenv(key, "").strip()
+    try:
+        tokens = int(raw) if raw else 1024
+    except ValueError:
+        raise ContextCapacityError(f"{key} 必须是 256 至 8192 之间的整数") from None
+    if not 256 <= tokens <= 8192:
+        raise ContextCapacityError(f"{key} 必须是 256 至 8192 之间的整数")
+    return tokens
+
+
 def context_budget(
     llm: Any,
     fixed_prompt: str,
