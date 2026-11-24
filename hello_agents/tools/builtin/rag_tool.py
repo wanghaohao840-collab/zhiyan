@@ -33,6 +33,7 @@ from hello_agents.memory.rag.errors import (
 from hello_agents.memory.rag.pipeline import create_rag_pipeline
 from hello_agents.memory.rag.prepare import report_progress
 from hello_agents.memory.rag.result_utils import (
+    lexical_overlap_score,
     normalize_document_scope,
     resolve_qa_mode,
 )
@@ -76,7 +77,7 @@ class RAGTool(Tool):
     - clear：清空知识库
     """
 
-    SUMMARY_CACHE_PROMPT_VERSION = "document-summary-v1"
+    SUMMARY_CACHE_PROMPT_VERSION = "document-summary-v3"
     SUMMARY_CACHE_MAX_ENTRIES = 256
 
     def __init__(
@@ -2446,6 +2447,9 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
             anchor_indexes = {0, len(prepared) // 2, len(prepared) - 1}
             for index, item in enumerate(prepared):
                 item["_protected"] = index in anchor_indexes
+                # When the budget removes chunks, keep the user's requested
+                # evidence ahead of equally ranked page samples.
+                item["score"] = lexical_overlap_score(query, item["content"])
 
             budget = self._context_budget(
                 f"单篇摘要\n文档ID：{doc_id}\n问题：{query}",
@@ -2469,7 +2473,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
             check_cancelled()
             summary = self._generate_summary(
                 f"""请仅根据以下资料总结文档 {doc_id}。
-保留关键事实后的稳定引用 ID，不得引用未提供的资料。
+优先提取可直接回答用户问题的事实和规则。用简短要点呈现，每项保留稳定引用 ID，不逐条罗列无关或缺失内容。
 
 用户问题：{query}
 资料：
@@ -2510,6 +2514,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
             executor = ThreadPoolExecutor(max_workers=worker_count)
 
             def submit(doc_id: str):
+                check_cancelled()
                 return executor.submit(
                     copy_context().run,
                     build_document_summary,
@@ -2611,6 +2616,8 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
 2. 跨文档共同主题
 3. 重要差异或互补信息
 4. 综合结论
+
+第 1 节每篇最多两句。第 2–4 节各写最多两条新增要点，避免重复同一事实。优先回答用户的具体问题。
 
 缺失或失败文档：
 {missing_text}

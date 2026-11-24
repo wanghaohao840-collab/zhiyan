@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -462,10 +463,12 @@ def test_real_summary_worker_projects_sources_and_persists_progress(
     progress = []
 
     def record(*args, **kwargs):
-        progress.append((kwargs["progress"], kwargs["stage"]))
+        if "progress" in kwargs:
+            progress.append((kwargs["progress"], kwargs["stage"]))
         return heartbeat(*args, **kwargs)
 
     monkeypatch.setattr(jobs, "heartbeat", record)
+    pool.lease_seconds = 60
     claimed = jobs.claim_next("test-worker", lease_seconds=60)
     pool._run_job("test-worker", claimed)
 
@@ -504,7 +507,7 @@ def test_real_summary_cancellation_stops_replenishing_map(
     heartbeat = jobs.heartbeat
 
     def cancel_after_first_map(*args, **kwargs):
-        if kwargs["stage"] == "mapping" and kwargs["progress"] > 1:
+        if kwargs.get("stage") == "mapping" and kwargs["progress"] > 1:
             jobs.request_cancel(OWNER, queued.job.id)
         return heartbeat(*args, **kwargs)
 
@@ -691,4 +694,152 @@ def test_summary_job_rejects_late_result_after_lease_takeover(
     assert job.status == message.status == "completed"
     assert message.content == "new result"
     assert not message.sources
+    assert registry.acquired == registry.released == [OWNER]
+
+
+def test_slow_summary_keeps_lease_without_progress_events(worker_parts, monkeypatch):
+    qa, jobs, conversation = worker_parts
+    queued = jobs.create_summary_turn_and_job(OWNER, conversation.id, "总结", "slow")
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(qa_job_repository_module, "_utc_now", lambda: now.isoformat())
+    engine = Engine(block=True)
+    pool, _ = make_pool(worker_parts, engine)
+    pool.lease_seconds = 1
+    claimed = jobs.claim_next("slow-worker", lease_seconds=1)
+    renewed = threading.Event()
+    heartbeat = jobs.heartbeat
+
+    def observe(*args, **kwargs):
+        accepted = heartbeat(*args, **kwargs)
+        if accepted and kwargs.get("progress") is None:
+            renewed.set()
+        return accepted
+
+    monkeypatch.setattr(jobs, "heartbeat", observe)
+    worker = threading.Thread(target=pool._run_job, args=("slow-worker", claimed))
+    worker.start()
+    try:
+        assert engine.started.wait(2)
+        now += timedelta(milliseconds=750)
+        assert renewed.wait(1.5), "slow call did not renew its lease"
+        now += timedelta(milliseconds=500)
+        assert jobs.claim_next("other-worker", lease_seconds=1) is None
+    finally:
+        engine.release.set()
+        worker.join(4)
+    assert not worker.is_alive()
+    job = jobs.get(OWNER, queued.job.id)
+    assert job.status == "completed"
+    assert job.attempt_count == 1
+    assert qa.get_message(OWNER, queued.pending.assistant_message.id).status == "completed"
+
+
+
+def test_summary_renewal_retries_contention_without_losing_progress(worker_parts, monkeypatch):
+    _, jobs, conversation = worker_parts
+    queued = jobs.create_summary_turn_and_job(OWNER, conversation.id, "总结", "busy")
+    engine = Engine(block=True)
+    pool, _ = make_pool(worker_parts, engine)
+    pool.lease_seconds = 2
+    claimed = jobs.claim_next("test-worker", lease_seconds=2)
+    assert jobs.heartbeat(
+        claimed.id, "test-worker", progress=39, stage="mapping", attempt=1
+    )
+    busy = threading.Event()
+    renewed = threading.Event()
+    heartbeat = jobs.heartbeat
+
+    def observe(*args, **kwargs):
+        try:
+            accepted = heartbeat(*args, **kwargs)
+        except sqlite3.OperationalError:
+            busy.set()
+            raise
+        if accepted and "progress" not in kwargs:
+            renewed.set()
+        return accepted
+
+    monkeypatch.setattr(jobs, "heartbeat", observe)
+    blocker = connect(jobs.db_path)
+    worker = threading.Thread(target=pool._run_job, args=("test-worker", claimed))
+    worker.start()
+    try:
+        assert engine.started.wait(2)
+        blocker.execute("begin immediate")
+        try:
+            assert busy.wait(2)
+        finally:
+            blocker.rollback()
+        assert renewed.wait(2)
+        job = jobs.get(OWNER, queued.job.id)
+        assert (job.progress, job.stage, job.attempt_count) == (39, "mapping", 1)
+    finally:
+        blocker.close()
+        engine.release.set()
+        worker.join(4)
+    assert not worker.is_alive()
+    assert jobs.get(OWNER, queued.job.id).status == "completed"
+
+
+def test_renewal_observes_running_cancel_without_new_progress(worker_parts):
+    qa, jobs, conversation = worker_parts
+    queued = jobs.create_summary_turn_and_job(OWNER, conversation.id, "总结", "cancel")
+    engine_entered = threading.Event()
+    engine_stopped = threading.Event()
+
+    class CancelAwareEngine:
+        def answer(self, runtime, request, *, cancel_event, **kwargs):
+            engine_entered.set()
+            try:
+                wait_for(cancel_event.is_set, timeout=3)
+            finally:
+                engine_stopped.set()
+            return QaAnswerResult("must not commit", (), "summary")
+
+    pool, _ = make_pool(worker_parts, CancelAwareEngine())
+    pool.lease_seconds = 1
+    claimed = jobs.claim_next("test-worker", lease_seconds=1)
+    worker = threading.Thread(target=pool._run_job, args=("test-worker", claimed))
+    worker.start()
+    try:
+        assert engine_entered.wait(2)
+        jobs.request_cancel(OWNER, queued.job.id)
+        assert engine_stopped.wait(2)
+    finally:
+        worker.join(4)
+    assert not worker.is_alive()
+    assert jobs.get(OWNER, queued.job.id).status == "cancelled"
+    assert qa.get_message(OWNER, queued.pending.assistant_message.id).status == "cancelled"
+
+
+def test_summary_shutdown_does_not_commit_inflight_answer(worker_parts):
+    qa, jobs, conversation = worker_parts
+    queued = jobs.create_summary_turn_and_job(OWNER, conversation.id, "总结", "shutdown")
+    engine_entered = threading.Event()
+    release = threading.Event()
+
+    class ClosingEngine:
+        def answer(self, runtime, request, *, cancel_event, **kwargs):
+            engine_entered.set()
+            assert release.wait(4)
+            assert cancel_event.is_set()
+            return QaAnswerResult("must not commit", (), "summary")
+
+    pool, registry = make_pool(worker_parts, ClosingEngine())
+    pool.lease_seconds = 60
+    pool.start()
+    try:
+        assert engine_entered.wait(3)
+        renewal, = [t for t in threading.enumerate() if t.name == "qa-summary-renewal"]
+        pool.stop(wait=False)
+        renewal.join(1.5)
+        assert not renewal.is_alive()
+    finally:
+        release.set()
+        pool.stop()
+    job = jobs.get(OWNER, queued.job.id)
+    assert job.status == "running"
+    assert qa.get_message(OWNER, queued.pending.assistant_message.id).status == "pending"
+    assert jobs.recover_expired(now=job.lease_expires_at) == 1
+    assert jobs.get(OWNER, job.id).status == "queued"
     assert registry.acquired == registry.released == [OWNER]

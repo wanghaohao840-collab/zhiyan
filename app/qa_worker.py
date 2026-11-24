@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import logging
 import queue
+import sqlite3
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Protocol, Sequence
+from time import monotonic
+from typing import Iterator, Protocol, Sequence
 from uuid import uuid4
 
 from app.qa_answer_engine import QaAnswerEngine, QaAnswerRequest, QaEngineError
@@ -19,6 +22,16 @@ from hello_agents.tools.builtin.rag_summary_workflow import SummaryProgressAbort
 
 
 logger = logging.getLogger(__name__)
+
+
+def _is_sqlite_lock_error(error: sqlite3.OperationalError) -> bool:
+    code = getattr(error, "sqlite_errorcode", None)
+    if code is not None:
+        return code & 255 in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+    # Python 3.10 does not expose SQLite result codes on exceptions.
+    return str(error).startswith(
+        ("database is locked", "database table is locked", "database schema is locked")
+    )
 
 
 class QaConversationSummarizer(Protocol):
@@ -51,6 +64,15 @@ class LlmQaConversationSummarizer:
 
 class _LeaseLost(SummaryProgressAborted):
     pass
+
+
+@dataclass(frozen=True)
+class _SummaryCancellation:
+    shutdown: threading.Event
+    lease_lost: threading.Event
+
+    def is_set(self) -> bool:
+        return self.shutdown.is_set() or self.lease_lost.is_set()
 
 
 @dataclass(frozen=True)
@@ -163,32 +185,45 @@ class QaWorkerPool:
 
     def _run_job(self, worker_id: str, job: QaJob) -> None:
         runtime = None
+        cancel = _SummaryCancellation(self._stop, threading.Event())
+        attempt = job.attempt_count
         try:
-            conversation = self.qa_repository.get_conversation(
-                job.user_id, job.conversation_id
-            )
-            input_message = self.qa_repository.get_message(
-                job.user_id, job.input_message_id
-            )
-            assistant = self.qa_repository.get_message(
-                job.user_id, job.assistant_message_id
-            )
-            if conversation is None or input_message is None or assistant is None:
-                return
-            runtime = self.runtime_registry.acquire_background(job.user_id)
-            result = self.answer_engine.answer(
-                runtime,
-                QaAnswerRequest(
-                    question=input_message.content,
-                    conversation_context="",
-                    document_ids=tuple(
-                        item.document_id for item in conversation.documents
+            with self._renew_summary_lease(worker_id, job, cancel):
+                if cancel.is_set():
+                    return
+                conversation = self.qa_repository.get_conversation(
+                    job.user_id, job.conversation_id
+                )
+                input_message = self.qa_repository.get_message(
+                    job.user_id, job.input_message_id
+                )
+                assistant = self.qa_repository.get_message(
+                    job.user_id, job.assistant_message_id
+                )
+                if conversation is None or input_message is None or assistant is None:
+                    return
+                runtime = self.runtime_registry.acquire_background(job.user_id)
+                if cancel.lease_lost.is_set():
+                    raise _LeaseLost()
+                if self._stop.is_set():
+                    return
+                result = self.answer_engine.answer(
+                    runtime,
+                    QaAnswerRequest(
+                        question=input_message.content,
+                        conversation_context="",
+                        document_ids=tuple(
+                            item.document_id for item in conversation.documents
+                        ),
+                        mode="summary",
                     ),
-                    mode="summary",
-                ),
-                progress_callback=self._progress_callback(worker_id, job),
-                cancel_event=self._stop,
-            )
+                    progress_callback=self._progress_callback(worker_id, job, cancel),
+                    cancel_event=cancel,
+                )
+            if cancel.lease_lost.is_set():
+                raise _LeaseLost()
+            if self._stop.is_set():
+                return
             self.job_repository.commit_answer(
                 job.id,
                 worker_id,
@@ -196,15 +231,16 @@ class QaWorkerPool:
                 result.answer,
                 result.sources,
                 "available" if result.sources else "none",
+                attempt=attempt,
+                stop_requested=self._stop.is_set,
             )
-        except _LeaseLost:
-            # A cancellation request deliberately makes heartbeat return false.
-            # ``complete`` converts that still-owned cancelled lease into the
-            # terminal cancelled job/message; a genuinely stale owner remains
-            # a no-op.
-            self.job_repository.complete(job.id, worker_id)
-            return
         except Exception as error:
+            if isinstance(error, _LeaseLost) or cancel.lease_lost.is_set():
+                # Only the owner of a still-live cancelled attempt can finalize it.
+                self.job_repository.complete(job.id, worker_id, attempt=attempt)
+                return
+            if self._stop.is_set():
+                return
             code, retryable = QaService._safe_engine_failure(error)
             try:
                 self.job_repository.fail_or_retry(
@@ -213,6 +249,7 @@ class QaWorkerPool:
                     code,
                     str(uuid4()),
                     retryable=retryable,
+                    attempt=attempt,
                 )
             except Exception:
                 logger.warning("QA job failure transition lost", extra={"job_id": job.id})
@@ -220,7 +257,55 @@ class QaWorkerPool:
             if runtime is not None:
                 self.runtime_registry.release_background(job.user_id)
 
-    def _progress_callback(self, worker_id: str, job: QaJob):
+    @contextmanager
+    def _renew_summary_lease(
+        self, worker_id: str, job: QaJob, cancel: _SummaryCancellation
+    ) -> Iterator[None]:
+        done = threading.Event()
+        interval = self.lease_seconds / 3
+
+        def renew() -> None:
+            next_renewal = monotonic() + interval
+            renewal_deadline = monotonic() + self.lease_seconds
+            while not cancel.is_set():
+                remaining = next_renewal - monotonic()
+                if done.wait(min(0.2, max(0, remaining))) or cancel.is_set():
+                    return
+                if monotonic() < next_renewal:
+                    continue
+                started = monotonic()
+                try:
+                    if not self.job_repository.heartbeat(
+                        job.id, worker_id, attempt=job.attempt_count
+                    ):
+                        cancel.lease_lost.set()
+                        return
+                except sqlite3.OperationalError as error:
+                    if _is_sqlite_lock_error(error):
+                        if monotonic() < renewal_deadline:
+                            next_renewal = min(renewal_deadline, monotonic() + interval / 4)
+                            continue
+                    cancel.lease_lost.set()
+                    logger.warning("QA summary lease renewal failed", extra={"job_id": job.id})
+                    return
+                except Exception:
+                    cancel.lease_lost.set()
+                    logger.warning("QA summary lease renewal failed", extra={"job_id": job.id})
+                    return
+                renewal_deadline = started + self.lease_seconds
+                next_renewal = started + interval
+
+        thread = threading.Thread(target=renew, name="qa-summary-renewal")
+        thread.start()
+        try:
+            yield
+        finally:
+            done.set()
+            thread.join()
+
+    def _progress_callback(
+        self, worker_id: str, job: QaJob, cancel: _SummaryCancellation
+    ):
         def update(
             stage: str,
             completed: int,
@@ -229,6 +314,8 @@ class QaWorkerPool:
             *,
             document_id: str | None = None,
         ) -> None:
+            if cancel.is_set():
+                raise _LeaseLost()
             ratio = 0.0 if total <= 0 else min(1.0, max(0.0, completed / total))
             progress = min(95, max(1, int(ratio * 95)))
             if not self.job_repository.heartbeat(
@@ -236,7 +323,9 @@ class QaWorkerPool:
                 worker_id,
                 progress=progress,
                 stage=str(stage or "generating")[:100],
+                attempt=job.attempt_count,
             ):
+                cancel.lease_lost.set()
                 raise _LeaseLost()
 
         return update

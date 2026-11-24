@@ -80,6 +80,32 @@ class PipelineMultiDocumentTests(unittest.TestCase):
 
         self.assertEqual(len(results), 2)
 
+    def test_summary_sampling_uses_spare_slots_for_later_chunks(self):
+        pipeline = self.make_pipeline()
+        for page, contents in (
+            (1, ["page one first", "page one later"]),
+            (2, ["page two first", "page two later"]),
+            (3, ["page three first", "page three later"]),
+        ):
+            for content in contents:
+                pipeline.add_text(
+                    content,
+                    document_id="sample",
+                    metadata={"page_number": page},
+                    replace_existing=False,
+                )
+        pipeline.add_text("outside", document_id="other", metadata={"page_number": 1})
+
+        self.assertEqual(
+            [item["content"] for item in pipeline.get_document_summary_context("sample", 2)],
+            ["page one first", "page three first"],
+        )
+        self.assertEqual(
+            [item["content"] for item in pipeline.get_document_summary_context("sample", 5)],
+            ["page one first", "page one later", "page two first",
+             "page two later", "page three first"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
