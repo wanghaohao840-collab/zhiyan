@@ -8,7 +8,7 @@
 
 ## 查看运行情况
 
-设 `hello_agents.tools.builtin.rag_summary_workflow` 日志记录器为 `INFO` 并配置输出。日志可按 `run_id` 聚合，包含阶段、运行结果、时长、文档计数、缓存命中数和截断状态。日志事件用于观察执行阶段，后台任务页面显示最终任务状态。
+设 `hello_agents.tools.builtin.rag_summary_workflow` 日志记录器为 `INFO` 并配置输出。用后台任务返回的 `job_id` 查找日志，按 `attempt` 区分领取次数，再用 `run_id` 聚合本次四个阶段。顺序执行、LangGraph 和调试降级路径分别记录 `direct`、`langgraph` 和 `langgraph_debug_fallback`。日志还记录耗时、文档计数、缓存命中和裁剪状态。模型未正常结束时只记录固定分类，逐篇异常按类别计数。任务最终状态以后台任务接口为准。
 
 试点关闭 LangSmith 外部追踪。进程若启用了 LangChain 全局调试输出，该次调用改走相同的顺序执行阶段，以免框架调试输出文档内容。
 

@@ -15,6 +15,8 @@ class QaAnswerRequest:
     mode: QaMode
     limit: int = 5
     structured_output: bool = False
+    job_id: str | None = None
+    attempt: int | None = None
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,10 @@ class RagQaAnswerEngine:
             and len(request.document_ids) > 1
         ):
             kwargs["use_summary_workflow"] = True
+
+        if request.mode == "summary" and request.job_id is not None:
+            kwargs["summary_job_id"] = request.job_id
+            kwargs["summary_attempt"] = request.attempt
 
         result = runtime.rag_tool.execute_result("ask", **kwargs)
         if not result.success:

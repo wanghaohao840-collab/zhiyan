@@ -8,6 +8,7 @@ import itertools
 import json
 import os
 import re
+from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextvars import ContextVar, copy_context
 from inspect import Parameter, signature
@@ -59,15 +60,12 @@ from hello_agents.tools.builtin.rag_compare import (
 )
 
 from hello_agents.tools.builtin.rag_summary_workflow import (
+    IncompleteSummaryOutput,
     SummaryCancelled,
     SummaryProgressAborted,
     SummaryState,
     run_summary_workflow,
 )
-
-
-class _IncompleteSummaryOutput(RuntimeError):
-    """A completion ended without a usable document summary."""
 
 
 class RAGTool(Tool):
@@ -518,7 +516,7 @@ class RAGTool(Tool):
     def _classify_action_failure(
         failure: BaseException | None, action: str
     ) -> tuple[str, bool]:
-        if isinstance(failure, _IncompleteSummaryOutput):
+        if isinstance(failure, IncompleteSummaryOutput):
             return "QA_SUMMARY_INCOMPLETE", False
         if isinstance(failure, RAGConnectionError):
             return "rag_connection", True
@@ -1560,6 +1558,8 @@ class RAGTool(Tool):
                 cancel_event=kwargs.get("cancel_event"),
                 use_summary_workflow=bool(kwargs.get("use_summary_workflow"))
                 and len(scope) > 1,
+                job_id=kwargs.get("summary_job_id"),
+                attempt=kwargs.get("summary_attempt"),
                 graph_mode=graph_mode,
                 graph_node_limit=graph_node_limit,
                 graph_relation_limit=graph_relation_limit,
@@ -2086,9 +2086,11 @@ class RAGTool(Tool):
                     prompt, max_tokens=summary_max_tokens, strict=strict, **model_kwargs
                 )
                 if completion.finish_reason == "length":
-                    raise _IncompleteSummaryOutput("模型输出达到额度上限")
+                    raise IncompleteSummaryOutput("output_truncated")
+                if completion.finish_reason in ("content_filter", "safety", "recitation", "blocked"):
+                    raise IncompleteSummaryOutput("safety_blocked")
                 if completion.finish_reason not in (None, "", "stop"):
-                    raise _IncompleteSummaryOutput("模型未正常结束输出")
+                    raise IncompleteSummaryOutput("abnormal_finish")
                 answer = completion.text
             else:
                 answer = self.llm.generate(prompt, **model_kwargs)
@@ -2111,7 +2113,7 @@ class RAGTool(Tool):
             prompt, strict=strict, summary_max_tokens=max_tokens, summary_model=model
         )
         if not answer.strip() or answer.startswith(("[LLM调用失败]", "[LLM未配置]")):
-            raise _IncompleteSummaryOutput("模型未返回可用内容")
+            raise IncompleteSummaryOutput("empty_output")
         return answer
 
     def _format_answer(
@@ -2398,6 +2400,8 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
         graph_node_limit: int = 8,
         graph_relation_limit: int = 16,
         use_summary_workflow: bool = False,
+        job_id: str | None = None,
+        attempt: int | None = None,
         **search_kwargs,
     ) -> str:
         try:
@@ -2573,7 +2577,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
             completed = {}
             failures = {}
             retryable = False
-            incomplete_output = False
+            output_issues: Counter[str] = Counter()
             remaining = iter(document_ids)
             worker_count = min(SUMMARY_MAX_WORKERS, total_documents)
             executor = ThreadPoolExecutor(max_workers=worker_count)
@@ -2600,9 +2604,9 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                             completed[doc_id] = future.result()
                         except (SummaryCancelled, SummaryProgressAborted):
                             raise
-                        except _IncompleteSummaryOutput as error:
+                        except IncompleteSummaryOutput as error:
                             failures[doc_id] = str(error)
-                            incomplete_output = True
+                            output_issues[error.category] += 1
                         except ContextCapacityError:
                             failures[doc_id] = "单篇摘要超出当前模型容量"
                         except Exception as error:
@@ -2621,7 +2625,8 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 "completed": completed,
                 "failures": failures,
                 "retryable": retryable,
-                "incomplete_output": incomplete_output,
+                "incomplete_output": bool(output_issues),
+                "output_issues": dict(output_issues),
             }
 
         def collect(state: SummaryState) -> SummaryState:
@@ -2704,6 +2709,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                     "error": self._capacity_error(),
                     "retryable": False,
                     "incomplete_output": False,
+                    "error_category": "context_capacity",
                 }
             emit_progress("reducing", total_documents)
 
@@ -2719,8 +2725,9 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                     "error": self._capacity_error(),
                     "retryable": False,
                     "incomplete_output": False,
+                    "error_category": "context_capacity",
                 }
-            except (_IncompleteSummaryOutput, SummaryCancelled, SummaryProgressAborted):
+            except (IncompleteSummaryOutput, SummaryCancelled, SummaryProgressAborted):
                 raise
             except Exception as error:
                 raise RAGOperationError(
@@ -2741,6 +2748,8 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 reduce,
                 use_langgraph=use_summary_workflow,
                 document_count=total_documents,
+                job_id=job_id,
+                attempt=attempt,
             )
             check_cancelled()
         except SummaryCancelled:
@@ -2752,7 +2761,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
             self._last_action_data = {"success": False}
             retryable = state.get("retryable", False)
             if state.get("incomplete_output", False) and not retryable:
-                self._last_action_error = _IncompleteSummaryOutput("模型未生成完整摘要")
+                self._last_action_error = IncompleteSummaryOutput("empty_output")
             else:
                 self._last_action_error = RAGOperationError("联合总结无法完成", retryable=retryable)
             return state["error"]

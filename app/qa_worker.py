@@ -216,6 +216,8 @@ class QaWorkerPool:
                             item.document_id for item in conversation.documents
                         ),
                         mode="summary",
+                        job_id=job.id,
+                        attempt=attempt,
                     ),
                     progress_callback=self._progress_callback(worker_id, job, cancel),
                     cancel_event=cancel,

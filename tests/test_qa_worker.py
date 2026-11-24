@@ -647,18 +647,26 @@ def test_bootstrap_switch_only_applies_to_background_summary(tmp_path, monkeypat
     assert services.qa_worker_pool.answer_engine is services.qa_service.answer_engine is injected
 
 
-def test_summary_graph_avoids_debug_console_output(capsys, monkeypatch):
+def test_summary_graph_avoids_debug_console_output(capsys, monkeypatch, caplog):
     from langchain_core import globals as langchain_globals
 
     monkeypatch.setattr(langchain_globals, "_debug", True)
     runtime = summary_runtime(SummaryPipeline())
-    answer = RagQaAnswerEngine(enable_summary_workflow=True).answer(
-        runtime, QaAnswerRequest("PRIVATE_QUESTION", "", ("doc-0", "doc-1"), "summary")
-    )
+    with caplog.at_level("INFO", logger="hello_agents.tools.builtin.rag_summary_workflow"):
+        answer = RagQaAnswerEngine(enable_summary_workflow=True).answer(
+            runtime, QaAnswerRequest("PRIVATE_QUESTION", "", ("doc-0", "doc-1"), "summary")
+        )
 
     assert "PRIVATE_ANSWER" in answer.answer
     stdout, stderr = capsys.readouterr()
     assert "PRIVATE_" not in stdout + stderr
+    records = [record for record in caplog.records if hasattr(record, "qa_summary_stage")]
+    assert [record.qa_summary_stage for record in records] == [
+        "prepare", "map_documents", "collect", "reduce",
+    ]
+    assert {record.qa_summary_engine for record in records} == {"langgraph_debug_fallback"}
+    assert {record.qa_summary_job_id for record in records} == {None}
+    assert "PRIVATE_" not in caplog.text
 
 
 def test_summary_job_rejects_late_result_after_lease_takeover(
@@ -846,12 +854,17 @@ def test_summary_shutdown_does_not_commit_inflight_answer(worker_parts):
 
 
 @pytest.mark.parametrize("enable", [False, True])
-@pytest.mark.parametrize(("stage", "finish_reason"), [
-    ("map", "length"), ("reduce", "length"), ("reduce", "content_filter"),
-    ("reduce", "tool_calls"), ("reduce", "function_call"),
+@pytest.mark.parametrize(("stage", "finish_reason", "category"), [
+    ("map", "length", "output_truncated"),
+    ("reduce", "length", "output_truncated"),
+    ("reduce", "content_filter", "safety_blocked"),
+    ("reduce", "tool_calls", "abnormal_finish"),
+    ("reduce", "function_call", "abnormal_finish"),
+    ("reduce", "PRIVATE_FINISH_REASON", "abnormal_finish"),
+    ("reduce", "stop", "empty_output"),
 ])
 def test_summary_does_not_save_incomplete_model_output(
-    worker_parts, monkeypatch, caplog, enable, stage, finish_reason
+    worker_parts, monkeypatch, caplog, enable, stage, finish_reason, category
 ):
     qa, jobs, _ = worker_parts
     pool, registry, queued = start_multi_summary(
@@ -866,7 +879,7 @@ def test_summary_does_not_save_incomplete_model_output(
         current = "map" if "请仅根据以下资料总结文档" in messages[-1]["content"] else "reduce"
         calls.append((current, max_tokens))
         invalid = current == stage
-        content = None if invalid and stage == "map" else (
+        content = None if invalid and (stage == "map" or finish_reason == "stop") else (
             "TRUNCATED_OUTPUT_SENTINEL" if invalid else "模型摘要已生成。"
         )
         return SimpleNamespace(choices=[SimpleNamespace(
@@ -887,7 +900,8 @@ def test_summary_does_not_save_incomplete_model_output(
     monkeypatch.setattr(tool, "_context_budget", budget)
     claimed = jobs.claim_next("test-worker", lease_seconds=60)
     pool.lease_seconds = 60
-    pool._run_job("test-worker", claimed)
+    with caplog.at_level("INFO", logger="hello_agents.tools.builtin.rag_summary_workflow"):
+        pool._run_job("test-worker", claimed)
 
     job = jobs.get(OWNER, queued.job.id)
     answer = qa.get_message(OWNER, queued.pending.assistant_message.id)
@@ -898,8 +912,27 @@ def test_summary_does_not_save_incomplete_model_output(
     assert calls == ([("map", 640)] * 2 + ([("reduce", 1280)] if stage == "reduce" else []))
     assert reserves == ([640] * 2 + ([1280] if stage == "reduce" else []))
     assert len(tool._document_summary_cache) == (2 if stage == "reduce" else 0)
-    assert "TRUNCATED_OUTPUT_SENTINEL" not in caplog.text
-    assert "PRIVATE_REASONING" not in caplog.text
+    records = [item for item in caplog.records if hasattr(item, "qa_summary_stage")]
+    assert records
+    assert len({item.qa_summary_run_id for item in records}) == 1
+    assert {item.qa_summary_job_id for item in records} == {job.id}
+    assert {item.qa_summary_attempt for item in records} == {1}
+    assert {item.qa_summary_engine for item in records} == {
+        "langgraph" if enable else "direct"
+    }
+    if stage == "map":
+        assert [item.qa_summary_stage for item in records] == ["prepare", "map_documents", "collect"]
+        assert records[1].qa_summary_output_issues == {category: 2}
+    else:
+        assert [item.qa_summary_stage for item in records] == [
+            "prepare", "map_documents", "collect", "reduce",
+        ]
+        assert records[-1].qa_summary_reason == category
+        assert records[-1].qa_summary_status == "error"
+
+    logs = "\n".join(str(item.__dict__) + item.getMessage() for item in records)
+    for value in ("TRUNCATED_OUTPUT_SENTINEL", "PRIVATE_", OWNER, "doc-0"):
+        assert value not in logs
 
 
 @pytest.mark.parametrize("reason", ["stop", None])
@@ -1030,3 +1063,33 @@ def test_invalid_summary_model_is_not_retried_or_replaced(monkeypatch):
     assert not failure.value.retryable
     assert models == ["missing", "missing"]
     assert llm.model == "global-model"
+
+
+def test_summary_retry_logs_are_separated_by_attempt(worker_parts, caplog):
+    qa, jobs, _ = worker_parts
+    pipeline = SummaryPipeline(
+        TimeoutError("PRIVATE_TIMEOUT"), ids_with_errors=("doc-0", "doc-1"),
+    )
+    pool, _, queued = start_multi_summary(worker_parts, pipeline, enable=True)
+    pool.lease_seconds = 60
+
+    with caplog.at_level("INFO", logger="hello_agents.tools.builtin.rag_summary_workflow"):
+        first = jobs.claim_next("same-worker", lease_seconds=60)
+        pool._run_job("same-worker", first)
+        assert jobs.get(OWNER, queued.job.id).status == "queued"
+
+        pipeline.ids_with_errors = frozenset()
+        second = jobs.claim_next("same-worker", lease_seconds=60)
+        pool._run_job("same-worker", second)
+
+    assert jobs.get(OWNER, queued.job.id).status == "completed"
+    assert qa.get_message(OWNER, queued.pending.assistant_message.id).sources
+    records = [item for item in caplog.records if hasattr(item, "qa_summary_stage")]
+    assert {item.qa_summary_job_id for item in records} == {queued.job.id}
+    runs = {
+        index: {item.qa_summary_run_id for item in records if item.qa_summary_attempt == index}
+        for index in (1, 2)
+    }
+    assert len(runs[1]) == len(runs[2]) == 1
+    assert runs[1].isdisjoint(runs[2])
+    assert "PRIVATE_TIMEOUT" not in caplog.text
