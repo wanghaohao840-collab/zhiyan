@@ -35,8 +35,16 @@
 
 ## 3. 排版、字体、图标与动效工艺
 
-- **自托管字体**：使用 `@fontsource-variable/inter` 仅打包拉丁子集 `inter-latin-wght-normal.woff2`（~47KB 同源预加载，零外链），中文优先回退系统原生黑体（`PingFang SC` / `Hiragino Sans GB` / `Microsoft YaHei`）。数字与时间戳统一启用 `tabular-nums`。
+- **自托管双字体（零外链 CDN）**：
+  - 拉丁无衬线：通过 `@fontsource-variable/inter` 仅打包拉丁可变字体子集 `inter-latin-wght-normal.woff2`（~48 KB 同源预加载）；
+  - 中文衬线标题：从开源 OFL `Noto Serif SC` 精确裁剪核心品牌与展示标题汉字为 `zhiyan-serif-subset.woff2`（`14.57 KiB`，`< 15 KB`），通过 `--font-serif` 优先用于登录主标语与哲学箴言；正文中文回退系统原生无衬线体，所有数字与时间戳统一启用 `tabular-nums`。
+- **图像与包体优化**：登录/注册主视觉通过 `<picture>` 按浏览器能力渐进提供自托管 `AVIF`（Style A `49.36 KB` / Style B `22.97 KB`）→ `WebP` → 兜底 `PNG/JPG`；登录后 7 个工作台页面全面接入 `React.lazy + Suspense` 路由级代码分割与侧栏/底栏 `onMouseEnter / onFocus` chunk 预取，并拆分为 `react-vendor` / `query-vendor` / `icons-vendor` / `katex-vendor` / `highlight-vendor` / `markdown-vendor`（首屏业务入口 ~40 KB）。
+- **Web Interface Guidelines 排版与移动端兜底**：
+  - 选中态粗体切换的导航项与标签栏使用 `data-text` + `::after` 隐形伪元素预占 `font-weight: 600` 宽度，零横向抖动；
+  - `user-select: none` 严格仅限定于短标签交互 Chrome（侧栏/底栏导航、按钮、分段切换、标签页、拖拽分隔手柄），文章正文、引用、代码与错误提示均保持可自由划词复制；
+  - `< 768px` 移动端交互表单统一 `font-size: max(1rem, 16px)` 杜绝 iOS Safari 自动放大，同时绝不限制 `user-scalable` / `maximum-scale`。
 - **行高与字重**：UI 控件行高 `1.5`，QA / Notes / Search 长阅读区行高 `1.8`（最大行宽 `680px–720px`）；字重克制使用 `400 / 500 / 600`。
 - **图标体系**：全站统一 `lucide-react` 线性图标，`strokeWidth={1.6}`，装饰图标显式声明 `aria-hidden="true"`。
-- **共享原语**：统一使用 `web/src/components/ui/` 下的 `PageHeader`、`EmptyState`、`Skeleton`、`OverlayDialog`、`StatusBadge`、`ConstellationMark`、`ThemeSwitcher`；所有 5 类弹层/抽屉均收敛至 `OverlayDialog`。
-- **动效工艺（融合 `emil-design-eng`）**：禁用 `transition: all`；交互过渡控制在 `140ms–200ms`；按钮按压提供 `scale(0.98)` 触觉确认；弹层严禁 `scale(0)`，统一柔和淡入与微位移；全局遵守 `prefers-reduced-motion: reduce`。
+- **共享原语**：统一使用 `web/src/components/ui/` 下的 `PageHeader`、`EmptyState`、`Skeleton`（含 `150ms` 防闪显现与 `useDelayedBusy`）、`OverlayDialog`、`StatusBadge`、`ConstellationMark`、`ThemeSwitcher`、`ToastProvider`、`CommandPalette`（全局 `⌘K / Ctrl+K` 0ms 瞬开）、`PaneResizer`（`/qa` 与 `/notes` 三栏可拖拽与键盘调节）、`ErrorBoundary`、`OfflineBanner`。
+- **Markdown 渲染与代码/公式工艺**：`MarkdownPreview` 基于 `rehype-sanitize` 严格白名单后挂载自托管 `KaTeX` 数学公式与 `rehype-highlight` 双模语法高亮（全部映射至 `--color-syntax-*` DTCG Token，零硬编码），代码块带语言顶栏与 `Copy → Check` 160ms 形变一键复制按钮及 Toast 反馈；QA 回答支持正文内联 `[1]` 上标点击直达右侧 `SourcePanel` 自动滚动与脉冲高亮。
+- **动效工艺（融合 `emil-design-eng`）**：禁用 `transition: all`；交互过渡控制在 `140ms–200ms`；按钮按压提供 `scale(0.98)` 触觉确认；`OverlayDialog` 模态使用 `scale(0.96)` + `cubic-bezier(0.23, 1, 0.32, 1)` `180ms`，抽屉/Sheet 使用 `cubic-bezier(0.32, 0.72, 0, 1)` `220ms`；主题切换在支持的浏览器启用 View Transitions API 圆形扩散过渡（`clip-path: circle(...)`），不支持或开启 `prefers-reduced-motion: reduce` 时自动无缝降级。

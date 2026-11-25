@@ -6,6 +6,7 @@ import { BrowserRouter } from "react-router-dom";
 
 import { App } from "./App";
 import { AuthProvider } from "./auth/AuthProvider";
+import { OfflineBanner, ToastProvider } from "./components/ui";
 import { ThemeProvider } from "./theme/ThemeProvider";
 import "./styles/fonts.css";
 import "./styles/tokens.css";
@@ -37,13 +38,16 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ThemeProvider>
-      <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <AuthProvider>
-            <App />
-          </AuthProvider>
-        </BrowserRouter>
-      </QueryClientProvider>
+      <ToastProvider>
+        <OfflineBanner />
+        <QueryClientProvider client={queryClient}>
+          <BrowserRouter>
+            <AuthProvider>
+              <App />
+            </AuthProvider>
+          </BrowserRouter>
+        </QueryClientProvider>
+      </ToastProvider>
     </ThemeProvider>
   </StrictMode>,
 );

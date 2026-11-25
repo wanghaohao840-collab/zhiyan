@@ -1,11 +1,16 @@
-import { ArrowUp, CheckCircle2, Plus } from "lucide-react";
-import { type PropsWithChildren, useRef, useState } from "react";
+import { ArrowDown, ArrowUp, Check, CheckCircle2, Copy, Plus } from "lucide-react";
+import { type PropsWithChildren, useEffect, useRef, useState } from "react";
 import { Button } from "../Button/Button";
 import { MarkdownPreview } from "../MarkdownPreview/MarkdownPreview";
-import { ConstellationMark, OverlayDialog } from "../ui";
+import { ConstellationMark, OverlayDialog, useToast } from "../ui";
 import type { QaConversation, QaJob, QaMessage, QaMode, QaSource } from "../../features/qa/types";
 
-type OverlayProps = PropsWithChildren<{ title: string; className?: string; onClose: () => void; returnFocusTo?: HTMLElement | null }>;
+type OverlayProps = PropsWithChildren<{
+  title: string;
+  className?: string;
+  onClose: () => void;
+  returnFocusTo?: HTMLElement | null;
+}>;
 export function QaOverlay({ title, className = "", onClose, returnFocusTo, children }: OverlayProps) {
   return (
     <OverlayDialog
@@ -34,7 +39,16 @@ type ConversationListProps = {
   onLoadMore?: () => void;
 };
 
-export function ConversationList({ items, selectedId, onSelect, onNew, onDeleteSelected, hasMore, loadingMore, onLoadMore }: ConversationListProps) {
+export function ConversationList({
+  items,
+  selectedId,
+  onSelect,
+  onNew,
+  onDeleteSelected,
+  hasMore,
+  loadingMore,
+  onLoadMore,
+}: ConversationListProps) {
   return (
     <aside className="qa-conversations" aria-label="对话列表">
       <div className="qa-panel-heading">
@@ -67,7 +81,9 @@ export function ConversationList({ items, selectedId, onSelect, onNew, onDeleteS
         </Button>
       ) : null}
       {onDeleteSelected ? (
-        <Button hierarchy="danger" onClick={onDeleteSelected}>删除当前对话</Button>
+        <Button hierarchy="danger" onClick={onDeleteSelected}>
+          删除当前对话
+        </Button>
       ) : null}
     </aside>
   );
@@ -184,6 +200,45 @@ export function MessageList({
   onLoadOlder,
   notesEnabled = true,
 }: MessageListProps) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
+
+  const lastMessageKey = messages.at(-1)
+    ? `${messages.at(-1)!.message_id}:${messages.at(-1)!.status}:${messages.at(-1)!.content.length}`
+    : "";
+
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el || !stickToBottomRef.current) return;
+    if (typeof el.scrollTo === "function") {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [lastMessageKey]);
+
+  function handleScroll() {
+    const el = viewportRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const atBottom = distanceFromBottom <= 72;
+    stickToBottomRef.current = atBottom;
+    setShowScrollBottom(!atBottom);
+  }
+
+  function scrollToBottom() {
+    const el = viewportRef.current;
+    if (!el) return;
+    stickToBottomRef.current = true;
+    setShowScrollBottom(false);
+    if (typeof el.scrollTo === "function") {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
+  }
+
   if (!messages.length) {
     return (
       <div className="qa-welcome">
@@ -194,95 +249,160 @@ export function MessageList({
     );
   }
   return (
-    <>
-      {hasOlder && onLoadOlder ? (
-        <div className="qa-older-action">
-          <Button hierarchy="secondary" disabled={loadingOlder} onClick={onLoadOlder}>
-            {loadingOlder ? "正在加载更早消息…" : "加载更早消息"}
-          </Button>
-        </div>
-      ) : null}
-      <ol className="qa-messages" aria-label="问答消息">
-        {messages.map((message) => (
-          <li
-            key={message.message_id}
-            className={`qa-message qa-message--${message.role}`}
-            data-status={message.status}
-          >
-            <span className="qa-message__role">{message.role === "user" ? "你" : "知研"}</span>
-            {message.role === "assistant" && message.status === "completed" ? (
-              <div className="qa-answer-status">
-                <CheckCircle2 size={14} strokeWidth={1.6} aria-hidden="true" />
-                <span>
-                  {message.sources.length
-                    ? `已完成文档检索与组织 · 参考来源 ${message.sources.length} 条`
-                    : "已完成回答"}
-                </span>
-              </div>
-            ) : null}
-            {message.status === "pending" ? (
-              <p className="qa-message__pending" role="status">正在查找并组织答案…</p>
-            ) : message.role === "assistant" && message.content ? (
-              <div className="qa-message__body">
-                <MarkdownPreview markdown={message.content} />
-              </div>
-            ) : (
-              <p>{message.content || (message.status === "failed" ? "回答失败，原问题已保留。" : "")}</p>
-            )}
-            {message.role === "assistant" ? (
-              <QaStepTrack steps={buildMessageSteps(message)} ariaLabel="回答处理阶段" />
-            ) : null}
-            {message.status === "failed" ? (
-              <div className="qa-message__failure" role="alert">
-                <span>{message.safe_error_code ?? "QA_OPERATION_FAILED"}</span>
-                <Button hierarchy="secondary" disabled={busy} onClick={() => onRetry(message)}>重试回答</Button>
-              </div>
-            ) : null}
-            {message.role === "assistant" && message.sources.length ? (
-              <div className="qa-citation-bar" aria-label="来源引用">
-                <button
-                  type="button"
-                  className="qa-source-trigger"
-                  onClick={(event) => onSources(message, event.currentTarget)}
-                >
-                  引用 {message.sources.length}
-                </button>
-                {message.sources.map((source, index) => (
+    <div className="qa-messages-shell">
+      <div ref={viewportRef} className="qa-messages-viewport" onScroll={handleScroll}>
+        {hasOlder && onLoadOlder ? (
+          <div className="qa-older-action">
+            <Button hierarchy="secondary" disabled={loadingOlder} onClick={onLoadOlder}>
+              {loadingOlder ? "正在加载更早消息…" : "加载更早消息"}
+            </Button>
+          </div>
+        ) : null}
+        <ol className="qa-messages" aria-label="问答消息">
+          {messages.map((message) => (
+            <li
+              key={message.message_id}
+              className={`qa-message qa-message--${message.role}`}
+              data-status={message.status}
+            >
+              <span className="qa-message__role">{message.role === "user" ? "你" : "知研"}</span>
+              {message.role === "assistant" && message.status === "completed" ? (
+                <div className="qa-answer-status">
+                  <CheckCircle2 size={14} strokeWidth={1.6} aria-hidden="true" />
+                  <span>
+                    {message.sources.length
+                      ? `已完成文档检索与组织 · 参考来源 ${message.sources.length} 条`
+                      : "已完成回答"}
+                  </span>
+                </div>
+              ) : null}
+              {message.status === "pending" ? (
+                <p className="qa-message__pending" role="status">
+                  正在查找并组织答案…
+                </p>
+              ) : message.role === "assistant" && message.content ? (
+                <div className="qa-message__body">
+                  <MarkdownPreview
+                    markdown={message.content}
+                    citations={message.sources.map((source, index) => ({
+                      index: index + 1,
+                      citationId: source.citation_id,
+                      label: source.document_name,
+                    }))}
+                    onCitationClick={(citationId, trigger) =>
+                      onSources(message, trigger, citationId)
+                    }
+                  />
+                </div>
+              ) : (
+                <p>
+                  {message.content ||
+                    (message.status === "failed" ? "回答失败，原问题已保留。" : "")}
+                </p>
+              )}
+              {message.role === "assistant" ? (
+                <QaStepTrack steps={buildMessageSteps(message)} ariaLabel="回答处理阶段" />
+              ) : null}
+              {message.status === "failed" ? (
+                <div className="qa-message__failure" role="alert">
+                  <span>{message.safe_error_code ?? "QA_OPERATION_FAILED"}</span>
+                  <Button hierarchy="secondary" disabled={busy} onClick={() => onRetry(message)}>
+                    重试回答
+                  </Button>
+                </div>
+              ) : null}
+              {message.role === "assistant" && message.sources.length ? (
+                <div className="qa-citation-bar" aria-label="来源引用">
                   <button
-                    key={source.citation_id}
                     type="button"
-                    className={`qa-citation-chip${activeCitationId === source.citation_id ? " is-active" : ""}`}
-                    onClick={(event) => onSources(message, event.currentTarget, source.citation_id)}
-                    title={[source.document_name, source.page_number ? `第 ${source.page_number} 页` : null, source.section].filter(Boolean).join(" · ")}
+                    className="qa-source-trigger"
+                    onClick={(event) => onSources(message, event.currentTarget)}
                   >
-                    <span className="qa-citation-chip__num">[{index + 1}]</span>
-                    <span className="qa-citation-chip__name">{source.document_name}</span>
-                    {source.page_number ? <span className="qa-citation-chip__page">P.{source.page_number}</span> : null}
+                    引用 {message.sources.length}
                   </button>
-                ))}
-              </div>
-            ) : null}
-            {notesEnabled && message.role === "assistant" && message.status === "completed" ? (
-              <div className="qa-message__note-actions">
-                <a className="qa-note-action" href={noteDraftHref("qa_answer", message.message_id)}>记为笔记</a>
-              </div>
-            ) : null}
-          </li>
-        ))}
-      </ol>
-    </>
+                  {message.sources.map((source, index) => (
+                    <button
+                      key={source.citation_id}
+                      type="button"
+                      className={`qa-citation-chip${activeCitationId === source.citation_id ? " is-active" : ""}`}
+                      onClick={(event) =>
+                        onSources(message, event.currentTarget, source.citation_id)
+                      }
+                      title={[
+                        source.document_name,
+                        source.page_number ? `第 ${source.page_number} 页` : null,
+                        source.section,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    >
+                      <span className="qa-citation-chip__num">[{index + 1}]</span>
+                      <span className="qa-citation-chip__name">{source.document_name}</span>
+                      {source.page_number ? (
+                        <span className="qa-citation-chip__page">P.{source.page_number}</span>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {notesEnabled && message.role === "assistant" && message.status === "completed" ? (
+                <div className="qa-message__note-actions">
+                  <a
+                    className="qa-note-action"
+                    href={noteDraftHref("qa_answer", message.message_id)}
+                  >
+                    记为笔记
+                  </a>
+                </div>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      </div>
+      {showScrollBottom ? (
+        <button
+          type="button"
+          className="qa-scroll-bottom"
+          aria-label="回到底部查看最新回答"
+          onClick={scrollToBottom}
+        >
+          <ArrowDown size={14} strokeWidth={1.8} aria-hidden="true" />
+          <span>回到底部</span>
+        </button>
+      ) : null}
+    </div>
   );
 }
 
-export function QaComposer({ busy, documentCount, onSubmit }: { busy: boolean; documentCount: number; onSubmit: (question: string, mode: QaMode) => void }) {
+export function QaComposer({
+  busy,
+  documentCount,
+  onSubmit,
+}: {
+  busy: boolean;
+  documentCount: number;
+  onSubmit: (question: string, mode: QaMode) => void;
+}) {
   const text = useRef<HTMLTextAreaElement>(null);
   const mode = useRef<HTMLSelectElement>(null);
+
+  function autoResize() {
+    const el = text.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(180, Math.max(52, el.scrollHeight))}px`;
+  }
+
   function submit() {
     const value = text.current?.value.trim() ?? "";
     if (!value) return;
     onSubmit(value, (mode.current?.value ?? "auto") as QaMode);
-    if (text.current) text.current.value = "";
+    if (text.current) {
+      text.current.value = "";
+      text.current.style.height = "";
+    }
   }
+
   return (
     <div className="qa-composer">
       <label htmlFor="qa-question">向这些文档提问</label>
@@ -293,8 +413,13 @@ export function QaComposer({ busy, documentCount, onSubmit }: { busy: boolean; d
         rows={2}
         placeholder="输入问题，按 Ctrl + Enter 发送…"
         disabled={busy}
+        onInput={autoResize}
         onKeyDown={(event) => {
-          if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
+          if (
+            event.key === "Enter" &&
+            (event.ctrlKey || event.metaKey) &&
+            !event.nativeEvent.isComposing
+          ) {
             event.preventDefault();
             submit();
           }
@@ -304,7 +429,9 @@ export function QaComposer({ busy, documentCount, onSubmit }: { busy: boolean; d
         <select ref={mode} aria-label="回答模式" defaultValue="auto" disabled={busy}>
           <option value="auto">自动</option>
           <option value="joint">联合分析</option>
-          <option value="compare" disabled={documentCount < 2}>对比（需至少两篇文档）</option>
+          <option value="compare" disabled={documentCount < 2}>
+            对比（需至少两篇文档）
+          </option>
         </select>
         <Button loading={busy} onClick={submit}>
           <ArrowUp size={15} strokeWidth={1.6} aria-hidden="true" />
@@ -326,68 +453,117 @@ export function SourcePanel({
   messageId?: string;
   notesEnabled?: boolean;
 }) {
+  const toast = useToast();
+  const listRef = useRef<HTMLOListElement>(null);
   const [feedback, setFeedback] = useState("");
-  async function copyReference(reference: string, index: number) {
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [pulsingId, setPulsingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!activeCitationId || !listRef.current) return;
+    const escaped =
+      typeof CSS !== "undefined" && typeof CSS.escape === "function"
+        ? CSS.escape(activeCitationId)
+        : activeCitationId.replace(/"/g, '\\"');
+    const card = listRef.current.querySelector<HTMLElement>(`li[data-citation-id="${escaped}"]`);
+    if (card) {
+      card.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+      setPulsingId(activeCitationId);
+      const timer = window.setTimeout(() => setPulsingId(null), 900);
+      return () => window.clearTimeout(timer);
+    }
+    return undefined;
+  }, [activeCitationId]);
+
+  async function copyReference(source: QaSource, index: number) {
     try {
       if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
-      await navigator.clipboard.writeText(reference);
-      setFeedback(`引用 ${index + 1} 已复制`);
+      await navigator.clipboard.writeText(source.reference);
+      const msg = `引用 ${index + 1} 已复制`;
+      setFeedback(msg);
+      setCopiedId(source.citation_id);
+      toast.push({ message: `已复制引用 ${index + 1} 到剪贴板`, tone: "success" });
+      window.setTimeout(() => setCopiedId((id) => (id === source.citation_id ? null : id)), 1600);
     } catch {
-      setFeedback("复制失败，请手动选择引用文本");
+      const msg = "复制失败，请手动选择引用文本";
+      setFeedback(msg);
+      toast.push({ message: msg, tone: "danger" });
     }
   }
+
   return (
     <aside className="qa-sources" aria-label="引用来源">
       <div className="qa-sources__header">
         <h2>引用证据</h2>
-        {sources.length ? <span className="qa-sources__count tabular-nums">{sources.length} 条</span> : null}
+        {sources.length ? (
+          <span className="qa-sources__count tabular-nums">{sources.length} 条</span>
+        ) : null}
       </div>
       {sources.length ? (
-        <ol>
-          {sources.map((source, index) => (
-            <li
-              key={source.citation_id}
-              data-citation-id={source.citation_id}
-              className={activeCitationId === source.citation_id ? "is-active" : undefined}
-            >
-              <div className="qa-source-card__top">
-                <span className="qa-source-index tabular-nums">{index + 1}</span>
-                <small className="qa-citation-id">{source.citation_id}</small>
-              </div>
-              <div className="qa-source-card__body">
-                <strong>{source.document_name}</strong>
-                <small>
-                  {[source.page_number ? `第 ${source.page_number} 页` : null, source.section]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </small>
-                <p>{source.excerpt}</p>
-                <code>{source.reference}</code>
-                <div className="qa-source-card__actions">
-                  <button
-                    type="button"
-                    className="qa-source-copy"
-                    onClick={() => void copyReference(source.reference, index)}
-                  >
-                    复制引用 {index + 1}
-                  </button>
-                  {notesEnabled && messageId ? (
-                    <a
-                      className="qa-source-note-link"
-                      href={noteDraftHref("qa_citation", messageId, source.citation_id)}
-                    >
-                      存入笔记
-                    </a>
-                  ) : null}
+        <ol ref={listRef}>
+          {sources.map((source, index) => {
+            const isCopied = copiedId === source.citation_id;
+            const itemClasses = [
+              activeCitationId === source.citation_id ? "is-active" : "",
+              pulsingId === source.citation_id ? "is-pulsing" : "",
+            ]
+              .filter(Boolean)
+              .join(" ");
+            return (
+              <li
+                key={source.citation_id}
+                data-citation-id={source.citation_id}
+                className={itemClasses || undefined}
+              >
+                <div className="qa-source-card__top">
+                  <span className="qa-source-index tabular-nums">{index + 1}</span>
+                  <small className="qa-citation-id">{source.citation_id}</small>
                 </div>
-              </div>
-            </li>
-          ))}
+                <div className="qa-source-card__body">
+                  <strong>{source.document_name}</strong>
+                  <small>
+                    {[
+                      source.page_number ? `第 ${source.page_number} 页` : null,
+                      source.section,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </small>
+                  <p>{source.excerpt}</p>
+                  <code>{source.reference}</code>
+                  <div className="qa-source-card__actions">
+                    <button
+                      type="button"
+                      className={`qa-source-copy${isCopied ? " is-copied" : ""}`}
+                      onClick={() => void copyReference(source, index)}
+                    >
+                      {isCopied ? (
+                        <Check size={13} strokeWidth={1.8} aria-hidden="true" />
+                      ) : (
+                        <Copy size={13} strokeWidth={1.6} aria-hidden="true" />
+                      )}
+                      <span>复制引用 {index + 1}</span>
+                    </button>
+                    {notesEnabled && messageId ? (
+                      <a
+                        className="qa-source-note-link"
+                        href={noteDraftHref("qa_citation", messageId, source.citation_id)}
+                      >
+                        存入笔记
+                      </a>
+                    ) : null}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
         </ol>
       ) : (
         <p className="qa-muted">选择一条含引用的回答后，在这里核对来源。</p>
       )}
-      <p className="qa-copy-feedback" aria-live="polite">{feedback}</p>
+      <p className="qa-copy-feedback" aria-live="polite">
+        {feedback}
+      </p>
     </aside>
   );
 }
@@ -399,7 +575,14 @@ export function SummaryStatus({ job, onCancel }: { job?: QaJob; onCancel: () => 
     <section className="qa-summary-status" data-status={job.status} aria-live="polite">
       <div className="qa-summary-status__head">
         <strong>
-          学习摘要 · {active ? "生成中" : job.status === "completed" ? "已完成" : job.status === "cancelled" ? "已取消" : "失败"}
+          学习摘要 ·{" "}
+          {active
+            ? "生成中"
+            : job.status === "completed"
+              ? "已完成"
+              : job.status === "cancelled"
+                ? "已取消"
+                : "失败"}
         </strong>
         <span className="tabular-nums">
           {job.stage} · {job.progress}%{job.safe_error_code ? ` · ${job.safe_error_code}` : ""}
@@ -409,7 +592,9 @@ export function SummaryStatus({ job, onCancel }: { job?: QaJob; onCancel: () => 
       {active ? (
         <div className="qa-summary-status__actions">
           <span className="qa-summary-status__skeleton" aria-hidden="true" />
-          <Button hierarchy="ghost" onClick={onCancel}>取消生成</Button>
+          <Button hierarchy="ghost" onClick={onCancel}>
+            取消生成
+          </Button>
         </div>
       ) : null}
     </section>

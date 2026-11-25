@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
 
 import {
   applyThemeToDocument,
@@ -17,16 +18,37 @@ import {
   type ZhiyanTheme,
 } from "./theme";
 
+export interface ThemeTransitionOrigin {
+  x: number;
+  y: number;
+}
+
 export interface ThemeContextValue {
   theme: ZhiyanTheme;
-  setTheme: (next: ZhiyanTheme) => void;
+  setTheme: (next: ZhiyanTheme, origin?: ThemeTransitionOrigin) => void;
   toggleTheme: () => void;
 }
 
+type DocumentWithViewTransition = Document & {
+  startViewTransition?: (updateCallback: () => void) => {
+    ready: Promise<void>;
+    finished: Promise<void>;
+  };
+};
+
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
 /**
- * 全局双主题上下文：支持 Style A（paper）与 Style B（midnight）瞬时无闪烁切换与多标签同步。
+ * 全局双主题上下文：支持 Style A（paper）与 Style B（midnight）瞬时无闪烁切换、多标签同步，
+ * 并在支持的现代浏览器（非减弱动态效果）中通过 View Transitions API 以点击点为圆心扩散切换。
  */
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ZhiyanTheme>(() => readStoredTheme());
@@ -44,8 +66,56 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("storage", handleStorage);
   }, []);
 
-  const setTheme = useCallback((next: ZhiyanTheme) => {
+  const setTheme = useCallback((next: ZhiyanTheme, origin?: ThemeTransitionOrigin) => {
     const normalized = normalizeTheme(next);
+    const applySync = () => {
+      applyThemeToDocument(normalized);
+      persistTheme(normalized);
+      flushSync(() => {
+        setThemeState(normalized);
+      });
+    };
+
+    const doc = document as DocumentWithViewTransition;
+    const canViewTransition =
+      typeof doc.startViewTransition === "function" &&
+      !prefersReducedMotion() &&
+      origin !== undefined &&
+      document.documentElement.dataset.theme !== normalized;
+
+    if (canViewTransition) {
+      const { x, y } = origin;
+      const maxRadius = Math.hypot(
+        Math.max(x, window.innerWidth - x),
+        Math.max(y, window.innerHeight - y),
+      );
+      try {
+        const transition = doc.startViewTransition!(() => {
+          applySync();
+        });
+        void transition.ready
+          .then(() => {
+            document.documentElement.animate(
+              {
+                clipPath: [
+                  `circle(0px at ${x}px ${y}px)`,
+                  `circle(${Math.ceil(maxRadius)}px at ${x}px ${y}px)`,
+                ],
+              },
+              {
+                duration: 320,
+                easing: "cubic-bezier(0.23, 1, 0.32, 1)",
+                pseudoElement: "::view-transition-new(root)",
+              },
+            );
+          })
+          .catch(() => undefined);
+        return;
+      } catch {
+        // 回退至零错拍瞬切
+      }
+    }
+
     // NOTE: 切换瞬间临时关闭过渡动画，避免卡片底色与文字颜色错拍闪动
     document.documentElement.classList.add("theme-switching");
     applyThemeToDocument(normalized);

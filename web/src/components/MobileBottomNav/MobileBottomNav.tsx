@@ -1,8 +1,9 @@
-import { NavigationIcon } from "../NavigationIcon/NavigationIcon";
 import type { MouseEvent } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 
 import { navigationItems } from "../../layout/navigation";
+import { prefetchRoute } from "../../pages/routeLoaders";
+import { NavigationIcon } from "../NavigationIcon/NavigationIcon";
 
 type MobileBottomNavProps = {
   moreOpen: boolean;
@@ -22,12 +23,14 @@ export function MobileBottomNav({ moreOpen, onOpenMore }: MobileBottomNavProps) 
           key={item.path}
           to={item.path}
           end
+          onMouseEnter={() => prefetchRoute(item.path)}
+          onFocus={() => prefetchRoute(item.path)}
           className={({ isActive }) =>
             `mobile-nav__item${isActive ? " mobile-nav__item--active" : ""}`
           }
         >
           <NavigationIcon path={item.path} />
-          <span>{item.mobileLabel}</span>
+          <span data-text={item.mobileLabel}>{item.mobileLabel}</span>
         </NavLink>
       ))}
       <button
@@ -39,7 +42,7 @@ export function MobileBottomNav({ moreOpen, onOpenMore }: MobileBottomNavProps) 
         onClick={onOpenMore}
       >
         <NavigationIcon path="/more" />
-        <span>更多</span>
+        <span data-text="更多">更多</span>
       </button>
     </nav>
   );

@@ -50,6 +50,11 @@ test("switches cleanly between Style A (paper) and Style B (midnight) with zero 
           .evaluate((image) => (image as HTMLImageElement).naturalWidth),
       )
       .toBeGreaterThan(0);
+    // 验证现代浏览器优先加载 AVIF 主图，不下载大体积兜底 PNG/JPG
+    const currentSrc = await page
+      .locator(".auth-intro__art")
+      .evaluate((image) => (image as HTMLImageElement).currentSrc);
+    expect(currentSrc).toMatch(/\.avif($|\?)/);
   }
   await assertMidnightQuality(page, "midnight-login");
   await expect(page).toHaveScreenshot("midnight-login.png");
@@ -73,8 +78,14 @@ test("switches cleanly between Style A (paper) and Style B (midnight) with zero 
   await assertMidnightQuality(page, "midnight-overview");
   await expect(page).toHaveScreenshot("midnight-overview.png");
 
-  // 桌面端验证顶栏快捷检索回车直达 /search 且不写入 URL query
+  // 桌面端验证全局命令面板 (Ctrl+K) 与顶栏快捷检索回车直达 /search 且不写入 URL query
   if (testInfo.project.name === "desktop") {
+    await page.keyboard.press("Control+k");
+    const palette = page.getByRole("dialog", { name: "命令面板" });
+    await expect(palette).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(palette).toBeHidden();
+
     const quickSearch = page.getByLabel("快捷检索文档或内容");
     await quickSearch.fill("深色 AI 感");
     await quickSearch.press("Enter");
@@ -118,6 +129,15 @@ test("switches cleanly between Style A (paper) and Style B (midnight) with zero 
     page.getByText("这是用于 Notes 保存来源验收的确定性回答。"),
   ).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("list", { name: "回答处理阶段" })).toBeVisible();
+  // 验证 QA 对话头绑定文档范围可展开与收起
+  const scopeToggle = page.getByRole("button", { name: /查看范围/ });
+  await expect(scopeToggle).toBeVisible();
+  await scopeToggle.click();
+  const scopeList = page.getByRole("list", { name: "当前对话绑定文档范围" });
+  await expect(scopeList).toBeVisible();
+  await expect(scopeList).toContainText(filename);
+  await page.getByRole("button", { name: /收起范围/ }).click();
+  await expect(scopeList).toHaveCount(0);
   await assertMidnightQuality(page, "midnight-qa");
   if (testInfo.project.name !== "tablet") {
     await expect(page).toHaveScreenshot("midnight-qa.png");
@@ -130,9 +150,15 @@ test("switches cleanly between Style A (paper) and Style B (midnight) with zero 
   await page.getByLabel("笔记标签").fill("深色主题, RAG");
   await page
     .getByLabel("笔记正文")
-    .fill("# 深空玻璃学习笔记\n\n> 知识在连接中持续沉淀。\n\n```python\nrag_mode = 'hybrid'\n```\n");
+    .fill(
+      "# 深空玻璃学习笔记\n\n> 知识在连接中持续沉淀。\n\n检索相关性得分满足 $s = \\alpha \\cdot v + (1 - \\alpha) \\cdot b$：\n\n```python\nrag_mode = 'hybrid'\n```\n",
+    );
   await page.getByRole("tab", { name: "预览" }).click();
   await expect(page.locator(".markdown-preview pre")).toBeVisible();
+  await expect(page.locator(".markdown-preview .katex").first()).toBeVisible();
+  await expect(page.locator(".markdown-preview__code-lang")).toHaveText("python");
+  await expect(page.locator(".markdown-preview__copy")).toBeVisible();
+  await expect(page.locator(".markdown-preview .hljs-string")).toHaveText("'hybrid'");
   const noteCreated = page.waitForResponse(
     (response) =>
       response.url() === `${appUrl}/api/v1/notes` && response.request().method() === "POST",

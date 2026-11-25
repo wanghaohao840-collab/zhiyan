@@ -413,7 +413,9 @@ describe("AppShell", () => {
     mockAuthenticatedSession();
     renderProductionApp(path);
 
-    expect(await screen.findByRole("heading", { name: heading, level: 1 })).toBeVisible();
+    expect(
+      await screen.findByRole("heading", { name: heading, level: 1 }, { timeout: 5000 }),
+    ).toBeVisible();
   });
 
   it("toggles desktop sidebar collapsed state without hiding navigation links", async () => {

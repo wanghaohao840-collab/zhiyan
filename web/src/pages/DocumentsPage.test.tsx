@@ -162,14 +162,18 @@ describe("DocumentsPage", () => {
       migration.unmount();
     }
     const notes = renderApp("/notes");
-    expect(await screen.findByRole("heading", { level: 1, name: "学习笔记" })).toBeVisible();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "学习笔记" }, { timeout: 5000 }),
+    ).toBeVisible();
     expect(screen.queryByText("该能力正在迁移到新版界面，可暂时前往旧版使用。")).not.toBeInTheDocument();
     notes.unmount();
     const learning = renderApp("/learning");
-    expect(await screen.findByRole("heading", { level: 1, name: "学习中心" })).toBeVisible();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "学习中心" }, { timeout: 5000 }),
+    ).toBeVisible();
     expect(screen.queryByText("该能力正在迁移到新版界面，可暂时前往旧版使用。")).not.toBeInTheDocument();
     learning.unmount();
-  });
+  }, 15_000);
 
   it("keeps loading distinct from empty and renders the exact empty copy", async () => {
     let resolveDocuments!: (response: Response) => void;

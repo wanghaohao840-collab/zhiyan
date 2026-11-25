@@ -2,6 +2,7 @@ import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { NavLink } from "react-router-dom";
 
 import { navigationItems } from "../../layout/navigation";
+import { prefetchRoute } from "../../pages/routeLoaders";
 import { BrandMark } from "../BrandMark/BrandMark";
 import { Button } from "../Button/Button";
 import { NavigationIcon } from "../NavigationIcon/NavigationIcon";
@@ -57,12 +58,16 @@ export function Sidebar({
             end
             aria-label={item.label}
             title={collapsed ? item.label : undefined}
+            onMouseEnter={() => prefetchRoute(item.path)}
+            onFocus={() => prefetchRoute(item.path)}
             className={({ isActive }) =>
               `sidebar__link${isActive ? " sidebar__link--active" : ""}`
             }
           >
             <NavigationIcon path={item.path} />
-            <span className="sidebar__label">{item.label}</span>
+            <span className="sidebar__label" data-text={item.label}>
+              {item.label}
+            </span>
           </NavLink>
         ))}
       </nav>

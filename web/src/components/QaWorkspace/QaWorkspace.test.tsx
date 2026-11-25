@@ -178,4 +178,29 @@ describe("QA workspace components", () => {
     expect(trigger).toHaveFocus();
     trigger.remove();
   });
+
+  it("links inline citation markers in prose and scrolls active source card into view", async () => {
+    const scrollIntoView = vi.fn();
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    const onSources = vi.fn();
+    const cited: QaMessage = {
+      ...failed,
+      message_id: "cited-1",
+      status: "completed",
+      content: "核心结论来源于实验报告 [1]。",
+      sources: [source],
+    };
+
+    render(
+      <>
+        <MessageList messages={[cited]} activeCitationId="citation-1" onSources={onSources} onRetry={vi.fn()} />
+        <SourcePanel sources={[source]} activeCitationId="citation-1" messageId="cited-1" notesEnabled />
+      </>,
+    );
+
+    const inlineButton = screen.getByRole("button", { name: "查看正文引用 1" });
+    await userEvent.click(inlineButton);
+    expect(onSources).toHaveBeenCalledWith(cited, inlineButton, "citation-1");
+    expect(scrollIntoView).toHaveBeenCalled();
+  });
 });

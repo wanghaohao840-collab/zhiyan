@@ -51,18 +51,83 @@
   background: var(--color-surface-subtle);
 }
 
-.markdown-preview__code,
+.markdown-preview__code {
+  max-width: 100%;
+  margin-bottom: var(--space-4);
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subtle);
+}
+
+.markdown-preview__code-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 6px var(--space-3);
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-surface);
+  user-select: none;
+}
+
+.markdown-preview__code-lang {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.markdown-preview__copy {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  gap: 5px;
+  padding: 2px var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 500;
+  user-select: none;
+  transition: color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.markdown-preview__copy:hover {
+  border-color: var(--color-border-subtle);
+  color: var(--color-text-primary);
+  background: var(--color-surface-subtle);
+}
+
+.markdown-preview__copy:active {
+  transform: scale(0.96);
+}
+
+.markdown-preview__copy.is-copied {
+  border-color: var(--color-brand-200);
+  color: var(--color-success);
+  background: var(--color-success-bg);
+}
+
 .markdown-preview__table {
   max-width: 100%;
   overflow-x: auto;
 }
 
 .markdown-preview pre {
-  margin: var(--space-0) var(--space-0) var(--space-4);
+  margin: var(--space-0);
   padding: var(--space-4);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-subtle);
+  overflow-x: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   font-size: 0.875rem;
   line-height: var(--leading-body);
 }
@@ -76,6 +141,87 @@
   padding: 0.125em 0.375em;
   border-radius: var(--radius-sm);
   background: var(--color-surface-subtle);
+}
+
+/* 零硬编码双主题代码语法高亮（基于 DTCG --color-syntax-* Token） */
+.markdown-preview .hljs-keyword,
+.markdown-preview .hljs-selector-tag,
+.markdown-preview .hljs-built_in,
+.markdown-preview .hljs-type {
+  color: var(--color-syntax-keyword);
+  font-weight: 500;
+}
+
+.markdown-preview .hljs-string,
+.markdown-preview .hljs-attr,
+.markdown-preview .hljs-template-variable {
+  color: var(--color-syntax-string);
+}
+
+.markdown-preview .hljs-number,
+.markdown-preview .hljs-literal,
+.markdown-preview .hljs-symbol {
+  color: var(--color-syntax-number);
+}
+
+.markdown-preview .hljs-comment,
+.markdown-preview .hljs-quote {
+  color: var(--color-syntax-comment);
+  font-style: italic;
+}
+
+.markdown-preview .hljs-title,
+.markdown-preview .hljs-function,
+.markdown-preview .hljs-section {
+  color: var(--color-syntax-function);
+}
+
+.markdown-preview .hljs-operator,
+.markdown-preview .hljs-punctuation {
+  color: var(--color-syntax-operator);
+}
+
+/* KaTeX 数学公式容器自适应溢出保护 */
+.markdown-preview .katex-display {
+  max-width: 100%;
+  margin: var(--space-4) var(--space-0);
+  padding: var(--space-2) var(--space-0);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* 正文内联上标引用微徽章（Perplexity / NotebookLM 范式） */
+.qa-inline-citation {
+  display: inline-flex;
+  min-width: 18px;
+  height: 18px;
+  margin: 0 2px;
+  padding: 0 4px;
+  align-items: center;
+  justify-content: center;
+  vertical-align: super;
+  border: 1px solid var(--color-brand-200);
+  border-radius: var(--radius-pill);
+  color: var(--color-brand-700);
+  background: var(--color-surface-brand);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1;
+  user-select: none;
+  transition: background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.qa-inline-citation:hover {
+  border-color: var(--color-brand-600);
+  transform: translateY(-1px);
+}
+
+.qa-inline-citation:active {
+  transform: scale(0.95);
 }
 
 .markdown-preview a {
@@ -117,9 +263,16 @@
 }
 
 /* Style B · 深色 AI 感 Markdown 代码块、引用、表格与滚动条精修（零硬编码） */
-:root[data-theme="midnight"] .markdown-preview pre {
+:root[data-theme="midnight"] .markdown-preview__code {
   background: var(--color-canvas);
   box-shadow: var(--shadow-card);
+}
+
+:root[data-theme="midnight"] .markdown-preview__code-bar {
+  background: var(--color-surface-subtle);
+}
+
+:root[data-theme="midnight"] .markdown-preview pre {
   scrollbar-width: thin;
   scrollbar-color: var(--color-border-control) transparent;
 }

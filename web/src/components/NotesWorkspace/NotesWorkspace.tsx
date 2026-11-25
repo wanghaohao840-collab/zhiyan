@@ -1,13 +1,13 @@
 import { NotesPageHeader } from "./NotesPageHeader";
 import { NotesFilters } from "./NotesFilters";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "../../api/client";
 import type { Note, NoteListItem } from "../../features/notes/types";
 import { NoteClearDialog } from "./NoteClearDialog";
 import { NoteEditor, type EditorDraft } from "./NoteEditor";
 import { NoteList } from "./NoteList";
 import { NoteSourcePanel } from "./NoteSourcePanel";
-import { OverlayDialog } from "../ui";
+import { OverlayDialog, PaneResizer, useResizableSplit, useToast } from "../ui";
 import "./notes-workspace.css";
 
 export type NoteSaveInput = { body_markdown: string; concept: string | null; tags: string[]; expected_version?: number; client_request_id?: string };
@@ -40,6 +40,16 @@ function NotesOverlay({ label, onClose, returnFocusTo, children }: { label: stri
 }
 
 export function NotesWorkspace({ onResetFilters, onOpenSearch, items, selectedNote, selectedId, selectedLoading = false, selectedError, hasMore = false, loadingMore = false, saving = false, actionError, onSelect, onSave, onCommitted, onCreate, onDelete, onClear, onRetryProjection, onLoadMore = () => undefined, onReload, onBack, clearing = false, onOpenQa = () => undefined, queryValue = "", tagsValue = "", sourceValue = "", onFilterChange, onDirtyChange }: Props) {
+  const toast = useToast();
+  const split = useResizableSplit({
+    storageKey: "zhiyan.ui.notes.split",
+    defaultLeft: 272,
+    defaultRight: 292,
+    minLeft: 220,
+    maxLeft: 380,
+    minRight: 240,
+    maxRight: 420,
+  });
   const [draft, setDraft] = useState<EditorDraft>(selectedNote ? { body_markdown: selectedNote.body_markdown, concept: selectedNote.concept ?? "", tags: selectedNote.tags } : emptyDraft);
   const [savedAt, setSavedAt] = useState(selectedNote?.updated_at);
   const [baseVersion, setBaseVersion] = useState<number | undefined>(selectedNote?.version);
@@ -68,7 +78,7 @@ export function NotesWorkspace({ onResetFilters, onOpenSearch, items, selectedNo
 
   async function save() {
     setSaveError(undefined);
-    try { overlayReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; const wasNew = !selectedNote; const saved = await onSave({ body_markdown: draft.body_markdown, concept: draft.concept.trim() || null, tags: draft.tags, ...(selectedNote ? { expected_version: baseVersion } : { client_request_id: crypto.randomUUID() }) }); if (saved) { const next = { body_markdown: saved.body_markdown, concept: saved.concept ?? "", tags: saved.tags }; setDraft(next); baseline.current = next; setBaseVersion(saved.version); setSavedAt(saved.updated_at); setHydratedId(saved.id); if (wasNew) onCommitted?.(saved.id); } }
+    try { overlayReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; const wasNew = !selectedNote; const saved = await onSave({ body_markdown: draft.body_markdown, concept: draft.concept.trim() || null, tags: draft.tags, ...(selectedNote ? { expected_version: baseVersion } : { client_request_id: crypto.randomUUID() }) }); if (saved) { const next = { body_markdown: saved.body_markdown, concept: saved.concept ?? "", tags: saved.tags }; setDraft(next); baseline.current = next; setBaseVersion(saved.version); setSavedAt(saved.updated_at); setHydratedId(saved.id); toast.push({ message: "笔记已保存", tone: "success" }); if (wasNew) onCommitted?.(saved.id); } }
     catch (error) { if (error instanceof ApiError && error.code === "NOTE_VERSION_CONFLICT") setConflictOpen(true); else setSaveError(message(error, "保存失败，请重试")); }
   }
   function select(id: string) { if (onSelect(id) !== false) setListView(false); }
@@ -82,8 +92,16 @@ export function NotesWorkspace({ onResetFilters, onOpenSearch, items, selectedNo
     {detailWaiting ? <p className="notes-loading" role="status">正在加载笔记详情…</p> : null}
     {detailUnavailable ? <p className="notes-error" role="alert">服务端笔记已删除或不可用，本地草稿仍保留。<button type="button" onClick={copyDraft}>复制本地草稿</button>{copyFeedback ? <span>{copyFeedback}</span> : null}</p> : null}
     {actionError ? <p className="notes-error" role="alert">{message(actionError, "笔记操作失败，请重试")}</p> : null}
-    <div className="notes-grid"><NoteList filtered={Boolean(queryValue || tagsValue || sourceValue)} filters={<><button ref={filterTrigger} type="button" className="notes-filter-trigger" onClick={() => setFiltersOpen(true)}>筛选</button><NotesFilters query={queryValue} tags={tagsValue} source={sourceValue} onChange={onFilterChange} /></>} items={items} selectedId={selectedId} hasMore={hasMore} loadingMore={loadingMore} onSelect={select} onLoadMore={onLoadMore} onOpenQa={() => onOpenQa()} onCreate={() => { if (onCreate() !== false) setListView(false); }} />
+    <div
+      className="notes-grid"
+      style={{
+        "--pane-left-width": `${split.leftWidth}px`,
+        "--pane-right-width": `${split.rightWidth}px`,
+      } as CSSProperties}
+    ><NoteList filtered={Boolean(queryValue || tagsValue || sourceValue)} filters={<><button ref={filterTrigger} type="button" className="notes-filter-trigger" onClick={() => setFiltersOpen(true)}>筛选</button><NotesFilters query={queryValue} tags={tagsValue} source={sourceValue} onChange={onFilterChange} /></>} items={items} selectedId={selectedId} hasMore={hasMore} loadingMore={loadingMore} onSelect={select} onLoadMore={onLoadMore} onOpenQa={() => onOpenQa()} onCreate={() => { if (onCreate() !== false) setListView(false); }} />
+      <PaneResizer label="调节笔记列表宽度" value={split.leftWidth} min={220} max={380} direction={1} onChange={split.updateLeft} onReset={split.resetLeft} />
       {activeId === "new" || (Boolean(activeId) && hydratedId === activeId) || detailUnavailable ? <NoteEditor updatedAt={selectedNote?.updated_at ?? savedAt} draft={draft} dirty={dirty} saving={saving} disabled={detailUnavailable} error={saveError} onChange={setDraft} onSave={save} onOpenSources={selectedNote ? () => { sourceTrigger.current = document.activeElement as HTMLButtonElement; setSourceOpen(true); } : undefined} onBack={selectedId && onBack ? () => { if (onBack() !== false) setListView(true); } : undefined} onDelete={selectedNote ? (trigger) => { overlayReturn.current = trigger; setDeleteOpen(true); } : undefined} /> : <section className="notes-welcome"><h2>选择一篇笔记</h2><p>从列表中打开笔记，或创建一篇新的学习笔记。</p></section>}
+      <PaneResizer label="调节笔记来源栏宽度" value={split.rightWidth} min={240} max={420} direction={-1} onChange={split.updateRight} onReset={split.resetRight} />
       <NoteSourcePanel concept={draft.concept} onOpenQa={() => onOpenQa()} onOpenSearch={onOpenSearch} sources={sources} />
     </div>
     {selectedNote?.projection_state === "pending" ? <p className="notes-projection-status" role="status">正在同步到学习记忆，笔记仍可编辑。</p> : null}

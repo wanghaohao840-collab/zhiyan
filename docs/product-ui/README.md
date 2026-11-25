@@ -26,11 +26,12 @@
 
 ## Penpot 连接与交接
 
-2026-11-24 起，知研产品界面升级至 **Paper & Forest v2.0** 统一设计体系，2026-11-25 进一步完成 **双气质实时切换体系（Style A · 极简知识感 `paper` ⇄ Style B · 深色 AI 感 `midnight`）** 与前轮 4 项全面收口：
-- 仓库单一事实源为根目录 [`DESIGN.md`](../../DESIGN.md) 与支持 W3C DTCG `$modes` 双模的 [`design/tokens/zhiyan.tokens.json`](../../design/tokens/zhiyan.tokens.json)（经 [`scripts/design_tokens.mjs`](../../scripts/design_tokens.mjs) 编译为 [`web/src/styles/tokens.css`](../../web/src/styles/tokens.css)）；
-- 通过 `@fontsource-variable/inter` 自托管单一拉丁 WOFF2 子集（零外链、自动同源 `preload`）；
-- 全站 5 套业务弹层及 `MoreDrawer` 统一收敛至 `OverlayDialog` 原语，QA 单条引用转笔记唯一收敛于右侧 `SourcePanel`；
-- 全站固定像素基线扩展至 58 张（`visual.spec.ts` 22 张契约基线、`qa.spec.ts` 8 张、`notes.spec.ts` 4 张、新增 `pages-baselines.spec.ts` 4 页三视口 12 张、`theme-dual-mode.spec.ts` Style B 含笔记 Markdown 预览共 12 张，并覆盖 Search/Notes/Insights/Learning 四页 Style B 的 Axe 与 `320px` 零溢出）；
+2026-11-24 起，知研产品界面升级至 **Paper & Forest v2.0** 统一设计体系，2026-11-25 完成 **双气质实时切换体系（Style A · 极简知识感 `paper` ⇄ Style B · 深色 AI 感 `midnight`）** 以及 **P0 + P1 + P2 工程化与设计精进（v3）**：
+- 仓库单一事实源为根目录 [`DESIGN.md`](../../DESIGN.md) 与支持 W3C DTCG `$modes` 双模的 [`design/tokens/zhiyan.tokens.json`](../../design/tokens/zhiyan.tokens.json)（经 [`scripts/design_tokens.mjs`](../../scripts/design_tokens.mjs) 编译为 [`web/src/styles/tokens.css`](../../web/src/styles/tokens.css)，新增双模 `--color-syntax-*` 语法高亮与 `--ease-out` / `--ease-drawer` 动效曲线）；
+- 零外部 CDN：通过 `@fontsource-variable/inter` 自托管单一拉丁 WOFF2 子集（~48 KB）并裁剪自托管 OFL 中文衬线标题子集 `zhiyan-serif-subset.woff2`（`14.57 KiB`）；登录主图提供 `<picture>` AVIF/WebP/兜底三层自适应（瘦身 94.7%–96.6%）；
+- 登录后 7 页采用 `React.lazy + Suspense` 路由级代码分割 + 悬停/聚焦预取 + 精细 `manualChunks` 拆包（首屏业务入口降至 `~40 KB`，零 `> 500 KB` chunk 告警）；
+- 全站交互补齐：QA 正文内联 `[1]` 引用直达右侧 `SourcePanel` 滚动+脉冲高亮、对话头绑定文档范围可展开胶囊、输入框自动撑高与长对话智能贴底/回底胶囊；Markdown 接入自托管 `KaTeX` 数学公式、双模语法高亮与带语言顶栏的一键复制按钮；`/qa` 与 `/notes` 三栏可拖拽调宽；全局 `⌘K / Ctrl+K` 命令面板、非阻塞 Toast 栈（支持任务完成一键撤销）、`OverlayDialog` 物理入场动效、View Transitions API 圆形扩散切主题、`150ms` 防闪骨架屏、全局双主题 `ErrorBoundary` 与 `OfflineBanner`；
+- 全站固定像素基线保持 58 张（`visual.spec.ts` 22 张锁定契约基线、`qa.spec.ts` 8 张、`notes.spec.ts` 4 张、`pages-baselines.spec.ts` 12 张、`theme-dual-mode.spec.ts` 12 张，覆盖 AVIF 命中、`Ctrl+K`、QA 范围胶囊、KaTeX 与代码高亮以及 Search/Notes/Insights/Learning 四页 Style B 的 Axe 与 `320px` 零溢出）；
 - 旧 Penpot 画板仅保留历史参考与导出映射契约，未同步改动远端画板。
 
 （历史记录：2026-09-10 浅色界面视觉依据为用户确认的左侧参考图及

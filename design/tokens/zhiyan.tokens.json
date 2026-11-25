@@ -173,6 +173,32 @@
         "$type": "color",
         "$value": "#B7C4BC"
       }
+    },
+    "syntax": {
+      "keyword": {
+        "$type": "color",
+        "$value": "#16503E"
+      },
+      "string": {
+        "$type": "color",
+        "$value": "#0F6B4E"
+      },
+      "number": {
+        "$type": "color",
+        "$value": "#9A5B13"
+      },
+      "comment": {
+        "$type": "color",
+        "$value": "#6B746E"
+      },
+      "function": {
+        "$type": "color",
+        "$value": "#1E56A0"
+      },
+      "operator": {
+        "$type": "color",
+        "$value": "#545E57"
+      }
     }
   },
   "font": {
@@ -192,6 +218,7 @@
     "serif": {
       "$type": "fontFamily",
       "$value": [
+        "Zhiyan Serif Subset",
         "Noto Serif SC",
         "Source Han Serif SC",
         "Songti SC",
@@ -421,6 +448,14 @@
     "standard": {
       "$type": "cubicBezier",
       "$value": [0.2, 0, 0, 1]
+    },
+    "out": {
+      "$type": "cubicBezier",
+      "$value": [0.23, 1, 0.32, 1]
+    },
+    "drawer": {
+      "$type": "cubicBezier",
+      "$value": [0.32, 0.72, 0, 1]
     }
   },
   "shadow": {
@@ -710,6 +745,32 @@
           "edge": {
             "$type": "color",
             "$value": "rgba(148, 163, 184, 0.24)"
+          }
+        },
+        "syntax": {
+          "keyword": {
+            "$type": "color",
+            "$value": "#7DD3FC"
+          },
+          "string": {
+            "$type": "color",
+            "$value": "#34D399"
+          },
+          "number": {
+            "$type": "color",
+            "$value": "#FBBF24"
+          },
+          "comment": {
+            "$type": "color",
+            "$value": "#7E8FA6"
+          },
+          "function": {
+            "$type": "color",
+            "$value": "#A5B4FC"
+          },
+          "operator": {
+            "$type": "color",
+            "$value": "#94A3B8"
           }
         }
       },

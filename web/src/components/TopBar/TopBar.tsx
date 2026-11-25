@@ -8,10 +8,16 @@ import { ThemeSwitcher } from "../ui";
 type TopBarProps = {
   moreOpen: boolean;
   onOpenMore: (event: MouseEvent<HTMLButtonElement>) => void;
+  onOpenCommandPalette?: () => void;
   username: string;
 };
 
-export function TopBar({ moreOpen, onOpenMore, username }: TopBarProps) {
+export function TopBar({
+  moreOpen,
+  onOpenMore,
+  onOpenCommandPalette,
+  username,
+}: TopBarProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const [quickQuery, setQuickQuery] = useState("");
@@ -46,6 +52,17 @@ export function TopBar({ moreOpen, onOpenMore, username }: TopBarProps) {
             placeholder="搜索文档、提问或内容…"
             aria-label="快捷检索文档或内容"
           />
+          {onOpenCommandPalette ? (
+            <button
+              type="button"
+              className="topbar__kbd"
+              aria-label="打开全局命令面板（Ctrl+K）"
+              title="打开全局命令面板（⌘K / Ctrl+K）"
+              onClick={onOpenCommandPalette}
+            >
+              <kbd>⌘K</kbd>
+            </button>
+          ) : null}
         </form>
         <ThemeSwitcher compact className="topbar__theme-switcher" />
         <button

@@ -512,6 +512,10 @@
 }
 
 .insight-tabs button {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   min-height: 44px;
   padding: var(--space-0) var(--space-5);
   border: 0;
@@ -521,8 +525,19 @@
   cursor: pointer;
   font-size: var(--shell-text-sm);
   font-weight: 500;
-  transition: color var(--duration-fast) var(--ease-standard),
-    border-color var(--duration-fast) var(--ease-standard);
+  user-select: none;
+  transition: color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.insight-tabs button[data-text]::after {
+  content: attr(data-text);
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font-weight: 600;
+  pointer-events: none;
+  user-select: none;
 }
 
 .insight-tabs button:hover {

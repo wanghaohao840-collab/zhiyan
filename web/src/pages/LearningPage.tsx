@@ -6,7 +6,7 @@ import { Link } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/AuthProvider";
 import { Button } from "../components/Button/Button";
-import { EmptyState, PageHeader, Skeleton, StatusBadge } from "../components/ui";
+import { EmptyState, PageHeader, Skeleton, StatusBadge, useToast } from "../components/ui";
 import type { DocumentListResponse } from "../features/documents/types";
 import { createPlan, updateTask } from "../features/learning/api";
 import type {
@@ -95,6 +95,7 @@ function ResourcePage<T>({
 function TaskItem({ task, username }: { task: LearningTask; username: string }) {
   const auth = useAuth();
   const client = useQueryClient();
+  const toast = useToast();
   const alive = useRef(true);
   const pending = useRef(false);
   const attempt = useRef<UpdateTask | null>(null);
@@ -125,10 +126,29 @@ function TaskItem({ task, username }: { task: LearningTask; username: string }) 
     setBusy(true);
     setError(null);
     try {
-      await updateTask(auth.request, task.id, attempt.current);
+      const result = await updateTask(auth.request, task.id, attempt.current);
       if (alive.current) {
         attempt.current = null;
         await client.invalidateQueries({ queryKey: ["learning", username] });
+        const updated = result.task;
+        toast.push({
+          message: updated.completed ? `已完成「${task.title}」` : `已恢复「${task.title}」为未完成`,
+          tone: "success",
+          action: {
+            label: "撤销",
+            onClick: () => {
+              void updateTask(auth.request, task.id, {
+                request_id: crypto.randomUUID(),
+                expected_version: updated.version,
+                completed: !updated.completed,
+              })
+                .then(() => client.invalidateQueries({ queryKey: ["learning", username] }))
+                .catch(() => {
+                  toast.push({ message: "撤销未完成，请重试", tone: "danger" });
+                });
+            },
+          },
+        });
       }
     } catch (failure) {
       if (alive.current) setError(failure);

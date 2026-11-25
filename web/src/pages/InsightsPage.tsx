@@ -14,7 +14,7 @@ export function InsightsPage() {
   const switchTab = (next: "stats" | "reports") => setParams(next === "stats" ? {} : { tab: next }, { replace: true });
   const max = Math.max(1, ...(stats.data?.activity.map((day) => day.total) ?? [1]));
   return <article className="insights-page"><header className="insight-heading"><div><h1>学习洞察</h1><p>只统计系统可验证的学习活动</p></div></header>
-    <div className="insight-tabs" role="tablist" aria-label="洞察视图"><button role="tab" aria-selected={tab === "stats"} onClick={() => switchTab("stats")}>学习统计</button><button role="tab" aria-selected={tab === "reports"} onClick={() => switchTab("reports")}>学习报告</button></div>
+    <div className="insight-tabs" role="tablist" aria-label="洞察视图"><button role="tab" data-text="学习统计" aria-selected={tab === "stats"} onClick={() => switchTab("stats")}>学习统计</button><button role="tab" data-text="学习报告" aria-selected={tab === "reports"} onClick={() => switchTab("reports")}>学习报告</button></div>
     {tab === "stats" ? <section role="tabpanel">
       {stats.isPending ? <div className="insight-state" role="status">正在加载统计…</div> : stats.error || !stats.data ? <div className="insight-state" role="alert"><p>{stats.error instanceof ApiError ? stats.error.message : "统计加载失败"}</p><Button hierarchy="secondary" onClick={() => void stats.refetch()}>重新加载</Button></div> : <>
         <section className="metric-grid" aria-label="学习统计"><article><strong>{stats.data.document_count}</strong><span>文档</span></article><article><strong>{stats.data.completed_question_count}</strong><span>已完成问答</span></article><article><strong>{stats.data.note_count}</strong><span>笔记</span></article><article><strong>{stats.data.report_count}</strong><span>报告</span></article></section>

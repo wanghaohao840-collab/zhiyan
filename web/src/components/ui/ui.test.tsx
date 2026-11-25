@@ -1,9 +1,23 @@
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 import { ThemeProvider } from "../../theme/ThemeProvider";
-import { EmptyState, OverlayDialog, PageHeader, Skeleton, StatusBadge, ThemeSwitcher } from "./index";
+import {
+  CommandPalette,
+  EmptyState,
+  ErrorBoundary,
+  OfflineBanner,
+  OverlayDialog,
+  PageHeader,
+  PaneResizer,
+  Skeleton,
+  StatusBadge,
+  ThemeSwitcher,
+  ToastProvider,
+  useToast,
+} from "./index";
 
 describe("shared UI primitives", () => {
   it("renders PageHeader with semantic heading, description and actions", () => {
@@ -95,5 +109,122 @@ describe("shared UI primitives", () => {
     expect(document.documentElement.dataset.theme).toBe("paper");
     expect(window.localStorage.getItem("zhiyan.ui.theme")).toBe("paper");
     window.localStorage.removeItem("zhiyan.ui.theme");
+  });
+
+  it("opens CommandPalette, filters commands, and passes quick search via memory state only", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    function LocationProbe() {
+      const loc = useLocation();
+      return (
+        <output data-testid="cmdk-loc">
+          {loc.pathname}
+          {loc.search}|{JSON.stringify(loc.state)}
+        </output>
+      );
+    }
+
+    render(
+      <MemoryRouter initialEntries={["/overview"]}>
+        <ThemeProvider>
+          <CommandPalette
+            open
+            onClose={onClose}
+            onToggleSidebar={vi.fn()}
+            sidebarCollapsed={false}
+          />
+          <LocationProbe />
+        </ThemeProvider>
+      </MemoryRouter>,
+    );
+
+    const input = screen.getByLabelText("搜索命令或页面");
+    await user.type(input, "混合检索");
+    await user.keyboard("{Enter}");
+
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("cmdk-loc")).toHaveTextContent('/search|{"prefillQuery":"混合检索"}');
+  });
+
+  it("queues Toast messages with undo action and supports dismissal", async () => {
+    const user = userEvent.setup();
+    const onUndo = vi.fn();
+    function Trigger() {
+      const toast = useToast();
+      return (
+        <button
+          type="button"
+          onClick={() =>
+            toast.push({
+              message: "已完成任务",
+              tone: "success",
+              action: { label: "撤销", onClick: onUndo },
+            })
+          }
+        >
+          触发提示
+        </button>
+      );
+    }
+
+    render(
+      <ToastProvider>
+        <Trigger />
+      </ToastProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "触发提示" }));
+    expect(screen.getByText("已完成任务")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "撤销" }));
+    expect(onUndo).toHaveBeenCalledOnce();
+    expect(screen.queryByText("已完成任务")).not.toBeInTheDocument();
+  });
+
+  it("catches render exceptions in ErrorBoundary and responds to offline events", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    function Crasher(): never {
+      throw new Error("boom");
+    }
+    render(
+      <>
+        <OfflineBanner />
+        <ErrorBoundary>
+          <Crasher />
+        </ErrorBoundary>
+      </>,
+    );
+    expect(screen.getByRole("heading", { name: "页面暂时遇到意外" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "前往旧版" })).toHaveAttribute("href", "/legacy/");
+
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    expect(screen.getByText(/当前网络连接已断开/)).toBeVisible();
+    act(() => {
+      window.dispatchEvent(new Event("online"));
+    });
+    expect(screen.getByText("网络已恢复连接。")).toBeVisible();
+    spy.mockRestore();
+  });
+
+  it("adjusts and resets PaneResizer via keyboard and double-click", () => {
+    const onChange = vi.fn();
+    const onReset = vi.fn();
+    render(
+      <PaneResizer
+        label="调节栏宽"
+        value={240}
+        min={180}
+        max={340}
+        direction={1}
+        onChange={onChange}
+        onReset={onReset}
+      />,
+    );
+    const sep = screen.getByRole("separator", { name: "调节栏宽" });
+    fireEvent.keyDown(sep, { key: "ArrowRight" });
+    expect(onChange).toHaveBeenCalledWith(256);
+    fireEvent.doubleClick(sep);
+    expect(onReset).toHaveBeenCalledOnce();
   });
 });

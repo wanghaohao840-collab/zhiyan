@@ -1,11 +1,15 @@
-import cosmosHorizon from "../../assets/cosmos-horizon.jpg";
-import knowledgePages from "../../assets/knowledge-pages.png";
+import cosmosHorizonAvif from "../../assets/cosmos-horizon.avif";
+import cosmosHorizonJpg from "../../assets/cosmos-horizon.jpg";
+import cosmosHorizonWebp from "../../assets/cosmos-horizon.webp";
+import knowledgePagesAvif from "../../assets/knowledge-pages.avif";
+import knowledgePagesPng from "../../assets/knowledge-pages.png";
+import knowledgePagesWebp from "../../assets/knowledge-pages.webp";
 import { useTheme } from "../../theme/ThemeProvider";
 import { BrandMark } from "../BrandMark/BrandMark";
 
 /**
  * 认证页品牌展示区：根据当前主题 1:1 呈现 Style A（极简知识感·浮空书页）
- * 与 Style B（深色 AI 感·深空日蚀光环）两套主视觉。
+ * 与 Style B（深色 AI 感·深空日蚀光环）两套主视觉，优先下发 AVIF/WebP 现代图像。
  */
 export function AuthIntro() {
   const { theme } = useTheme();
@@ -55,13 +59,25 @@ export function AuthIntro() {
           )}
         </p>
         <div className="auth-intro__art-frame">
-          <img
-            className="auth-intro__art"
-            src={isMidnight ? cosmosHorizon : knowledgePages}
-            alt=""
-            width={isMidnight ? 1600 : 1536}
-            height={isMidnight ? 900 : 1024}
-          />
+          <picture key={isMidnight ? "midnight" : "paper"}>
+            <source
+              srcSet={isMidnight ? cosmosHorizonAvif : knowledgePagesAvif}
+              type="image/avif"
+            />
+            <source
+              srcSet={isMidnight ? cosmosHorizonWebp : knowledgePagesWebp}
+              type="image/webp"
+            />
+            <img
+              className="auth-intro__art"
+              src={isMidnight ? cosmosHorizonJpg : knowledgePagesPng}
+              alt=""
+              width={isMidnight ? 1600 : 1536}
+              height={isMidnight ? 900 : 1024}
+              decoding="async"
+              fetchPriority="high"
+            />
+          </picture>
         </div>
         <div className="auth-intro__caption">
           <span>

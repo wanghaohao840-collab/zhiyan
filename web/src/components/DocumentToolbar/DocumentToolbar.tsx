@@ -54,6 +54,7 @@ export function DocumentToolbar({
                 <button
                   key={tab.id}
                   type="button"
+                  data-text={tab.label}
                   className={`document-type-tab${typeFilter === tab.id ? " is-active" : ""}`}
                   aria-pressed={typeFilter === tab.id}
                   onClick={() => onTypeFilterChange(tab.id)}

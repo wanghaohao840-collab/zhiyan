@@ -29,11 +29,12 @@
   font-weight: 500;
   line-height: 1;
   text-decoration: none;
-  transition: background-color var(--duration-fast) var(--ease-standard),
-    border-color var(--duration-fast) var(--ease-standard),
-    color var(--duration-fast) var(--ease-standard),
-    transform var(--duration-fast) var(--ease-standard),
-    opacity var(--duration-fast) var(--ease-standard);
+  user-select: none;
+  transition: background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out),
+    opacity var(--duration-fast) var(--ease-out);
 }
 
 .button:active:not(:disabled) {
@@ -368,6 +369,58 @@
 .topbar__search-trigger:focus-within {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
+}
+
+.topbar__kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  line-height: 1.2;
+  user-select: none;
+  transition: color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.topbar__kbd:hover {
+  border-color: var(--color-brand-600);
+  color: var(--color-brand-700);
+}
+
+/* Linear / Vercel data-text 伪元素预留粗体宽度：彻底消除选中态字重变化横移 */
+.sidebar__label[data-text],
+.mobile-nav__item span[data-text] {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.mobile-nav__item span[data-text] {
+  align-items: center;
+}
+
+.sidebar__label[data-text]::after,
+.mobile-nav__item span[data-text]::after {
+  content: attr(data-text);
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font-weight: 600;
+  pointer-events: none;
+  user-select: none;
+}
+
+.sidebar__link,
+.mobile-nav__item {
+  user-select: none;
 }
 
 .more-drawer__theme {
