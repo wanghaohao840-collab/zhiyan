@@ -425,3 +425,60 @@ def test_explicit_false_disables_routes_but_not_capabilities_or_lifecycle(
         assert response.json()["error"]["code"] == "QA_ROUTE_DISABLED"
         assert services.start_calls == 1
     assert services.stop_calls == 1
+
+
+@pytest.mark.parametrize("code", ["QA_RAG_TRANSIENT", "QA_SUMMARY_INCOMPLETE"])
+def test_manual_summary_retry_enqueues_same_instruction_without_running_inline(qa_parts, code):
+    parts = qa_parts
+    convo = create_conversation(parts)["conversation_id"]
+    started = parts.client.post(
+        f"/api/v1/qa/conversations/{convo}/summary-jobs",
+        headers=csrf(parts), json={"instruction": "专注实验方法", "client_request_id": str(uuid4())},
+    )
+    assert started.status_code == 202
+    original = started.json()
+    jobs = parts.services.qa_job_repository
+    old = jobs.claim_next("manual-test", lease_seconds=60)
+    jobs.fail_or_retry(old.id, "manual-test", code, None, retryable=False, attempt=old.attempt_count)
+    failed_id = original["assistant_message_id"]
+    url = f"/api/v1/qa/messages/{failed_id}/summary-retry"
+    key = str(uuid4())
+    assert parts.client.post(url, json={"client_request_id": key}).status_code == 403
+    assert parts.client.post(
+        f"/api/v1/qa/messages/{failed_id}/retry",
+        headers=csrf(parts), json={"client_request_id": key},
+    ).status_code == 409
+    assert parts.engine.calls == 0
+
+    parts.client.cookies.set(COOKIE, parts.other_token)
+    assert parts.client.post(
+        url, headers={"X-CSRF-Token": parts.other_csrf}, json={"client_request_id": key}
+    ).status_code == 404
+    owner(parts)
+
+    retry = parts.client.post(url, headers=csrf(parts), json={"client_request_id": key})
+    assert retry.status_code == 202, retry.text
+    job = retry.json()
+    assert job["status"] == "queued"
+    assert job["conversation_id"] == convo
+    assert job["input_message_id"] != original["input_message_id"]
+    assert job["assistant_message_id"] != failed_id
+    for request_id in (key, str(uuid4())):
+        duplicate = parts.client.post(url, headers=csrf(parts), json={"client_request_id": request_id})
+        assert duplicate.status_code == 202
+        assert duplicate.json()["job_id"] == job["job_id"]
+
+    msgs = parts.client.get(f"/api/v1/qa/conversations/{convo}/messages").json()["items"]
+    by_id = {item["message_id"]: item for item in msgs}
+    assert by_id[failed_id]["status"] == "failed"
+    assert by_id[job["input_message_id"]]["content"] == "专注实验方法"
+    assert by_id[job["assistant_message_id"]]["retry_of_message_id"] == failed_id
+    assert parts.engine.calls == 0
+
+    second = jobs.claim_next("manual-test", lease_seconds=60)
+    assert second.id == job["job_id"]
+    jobs.fail_or_retry(second.id, "manual-test", "QA_SUMMARY_INCOMPLETE", None, retryable=False)
+    assert parts.client.post(
+        f"/api/v1/qa/messages/{job['assistant_message_id']}/summary-retry",
+        headers=csrf(parts), json={"client_request_id": str(uuid4())},
+    ).status_code == 409

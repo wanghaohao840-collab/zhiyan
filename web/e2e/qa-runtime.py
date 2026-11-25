@@ -33,6 +33,12 @@ class DeterministicQaAnswerEngine:
         progress_callback: object | None = None,
         cancel_event: object | None = None,
     ) -> QaAnswerResult:
+        if request.mode == "summary" and (
+            "[incomplete-once]" in request.question and request.question not in self._failures
+        ):
+            self._failures.add(request.question)
+            raise QaEngineError("QA_SUMMARY_INCOMPLETE", retryable=False)
+
         if "[fail-once]" in request.question and request.question not in self._failures:
             self._failures.add(request.question)
             raise QaEngineError("QA_ENGINE_UNAVAILABLE", retryable=True)

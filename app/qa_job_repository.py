@@ -8,6 +8,8 @@ from uuid import uuid4
 
 from app.database import connect
 from app.qa_models import (
+    PendingTurn,
+    QaMessage,
     QaConflictError,
     QaJob,
     QaSourceDraft,
@@ -65,39 +67,186 @@ class QaJobRepository:
                     pending, _job_from_row(existing), True
                 )
 
-            job_id = str(uuid4())
-            try:
-                conn.execute(
-                    """
-                    insert into qa_jobs (
-                        id, conversation_id, user_id, input_message_id,
-                        assistant_message_id, status, stage, progress,
-                        max_attempts, created_at, updated_at
-                    ) values (
-                        ?, ?, ?, ?, ?, 'queued', 'queued', 0, ?, ?, ?
-                    )
-                    """,
-                    (
-                        job_id,
-                        conversation_id,
-                        user_id,
-                        pending.user_message.id,
-                        pending.assistant_message.id,
-                        max_attempts,
-                        timestamp,
-                        timestamp,
-                    ),
-                )
-            except sqlite3.IntegrityError as exc:
-                raise QaConflictError("QA_CONVERSATION_BUSY") from exc
-            row = conn.execute(
-                "select * from qa_jobs where id = ?", (job_id,)
-            ).fetchone()
+            result = self._insert_summary_job(
+                conn, pending, user_id, conversation_id, max_attempts, timestamp
+            )
             conn.commit()
-            return SummaryEnqueueResult(pending, _job_from_row(row), False)
+            return result
         except Exception:
             conn.rollback()
             raise
+        finally:
+            conn.close()
+
+    def _insert_summary_job(
+        self, conn: sqlite3.Connection, pending: PendingTurn, user_id: str,
+        conversation_id: str, max_attempts: int, timestamp: str,
+    ) -> SummaryEnqueueResult:
+        job_id = str(uuid4())
+        try:
+            conn.execute(
+                """
+                insert into qa_jobs (
+                    id, conversation_id, user_id, input_message_id,
+                    assistant_message_id, status, stage, progress,
+                    max_attempts, created_at, updated_at
+                ) values (
+                    ?, ?, ?, ?, ?, 'queued', 'queued', 0, ?, ?, ?
+                )
+                """,
+                (
+                    job_id,
+                    conversation_id,
+                    user_id,
+                    pending.user_message.id,
+                    pending.assistant_message.id,
+                    max_attempts,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise QaConflictError("QA_CONVERSATION_BUSY") from exc
+        row = conn.execute(
+            "select * from qa_jobs where id = ?", (job_id,)
+        ).fetchone()
+        return SummaryEnqueueResult(pending, _job_from_row(row), False)
+
+    def create_summary_retry_job(
+        self, user_id: str, conversation_id: str, failed_id: str, client_request_id: str,
+    ) -> QaJob:
+        request_id = client_request_id.strip()
+        if not request_id:
+            raise QaValidationError("QA_CLIENT_REQUEST_REQUIRED", "client request id is required")
+        conn = connect(self.db_path)
+        try:
+            conn.execute("begin immediate")
+            timestamp = _utc_now()
+            original = conn.execute(
+                f"""
+                select input.content
+                from qa_messages failed
+                join qa_conversations c
+                  on c.id = failed.conversation_id and c.user_id = failed.user_id
+                join qa_messages input
+                  on input.user_id = failed.user_id and input.conversation_id = c.id
+                 and input.turn_id = failed.turn_id and input.role = 'user'
+                 and input.status = 'completed'
+                where failed.id = ? and failed.user_id = ? and c.id = ?
+                  and failed.role = 'assistant' and failed.status = 'failed'
+                  and failed.mode = 'summary' and {_not_fenced_clause('c')}
+                order by input.created_at, input.id limit 1
+                """,
+                (failed_id, user_id, conversation_id),
+            ).fetchone()
+            if original is None:
+                raise QaValidationError("QA_RETRY_NOT_ALLOWED", "summary retry is unavailable")
+
+            links = conn.execute(
+                """
+                select failed_assistant_message_id, assistant_message_id from qa_retry_requests
+                where user_id = ? and conversation_id = ?
+                  and (client_request_id = ? or failed_assistant_message_id = ?)
+                """,
+                (user_id, conversation_id, request_id, failed_id),
+            ).fetchall()
+            if any(link["failed_assistant_message_id"] != failed_id for link in links):
+                raise QaValidationError("QA_CLIENT_REQUEST_REUSED", "client request id is already in use")
+            if links:
+                existing = conn.execute(
+                    """
+                    select * from qa_jobs where user_id = ? and conversation_id = ?
+                    and assistant_message_id = ?
+                    """,
+                    (user_id, conversation_id, links[0]["assistant_message_id"]),
+                ).fetchone()
+                if existing is None:
+                    raise QaValidationError("QA_RETRY_NOT_ALLOWED", "summary already retried")
+                bound_input = conn.execute(
+                    """
+                    select id from qa_messages where user_id = ? and conversation_id = ?
+                      and role = 'user' and client_request_id = ?
+                    """,
+                    (user_id, conversation_id, request_id),
+                ).fetchone()
+                if bound_input is not None and bound_input["id"] != existing["input_message_id"]:
+                    raise QaValidationError("QA_CLIENT_REQUEST_REUSED", "client request id is already in use")
+                conn.commit()
+                return _job_from_row(existing)
+
+            previous_child = conn.execute(
+                """
+                select 1 from qa_messages where user_id = ? and conversation_id = ?
+                  and role = 'assistant' and retry_of_message_id = ? limit 1
+                """,
+                (user_id, conversation_id, failed_id),
+            ).fetchone()
+            if previous_child is not None:
+                raise QaValidationError("QA_RETRY_NOT_ALLOWED", "summary already retried")
+
+            pending = self.qa_repository._create_pending_turn_in_connection(
+                conn, user_id, conversation_id, original["content"], "summary", request_id,
+                retry_of_message_id=failed_id, timestamp=timestamp,
+            )
+            if pending.duplicate:
+                raise QaValidationError("QA_CLIENT_REQUEST_REUSED", "client request id is already in use")
+            conn.execute(
+                """
+                insert into qa_retry_requests (
+                    user_id, conversation_id, failed_assistant_message_id,
+                    assistant_message_id, client_request_id, created_at
+                ) values (?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, conversation_id, failed_id, pending.assistant_message.id,
+                 request_id, timestamp),
+            )
+            result = self._insert_summary_job(conn, pending, user_id, conversation_id, 3, timestamp)
+            conn.commit()
+            return result.job
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def resolve_legacy_summary_retry(
+        self, user_id: str, conversation_id: str, failed_id: str, client_request_id: str,
+    ) -> QaMessage | None:
+        conn = connect(self.db_path)
+        try:
+            conn.execute("begin immediate")
+            found = conn.execute(
+                f"""
+                select 1 from qa_messages m
+                join qa_conversations c on c.id = m.conversation_id and c.user_id = m.user_id
+                where m.user_id = ? and c.id = ? and m.retry_of_message_id = ?
+                  and m.role = 'assistant' and m.mode = 'summary' and {_not_fenced_clause('c')}
+                  and not exists (
+                    select 1 from qa_jobs where user_id = m.user_id and assistant_message_id = m.id
+                  )
+                  and m.id = coalesce(
+                    (select r.assistant_message_id from qa_retry_requests r
+                     where r.user_id = m.user_id and r.conversation_id = m.conversation_id
+                       and r.failed_assistant_message_id = m.retry_of_message_id),
+                    (select child.id from qa_messages child
+                     where child.user_id = m.user_id and child.conversation_id = m.conversation_id
+                       and child.retry_of_message_id = m.retry_of_message_id
+                       and child.role = 'assistant'
+                     order by child.created_at, child.id limit 1)
+                  )
+                limit 1
+                """,
+                (user_id, conversation_id, failed_id),
+            ).fetchone()
+            if not found:
+                return None
+            # The original retry helper finds the existing child and preserves
+            # its request binding; the check above prevents creating a new one.
+            pending = self.qa_repository._create_pending_retry_in_connection(
+                conn, user_id, conversation_id, failed_id, client_request_id, _utc_now()
+            )
+            conn.commit()
+            return pending.assistant_message
         finally:
             conn.close()
 

@@ -150,10 +150,20 @@ export function useQaMutations() {
   const retryableOnce = (failureCount: number, error: Error) => failureCount < 1 && error instanceof ApiError && error.retryable;
   const ask = useMutation({ mutationFn: (v: { conversationId: string; question: string; mode: QaMode; clientRequestId: string }) => api.askQaQuestion(request, v.conversationId, v.question, v.mode, v.clientRequestId), retry: retryableOnce, onSuccess: (item) => refresh(item.conversation_id) });
   const retry = useMutation({ mutationFn: (v: { messageId: string; conversationId: string; clientRequestId: string }) => api.retryQaMessage(request, v.messageId, v.clientRequestId), retry: retryableOnce, onSuccess: (item) => refresh(item.conversation_id) });
+  const retrySummary = useMutation({
+    mutationFn: (v: { messageId: string; clientRequestId: string }) =>
+      api.retryQaSummary(request, v.messageId, v.clientRequestId),
+    retry: retryableOnce,
+    onSuccess: (job) => {
+      client.setQueryData(qaJobKey(job.job_id), job);
+      if (activeJob(job)) client.setQueryData(qaActiveSummaryKey(job.conversation_id), { job });
+      refresh(job.conversation_id);
+    },
+  });
   const summarize = useMutation({ mutationFn: (v: { conversationId: string; instruction: string; clientRequestId: string }) => api.startQaSummary(request, v.conversationId, v.instruction, v.clientRequestId), retry: retryableOnce, onSuccess: (job) => { client.setQueryData(qaJobKey(job.job_id), job); client.setQueryData(qaActiveSummaryKey(job.conversation_id), { job }); } });
   const cancel = useMutation({ mutationFn: (jobId: string) => api.cancelQaJob(request, jobId), onSuccess: (job) => client.setQueryData(qaJobKey(job.job_id), job) });
   const remove = useMutation({ mutationFn: (conversationId: string) => api.deleteQaConversation(request, conversationId), onSuccess: (item) => { client.setQueryData(qaDeletionKey(item.deletion_id), item); refresh(); void client.invalidateQueries({ queryKey: DOCUMENTS_QUERY_KEY }); } });
-  return { create, ask, retry, summarize, cancel, remove };
+  return { create, ask, retry, retrySummary, summarize, cancel, remove };
 }
 
 export function newClientRequestId(): string {

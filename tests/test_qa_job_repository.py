@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from threading import Barrier
 
 import pytest
 
 from app.database import connect, initialize_database
+from app.qa_deletion import QaDeletionRepository
 from app.qa_job_repository import QaJobRepository
-from app.qa_models import QaConflictError, QaDocumentCandidate
+from app.qa_models import QaConflictError, QaDocumentCandidate, QaValidationError
 from app.qa_repository import QaRepository
 
 
@@ -454,3 +457,92 @@ def test_offset_timestamp_cannot_split_job_failure_from_assistant_failure(reposi
     )
     assert failed.status == "failed"
     assert qa.get_message(OWNER, queued.pending.assistant_message.id).status == "failed"
+
+
+
+def test_summary_retry_is_atomic_under_concurrent_requests(repositories, monkeypatch):
+    qa, jobs = repositories
+    convo = conversation(qa)
+    original = jobs.create_summary_turn_and_job(OWNER, convo.id, "原指令", "original")
+    claimed = jobs.claim_next("worker", lease_seconds=60)
+    jobs.fail_or_retry(claimed.id, "worker", "QA_RAG_TRANSIENT", None, retryable=False)
+    failed_id = original.pending.assistant_message.id
+    insert = jobs._insert_summary_job
+
+    def fail_insert(*args, **kwargs):
+        raise RuntimeError("controlled failure")
+
+    monkeypatch.setattr(jobs, "_insert_summary_job", fail_insert)
+    with pytest.raises(RuntimeError, match="controlled failure"):
+        jobs.create_summary_retry_job(OWNER, convo.id, failed_id, "retry-one")
+    assert len(qa.list_messages(OWNER, convo.id).items) == 2
+    with connect(qa.db_path) as conn:
+        assert conn.execute("select count(*) from qa_retry_requests").fetchone()[0] == 0
+    monkeypatch.setattr(jobs, "_insert_summary_job", insert)
+
+    barrier = Barrier(2)
+
+    def retry(request):
+        barrier.wait(timeout=3)
+        return jobs.create_summary_retry_job(OWNER, convo.id, failed_id, request)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = pool.map(retry, ("retry-one", "retry-two"))
+    assert first.id == second.id
+    assert first.input_message_id != original.job.input_message_id
+    assert qa.get_message(OWNER, first.input_message_id).content == "原指令"
+    assert len(qa.list_messages(OWNER, convo.id).items) == 4
+    with pytest.raises(QaValidationError, match="already in use"):
+        jobs.create_summary_retry_job(OWNER, convo.id, failed_id, "original")
+
+
+def test_summary_retry_keeps_old_synchronous_children_and_request_bindings(repositories):
+    qa, jobs = repositories
+    convo = conversation(qa)
+
+    def fail(question, client_id):
+        start = jobs.create_summary_turn_and_job(OWNER, convo.id, question, client_id)
+        claimed = jobs.claim_next("worker", lease_seconds=60)
+        jobs.fail_or_retry(claimed.id, "worker", "QA_RAG_TRANSIENT", None, retryable=False)
+        return start.pending.assistant_message.id
+
+    first = fail("第一份摘要", "one")
+    retried = qa.create_pending_retry(OWNER, convo.id, first, "legacy-key")
+    assert qa.complete_turn(OWNER, retried.assistant_message.id, 0, "旧结果", (), "none", None)
+    second = fail("第二份摘要", "two")
+    other = qa.create_pending_retry(OWNER, convo.id, second, "other-key")
+    assert qa.complete_turn(OWNER, other.assistant_message.id, 0, "旧结果二", (), "none", None)
+    with connect(qa.db_path) as conn:
+        conn.execute("delete from qa_retry_requests where failed_assistant_message_id = ?", (second,))
+
+    with pytest.raises(QaValidationError, match="already in use"):
+        jobs.resolve_legacy_summary_retry(OWNER, convo.id, second, "legacy-key")
+    assert jobs.resolve_legacy_summary_retry(
+        OWNER, convo.id, second, "new-key-for-legacy"
+    ).id == other.assistant_message.id
+    with pytest.raises(QaValidationError, match="already retried"):
+        jobs.create_summary_retry_job(OWNER, convo.id, second, "new-key-for-legacy")
+    with pytest.raises(QaValidationError, match="already in use"):
+        jobs.create_summary_retry_job(OWNER, convo.id, first, "new-key-for-legacy")
+
+
+def test_summary_retry_rechecks_busy_and_deletion_under_write_lock(repositories):
+    qa, jobs = repositories
+    convo = conversation(qa)
+    original = jobs.create_summary_turn_and_job(OWNER, convo.id, "原指令", "original")
+    claimed = jobs.claim_next("worker", lease_seconds=60)
+    jobs.fail_or_retry(claimed.id, "worker", "QA_RAG_TRANSIENT", None, retryable=False)
+    failed_id = original.pending.assistant_message.id
+
+    qa.create_pending_turn(OWNER, convo.id, "普通问答", "joint", "ordinary")
+    with pytest.raises(QaConflictError) as busy:
+        jobs.create_summary_retry_job(OWNER, convo.id, failed_id, "retry")
+    assert busy.value.code == "QA_CONVERSATION_BUSY"
+
+    assert QaDeletionRepository(qa.db_path).create_conversation_deletion(OWNER, convo.id)
+    with pytest.raises(QaValidationError) as fenced:
+        jobs.create_summary_retry_job(OWNER, convo.id, failed_id, "retry")
+    assert fenced.value.code == "QA_RETRY_NOT_ALLOWED"
+    with connect(qa.db_path) as conn:
+        assert conn.execute("select count(*) from qa_retry_requests").fetchone()[0] == 0
+        assert conn.execute("select count(*) from qa_jobs").fetchone()[0] == 1

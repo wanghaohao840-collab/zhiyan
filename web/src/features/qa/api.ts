@@ -34,6 +34,8 @@ export const getQaMessage = (request: AuthRequest, id: string, signal?: AbortSig
   request<QaMessage>(`/api/v1/qa/messages/${segment(id)}`, { signal });
 export const retryQaMessage = (request: AuthRequest, id: string, clientRequestId: string) =>
   request<QaMessage>(`/api/v1/qa/messages/${segment(id)}/retry`, { method: "POST", ...json({ client_request_id: clientRequestId }) });
+export const retryQaSummary = (request: AuthRequest, id: string, clientRequestId: string) =>
+  request<QaJob>(`/api/v1/qa/messages/${segment(id)}/summary-retry`, { method: "POST", ...json({ client_request_id: clientRequestId }) });
 export const startQaSummary = (request: AuthRequest, id: string, instruction: string, clientRequestId: string) =>
   request<QaJob>(`/api/v1/qa/conversations/${segment(id)}/summary-jobs`, { method: "POST", ...json({ instruction: instruction || null, client_request_id: clientRequestId }) });
 export const getQaJob = (request: AuthRequest, id: string, signal?: AbortSignal) =>

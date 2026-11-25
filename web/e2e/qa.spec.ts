@@ -44,6 +44,38 @@ async function openSources(page: Page) {
   await expect(page.getByText("[E2E-S1]").filter({ visible: true })).toBeVisible();
 }
 
+test("retries a failed summary from the browser and keeps the original instruction", async ({ appUrl, page }) => {
+  test.slow();
+  const { conversationId } = await createQaConversation(page, appUrl, uniqueUsername("qa_summary_retry"));
+  const session = await page.request.get(`${appUrl}/api/v1/auth/session`);
+  const { csrf_token } = await session.json();
+  const instruction = "[incomplete-once] 请聚焦证据";
+  const response = await page.request.post(`${appUrl}/api/v1/qa/conversations/${conversationId}/summary-jobs`, {
+    headers: { "X-CSRF-Token": csrf_token },
+    data: { instruction, client_request_id: crypto.randomUUID() },
+  });
+  expect(response.status()).toBe(202);
+  const first = await response.json();
+  await expect.poll(async () => {
+    const result = await page.request.get(`${appUrl}/api/v1/qa/jobs/${first.job_id}`);
+    return (await result.json()).status;
+  }).toBe("failed");
+
+  await page.reload();
+  await expect(page.getByText("模型没有生成完整摘要。")).toBeVisible();
+  const next = page.waitForResponse((item) => item.url().endsWith("/summary-retry"));
+  await page.getByRole("button", { name: "重试摘要" }).click();
+  const accepted = await next;
+  expect(accepted.status()).toBe(202);
+  const job = await accepted.json();
+  expect(job.job_id).not.toBe(first.job_id);
+  await expect(page.locator(".qa-summary-status")).toContainText("已完成", { timeout: 15_000 });
+  await expect(page.getByText("这是持久化学习摘要，概括了当前固定文档范围。")).toBeVisible();
+  const messages = page.getByRole("list", { name: "问答消息" });
+  await expect(messages.getByText(instruction, { exact: true })).toHaveCount(2);
+  await expect(page.getByText("已发起重试，请查看后续摘要。")).toBeVisible();
+});
+
 test("real server preserves answer, isolates users, cancels summary and deletes durably", async ({ appUrl, browser, page }, testInfo) => {
   test.slow();
   const ownerName = uniqueUsername("qa_owner");

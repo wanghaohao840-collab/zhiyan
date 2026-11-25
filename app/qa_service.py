@@ -19,6 +19,7 @@ from app.qa_models import (
     QaDocumentCandidate,
     QaMessage,
     QaMessagePage,
+    QaValidationError,
     validate_mode,
 )
 from app.qa_observability import QaTelemetry
@@ -258,6 +259,17 @@ class QaService:
             raise QaRetryNotAllowedError()
         conversation = self._require_conversation(user_id, failed.conversation_id)
         self._require_scope_available(session_token, conversation)
+        if failed.mode == "summary":
+            legacy = (
+                self.job_repository.resolve_legacy_summary_retry(
+                    user_id, conversation.id, failed.id, client_request_id
+                )
+                if self.job_repository is not None
+                else None
+            )
+            if legacy is None:
+                raise QaRetryNotAllowedError()
+            return legacy
         paired_user = next(
             (
                 item
@@ -298,6 +310,40 @@ class QaService:
             paired_user.content,
             mode,
         )
+
+    def retry_summary(
+        self, session_token: str, failed_message_id: str, client_request_id: str
+    ):
+        if self.job_repository is None or self.worker_pool is None:
+            raise RuntimeError("QA summary workers are not configured")
+        session = self.session_registry.get_session(session_token)
+        user_id = str(session.user_id)
+        failed = self._require_message(user_id, failed_message_id)
+        can_retry_output = (
+            failed.safe_error_code == "QA_SUMMARY_INCOMPLETE"
+            and failed.retry_of_message_id is None
+        )
+        if (
+            failed.role != "assistant"
+            or failed.status != "failed"
+            or failed.mode != "summary"
+            or not (can_retry_output or failed.safe_error_code in RETRYABLE_ERROR_CODES)
+        ):
+            raise QaRetryNotAllowedError()
+        conversation = self._require_conversation(user_id, failed.conversation_id)
+        self._require_scope_available(session_token, conversation)
+        try:
+            job = self.job_repository.create_summary_retry_job(
+                user_id, conversation.id, failed.id, client_request_id
+            )
+        except QaConflictError as error:
+            raise QaBusyError() from error
+        except QaValidationError as error:
+            if error.code == "QA_RETRY_NOT_ALLOWED":
+                raise QaRetryNotAllowedError() from error
+            raise
+        self.worker_pool.notify()
+        return job
 
     def start_summary(
         self,

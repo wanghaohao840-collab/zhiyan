@@ -308,6 +308,30 @@ def retry_message(
         return _domain_error(error)
 
 
+@router.post(
+    "/messages/{message_id}/summary-retry",
+    response_model=QaJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def retry_summary(
+    message_id: UUID,
+    body: RetryRequest,
+    request: Request,
+    _session: Annotated[UserSession, Depends(get_csrf_validated_session)],
+    service: Annotated[QaService, Depends(get_qa_service)],
+):
+    if disabled := _disabled(request):
+        return disabled
+    try:
+        return job_response(
+            service.retry_summary(
+                get_session_token(request), str(message_id), str(body.client_request_id)
+            )
+        )
+    except Exception as error:
+        return _domain_error(error)
+
+
 @router.get(
     "/conversations/{conversation_id}/summary-jobs/active",
     response_model=QaActiveJobResponse,

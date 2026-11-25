@@ -76,6 +76,23 @@ export function QaPage() {
   function createConversation() {
     mutations.create.mutate([...selectedDocuments], { onSuccess: (item) => { setCreateOpen(false); setParams({ conversation: item.conversation_id }); setSelectedDocuments(new Set()); } });
   }
+  function retryMessage(item: QaMessage) {
+    const request = {
+      messageId: item.message_id,
+      conversationId: item.conversation_id,
+      clientRequestId: newClientRequestId(),
+    };
+    if (item.mode === "summary") {
+      mutations.retrySummary.mutate(request, {
+        onSuccess: (job) => setStartedSummary({
+          conversationId: job.conversation_id,
+          jobId: job.job_id,
+        }),
+      });
+      return;
+    }
+    mutations.retry.mutate(request);
+  }
   function showSources(item: QaMessage, trigger: HTMLButtonElement) { setSources(item.sources); setSourceTrigger(trigger); if (window.innerWidth < 1200) setSourceOpen(true); }
 
   if (capabilities.isPending) return <div className="qa-state" role="status">正在加载智能问答…</div>;
@@ -88,10 +105,11 @@ export function QaPage() {
   const summaryActive = currentJob?.status === "queued" || currentJob?.status === "running";
   const busy = mutations.ask.isPending
     || mutations.summarize.isPending
+    || mutations.retrySummary.isPending
     || currentMessages.some((item) => item.status === "pending")
     || summaryActive;
   const queryError = conversations.error ?? conversation.error ?? messages.error ?? activeSummary.error;
-  const actionError = mutations.ask.error ?? mutations.retry.error ?? mutations.summarize.error ?? mutations.cancel.error;
+  const actionError = mutations.ask.error ?? mutations.retry.error ?? mutations.retrySummary.error ?? mutations.summarize.error ?? mutations.cancel.error;
   const deletionActive = deletion.data?.status === "queued" || deletion.data?.status === "running";
 
   return <article className="qa-page">
@@ -103,7 +121,7 @@ export function QaPage() {
     <div className="qa-workspace">
       {conversations.isPending ? <aside className="qa-conversations" role="status">正在加载对话…</aside> : <ConversationList items={items} selectedId={selectedId} onSelect={selectConversation} onNew={() => setCreateOpen(true)} hasMore={Boolean(conversations.hasNextPage)} loadingMore={conversations.isFetchingNextPage} onLoadMore={() => void conversations.fetchNextPage()} />}
       <main className="qa-thread">
-        {selectedId ? <>{messages.isPending ? <div className="qa-welcome" role="status">正在加载消息…</div> : <MessageList messages={currentMessages} onSources={showSources} onRetry={(item) => mutations.retry.mutate({ messageId: item.message_id, conversationId: item.conversation_id, clientRequestId: newClientRequestId() })} busy={busy} hasOlder={Boolean(messages.hasNextPage)} loadingOlder={messages.isFetchingNextPage} onLoadOlder={() => void messages.fetchNextPage()} notesEnabled={enabled && notesEnabled} />}<QaComposer busy={busy} documentCount={conversation.data?.documents.length ?? 0} onSubmit={(question, mode) => mutations.ask.mutate({ conversationId: selectedId, question, mode, clientRequestId: newClientRequestId() })} /></> : <div className="qa-welcome"><h2>从一个问题，开始理解</h2><p>文档范围创建后保持固定，避免后续回答悄悄改变证据边界。</p><Button onClick={() => setCreateOpen(true)}>选择文档</Button></div>}
+        {selectedId ? <>{messages.isPending ? <div className="qa-welcome" role="status">正在加载消息…</div> : <MessageList messages={currentMessages} onSources={showSources} onRetry={retryMessage} busy={busy} hasOlder={Boolean(messages.hasNextPage)} loadingOlder={messages.isFetchingNextPage} onLoadOlder={() => void messages.fetchNextPage()} notesEnabled={enabled && notesEnabled} />}<QaComposer busy={busy} documentCount={conversation.data?.documents.length ?? 0} onSubmit={(question, mode) => mutations.ask.mutate({ conversationId: selectedId, question, mode, clientRequestId: newClientRequestId() })} /></> : <div className="qa-welcome"><h2>从一个问题，开始理解</h2><p>文档范围创建后保持固定，避免后续回答悄悄改变证据边界。</p><Button onClick={() => setCreateOpen(true)}>选择文档</Button></div>}
       </main>
       <SourcePanel sources={sources} />
     </div>

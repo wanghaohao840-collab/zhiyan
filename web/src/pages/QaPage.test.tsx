@@ -34,6 +34,7 @@ const runningJob = (jobId: string, conversationId: string): QaJob => ({
 type RenderPageOptions = {
   activeJob?: QaJob | null;
   jobResult?: QaJob;
+  summaryRetry?: QaJob;
   conversations?: (typeof conversation)[];
   notesCapability?: "enabled" | "disabled" | "pending" | "error";
 };
@@ -76,6 +77,9 @@ function renderPage(
       return Promise.resolve(response(options.jobResult));
     }
     if (url.endsWith("/messages") && init?.method === "POST") return Promise.resolve(response({ message_id: "message-1", conversation_id: conversation.conversation_id, turn_id: "turn-1", role: "assistant", status: "pending", mode: "auto", content: "", source_state: "none", retry_of_message_id: null, safe_error_code: null, trace_id: null, created_at: "now", updated_at: "now", completed_at: null, sources: [] }, 202));
+    if (options.summaryRetry && url.endsWith("/summary-retry") && init?.method === "POST") {
+      return Promise.resolve(response(options.summaryRetry, 202));
+    }
     if (url.endsWith("/summary-jobs") && init?.method === "POST") return Promise.resolve(response({ job_id: "job-1", conversation_id: conversation.conversation_id, input_message_id: "input-1", assistant_message_id: "assistant-1", status: "running", stage: "summarizing", progress: 40, cancel_requested_at: null, attempt_count: 1, max_attempts: 3, safe_error_code: null, trace_id: null, created_at: "now", started_at: "now", finished_at: null, updated_at: "running" }, 202));
     if (url === "/api/v1/qa/jobs/job-1") return Promise.resolve(response({ job_id: "job-1", conversation_id: conversation.conversation_id, input_message_id: "input-1", assistant_message_id: "assistant-1", status: "completed", stage: "completed", progress: 100, cancel_requested_at: null, attempt_count: 1, max_attempts: 3, safe_error_code: null, trace_id: null, created_at: "now", started_at: "now", finished_at: "now", updated_at: "done" }));
     if (url === "/api/v1/qa/deletions/deletion-1") return Promise.resolve(response({ deletion_id: "deletion-1", target_type: "conversation", target_id: conversation.conversation_id, status: "completed", stage: "completed", affected_conversation_count: 1, attempt_count: 1, safe_error_code: null, trace_id: null, created_at: "now", updated_at: "done" }));
@@ -88,6 +92,38 @@ function renderPage(
 
 describe("QaPage", () => {
   afterEach(() => { vi.unstubAllGlobals(); fetchMock.mockReset(); document.body.style.overflow = ""; });
+  it("uses the returned summary job when the retry has already finished", async () => {
+    const completed: QaJob = {
+      ...runningJob("retried-job", conversation.conversation_id),
+      status: "completed", stage: "completed", progress: 100, updated_at: "done",
+    };
+    const failedSummary = {
+      ...completedMessage,
+      message_id: "old-summary", status: "failed", mode: "summary",
+      content: "", sources: [], safe_error_code: "QA_SUMMARY_INCOMPLETE",
+    };
+    renderPage(true, `/qa?conversation=${conversation.conversation_id}`, [failedSummary], {
+      summaryRetry: completed, jobResult: completed,
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: "重试摘要" }));
+    expect(await screen.findByText("学习摘要 · 已完成")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/old-summary/summary-retry"))).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/old-summary/retry"))).toBe(false);
+  });
+
+  it("offers a smaller document scope when the summary retry is still incomplete", async () => {
+    const failedSummary = {
+      ...completedMessage,
+      message_id: "retried-summary", status: "failed", mode: "summary",
+      content: "", sources: [], safe_error_code: "QA_SUMMARY_INCOMPLETE",
+      retry_of_message_id: "old-summary",
+    };
+    renderPage(true, `/qa?conversation=${conversation.conversation_id}`, [failedSummary]);
+    expect(await screen.findByText("可选择更少的文档，再生成摘要。")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重试摘要" })).not.toBeInTheDocument();
+  });
+
   it("shows an explicit migration state when the route is disabled", async () => {
     renderPage(false);
     expect(await screen.findByRole("heading", { name: "智能问答正在迁移" })).toBeVisible();

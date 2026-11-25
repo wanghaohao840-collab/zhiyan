@@ -58,9 +58,40 @@ function noteDraftHref(kind: "qa_answer" | "qa_citation", messageId: string, cit
   return `/notes?${params.toString()}`;
 }
 
+const SUMMARY_RETRYABLE_CODES = new Set([
+  "QA_ENGINE_UNAVAILABLE", "QA_RAG_CONNECTION", "QA_RAG_TRANSIENT",
+  "RAG_CONNECTION_FAILED", "RAG_EMBEDDING_FAILED", "RAG_OPERATION_FAILED",
+  "RAG_COLLECTION_FAILED",
+]);
+
+function MessageFailure({ message, busy, alreadyRetried, onRetry }: {
+  message: QaMessage;
+  busy?: boolean;
+  alreadyRetried: boolean;
+  onRetry: (message: QaMessage) => void;
+}) {
+  const code = message.safe_error_code ?? "QA_OPERATION_FAILED";
+  const isSummary = message.mode === "summary";
+  const incomplete = isSummary && code === "QA_SUMMARY_INCOMPLETE";
+  const canRetry = !isSummary || (!alreadyRetried && (
+    SUMMARY_RETRYABLE_CODES.has(code) || (incomplete && !message.retry_of_message_id)
+  ));
+  return <div className="qa-message__failure" role="alert">
+    <span>{incomplete ? "模型没有生成完整摘要。" : code}</span>
+    {canRetry
+      ? <Button hierarchy="secondary" disabled={busy} onClick={() => onRetry(message)}>
+        {isSummary ? "重试摘要" : "重试回答"}
+      </Button>
+      : <span>{alreadyRetried
+        ? "已发起重试，请查看后续摘要。"
+        : incomplete ? "可选择更少的文档，再生成摘要。" : "可使用页面上方的「生成摘要」重新发起。"}</span>}
+  </div>;
+}
+
 export function MessageList({ messages, onSources, onRetry, busy, hasOlder, loadingOlder, onLoadOlder, notesEnabled = true }: MessageListProps) {
   if (!messages.length) return <div className="qa-welcome"><h2>从一个问题，开始理解</h2><p>提出问题，知研会用当前对话绑定的文档回答，并保留引用。</p></div>;
-  return <>{hasOlder && onLoadOlder ? <Button hierarchy="secondary" disabled={loadingOlder} onClick={onLoadOlder}>{loadingOlder ? "正在加载更早消息…" : "加载更早消息"}</Button> : null}<ol className="qa-messages" aria-label="问答消息">{messages.map((message) => <li key={message.message_id} className={`qa-message qa-message--${message.role}`} data-status={message.status}><span className="qa-message__role">{message.role === "user" ? "你" : "知研"}</span>{message.status === "pending" ? <p role="status">正在查找并组织答案…</p> : <p>{message.content || (message.status === "failed" ? "回答失败，原问题已保留。" : "")}</p>}{message.status === "failed" ? <div className="qa-message__failure" role="alert"><span>{message.safe_error_code ?? "QA_OPERATION_FAILED"}</span><Button hierarchy="secondary" disabled={busy} onClick={() => onRetry(message)}>重试回答</Button></div> : null}{notesEnabled && message.role === "assistant" && message.status === "completed" ? <div className="qa-message__note-actions"><a className="qa-note-action" href={noteDraftHref("qa_answer", message.message_id)}>记为笔记</a>{message.sources.map((source) => <a key={source.citation_id} className="qa-note-action" href={noteDraftHref("qa_citation", message.message_id, source.citation_id)}>记录此引用</a>)}</div> : null}{message.role === "assistant" && message.sources.length ? <button className="qa-source-trigger" onClick={(event) => onSources(message, event.currentTarget)}>引用 {message.sources.length}</button> : null}</li>)}</ol></>;
+  const retriedIds = new Set(messages.map((message) => message.retry_of_message_id));
+  return <>{hasOlder && onLoadOlder ? <Button hierarchy="secondary" disabled={loadingOlder} onClick={onLoadOlder}>{loadingOlder ? "正在加载更早消息…" : "加载更早消息"}</Button> : null}<ol className="qa-messages" aria-label="问答消息">{messages.map((message) => <li key={message.message_id} className={`qa-message qa-message--${message.role}`} data-status={message.status}><span className="qa-message__role">{message.role === "user" ? "你" : "知研"}</span>{message.status === "pending" ? <p role="status">正在查找并组织答案…</p> : <p>{message.content || (message.status === "failed" ? "回答失败，原问题已保留。" : "")}</p>}{message.status === "failed" ? <MessageFailure message={message} busy={busy} alreadyRetried={retriedIds.has(message.message_id)} onRetry={onRetry} /> : null}{notesEnabled && message.role === "assistant" && message.status === "completed" ? <div className="qa-message__note-actions"><a className="qa-note-action" href={noteDraftHref("qa_answer", message.message_id)}>记为笔记</a>{message.sources.map((source) => <a key={source.citation_id} className="qa-note-action" href={noteDraftHref("qa_citation", message.message_id, source.citation_id)}>记录此引用</a>)}</div> : null}{message.role === "assistant" && message.sources.length ? <button className="qa-source-trigger" onClick={(event) => onSources(message, event.currentTarget)}>引用 {message.sources.length}</button> : null}</li>)}</ol></>;
 }
 
 export function QaComposer({ busy, documentCount, onSubmit }: { busy: boolean; documentCount: number; onSubmit: (question: string, mode: QaMode) => void }) {
