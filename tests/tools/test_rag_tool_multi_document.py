@@ -989,6 +989,47 @@ class RAGToolMultiDocumentTests(unittest.TestCase):
         self.assertNotIn("map boom", tool.llm.prompts[-1])
         self.assertIn("ANSWER-2", output)
 
+    def test_summary_excludes_shared_graph_after_partial_failure(self):
+        for use_langgraph in (False, True):
+            for graph_mode, document_ids in (
+                ("auto", ["doc-1", "doc-2"]),
+                ("auto", ["doc-1", "doc-2", "doc-3"]),
+                ("required", ["doc-1", "doc-2"]),
+            ):
+                with self.subTest(langgraph=use_langgraph, mode=graph_mode, scope=document_ids):
+                    tool = self.make_tool()
+                    graph = FakeGraphContextService()
+                    tool.graph_service = graph
+                    pipeline = tool._pipelines["test"]
+                    sample = pipeline.get_document_summary_context
+
+                    def sample_with_failure(document_id, limit):
+                        if document_id == "doc-1":
+                            raise RuntimeError("controlled map failure")
+                        return sample(document_id, limit)
+
+                    pipeline.get_document_summary_context = sample_with_failure
+                    result = tool.execute_result(
+                        "ask", query="summary graph", document_ids=document_ids,
+                        mode="summary", graph_mode=graph_mode, use_summary_workflow=use_langgraph,
+                    )
+
+                    self.assertTrue(result.success)
+                    self.assertIn("以下文档未纳入本次总结：doc-1", result.message)
+                    self.assertNotIn("shared-alpha", tool.llm.prompts[-1])
+                    self.assertNotIn("shared-alpha", result.message)
+                    self.assertEqual(result.data["summary_documents"], len(document_ids) - 1)
+                    self.assertEqual(result.data["graph_documents"], document_ids[1:])
+                    self.assertEqual(
+                        [source["document_id"] for source in result.data["graph_sources"]],
+                        document_ids[1:],
+                    )
+                    self.assertEqual(
+                        {source["document_id"] for source in result.data["sources"]},
+                        set(document_ids[1:]),
+                    )
+                    self.assertEqual([call[0] for call in graph.cross_calls], [document_ids])
+
     def test_summary_all_failures_skip_reduce(self):
         tool = self.make_tool()
         pipeline = tool._pipelines["test"]

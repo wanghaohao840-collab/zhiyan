@@ -2649,7 +2649,12 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 )
                 return {"error": f"🔍 所选文档没有可用于联合总结的内容\n{details}"}
 
-            return {"mapped": mapped, "failures": ordered_failures}
+            # Shared entities can contain evidence from documents whose maps failed.
+            return {
+                "mapped": mapped,
+                "failures": ordered_failures,
+                "shared_graph_contexts": [] if ordered_failures else state["shared_graph_contexts"],
+            }
 
         def reduce(state: SummaryState) -> SummaryState:
             check_cancelled()
@@ -2779,7 +2784,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
             "summary_cache_hits": cache_hits,
             "summary_cache_misses": len(mapped) - cache_hits,
             "graph_mode": graph_mode,
-            "graph_documents": list(document_ids),
+            "graph_documents": [item["document_id"] for item in mapped],
             "graph_context_count": len(all_graph_sources),
         }
         answer = state["answer"]
