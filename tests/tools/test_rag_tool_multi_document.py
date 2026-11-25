@@ -5,7 +5,9 @@ import time
 import unittest
 from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 
+from app.qa_answer_engine import QaAnswerRequest, RagQaAnswerEngine
 from hello_agents.memory.rag.pipeline import SimpleRAGPipeline
 from hello_agents.tools.builtin.rag_tool import RAGTool
 
@@ -564,6 +566,69 @@ class RAGToolMultiDocumentTests(unittest.TestCase):
                 for source in tool._last_action_data["graph_sources"]
             )
         )
+
+    def test_summary_graph_references_follow_the_stage_input_budget(self):
+        for use_langgraph in (False, True):
+            with self.subTest(langgraph=use_langgraph):
+                tool = self.make_tool()
+                graph = FakeGraphContextService()
+                graph.entity_names["doc-1"] = "long-map-" + "x" * 600
+                tool.graph_service = graph
+                cross = graph.get_cross_document_entities
+
+                def shared_entities(document_ids, query, **kwargs):
+                    response = cross(document_ids, query, **kwargs)
+                    first = response["data"]["entities"][0]
+                    response["data"]["entities"].append({
+                        **first, "canonical_id": "canonical-long", "name": "long-reduce-" + "x" * 600,
+                    })
+                    return response
+
+                graph.get_cross_document_entities = shared_entities
+                map_budget = 280
+
+                def budget(prompt, **kwargs):
+                    return 350 if "单篇文档摘要：" in prompt else map_budget
+
+                tool._context_budget = budget
+                map_hidden = tool._graph_citation_id("doc-1", "entity", "doc-1:concept:alpha")
+                map_visible = tool._graph_citation_id("doc-2", "entity", "doc-2:concept:alpha")
+                shared_hidden = tool._graph_citation_id("doc-1|doc-2", "canonical_entity", "canonical-long")
+                shared_visible = tool._graph_citation_id("doc-1|doc-2", "canonical_entity", "canonical-alpha")
+                request = QaAnswerRequest(
+                    f"summary graph [{map_hidden}] [{shared_hidden}]", "", ("doc-1", "doc-2"), "summary"
+                )
+                engine = RagQaAnswerEngine(enable_summary_workflow=use_langgraph)
+                runtime = SimpleNamespace(rag_tool=tool)
+
+                first = engine.answer(runtime, request)
+                self.assertEqual(
+                    {source.citation_id for source in first.graph_sources}, {map_visible, shared_visible}
+                )
+                self.assertNotIn(map_hidden, first.answer)
+                self.assertNotIn(shared_hidden, first.answer)
+                first_map = next(prompt for prompt in tool.llm.prompts if prompt.startswith("请仅根据以下资料总结文档 doc-1。"))
+                self.assertNotIn("图谱上下文", first_map)
+                reduce_context = tool.llm.prompts[-1].split("单篇文档摘要：", 1)[1]
+                self.assertIn(shared_visible, reduce_context)
+                self.assertIn(map_visible, reduce_context)
+                self.assertNotIn(map_hidden, reduce_context)
+                self.assertNotIn(shared_hidden, reduce_context)
+
+                cached = engine.answer(runtime, request)
+                self.assertEqual(cached.graph_sources, first.graph_sources)
+                self.assertEqual(tool._last_action_data["summary_cache_hits"], 2)
+                self.assertEqual(len(tool.llm.prompts), 4)
+
+                map_budget = 4096
+                expanded = engine.answer(runtime, request)
+                self.assertEqual(
+                    {source.citation_id for source in expanded.graph_sources},
+                    {map_hidden, map_visible, shared_visible},
+                )
+                self.assertEqual(tool._last_action_data["summary_cache_hits"], 0)
+                self.assertEqual(len(tool.llm.prompts), 7)
+                self.assertEqual(len(graph.cross_calls), 3)
 
     def test_summary_required_shared_graph_failure_happens_before_map_llm(self):
         tool = self.make_tool()

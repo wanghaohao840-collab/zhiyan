@@ -39,6 +39,7 @@ class SummaryState(TypedDict, total=False):
     document_count: int
     graph_by_document: dict[str, dict[str, Any]]
     shared_graph_contexts: list[dict[str, Any]]
+    shared_graph_sources: list[dict[str, Any]]
     completed: dict[str, dict[str, Any]]
     failures: dict[str, str]
     mapped: list[dict[str, Any]]

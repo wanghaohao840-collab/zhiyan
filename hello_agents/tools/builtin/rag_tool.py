@@ -68,6 +68,9 @@ from hello_agents.tools.builtin.rag_summary_workflow import (
 )
 
 
+GRAPH_CONTEXT_HEADING = "图谱上下文（仅作为补充证据）："
+
+
 class RAGTool(Tool):
     """RAG工具
 
@@ -181,6 +184,7 @@ class RAGTool(Tool):
         limit: int,
         results: List[Dict[str, Any]],
         max_output_tokens: int,
+        input_budget: int,
         model_id: str,
         graph_mode: str = "off",
         graph_context: Optional[Dict[str, Any]] = None,
@@ -204,6 +208,7 @@ class RAGTool(Tool):
             "limit": int(limit),
             "prompt_version": self.SUMMARY_CACHE_PROMPT_VERSION,
             "max_output_tokens": max_output_tokens,
+            "input_budget": input_budget,
             "model_id": model_id,
             "revision": revision_parts,
             "graph_mode": str(graph_mode),
@@ -1901,7 +1906,14 @@ class RAGTool(Tool):
     ) -> str:
         if not contexts:
             return ""
-        blocks = ["图谱上下文（仅作为补充证据）："]
+        entries = self._graph_context_entries(contexts)
+        return "\n".join([GRAPH_CONTEXT_HEADING, *(line for _, line in entries)])
+
+    def _graph_context_entries(
+        self,
+        contexts: List[Dict[str, Any]],
+    ) -> list[tuple[str, str]]:
+        entries = []
         for context in contexts:
             document_id = str(context.get("document_id") or "")
             if context.get("kind") == "cross_document":
@@ -1929,11 +1941,12 @@ class RAGTool(Tool):
                         for member in entity.get("members") or []
                         if member.get("document_id")
                     )
-                    blocks.append(
+                    line = (
                         f"[{citation}] cross-document entity | {scope_label} | "
                         f"{entity.get('entity_type') or entity.get('type')}: "
                         f"{entity.get('name') or graph_id} | members: {members}"
                     )
+                    entries.append((citation, line))
                 continue
             entity_names = {
                 str(entity.get("id")): (
@@ -1951,10 +1964,11 @@ class RAGTool(Tool):
                     "entity",
                     graph_id,
                 )
-                blocks.append(
+                line = (
                     f"[{citation}] 文档 {document_id} | "
                     f"{entity.get('type')}: {entity_names.get(graph_id)}"
                 )
+                entries.append((citation, line))
             for relation in context.get("relations") or []:
                 relation_id = "|".join(
                     str(relation.get(key) or "")
@@ -1977,8 +1991,8 @@ class RAGTool(Tool):
                 )
                 if evidence:
                     line += f" | evidence: {str(evidence)[:240]}"
-                blocks.append(line)
-        return "\n".join(blocks)
+                entries.append((citation, line))
+        return entries
 
     def _append_graph_context(
         self,
@@ -1987,23 +2001,57 @@ class RAGTool(Tool):
         *,
         token_budget: int,
     ) -> str:
+        combined, _ = self._fit_graph_context(
+            context, graph_text, graph_text.splitlines(), token_budget=token_budget
+        )
+        return combined
+
+    def _fit_graph_context(
+        self,
+        context: str,
+        graph_text: str,
+        lines: list[str],
+        *,
+        token_budget: int,
+    ) -> tuple[str, int]:
         if not graph_text:
-            return context
+            return context, 0
         prefix = f"{context}\n\n{graph_text}"
         if estimate_tokens(self.llm, prefix) <= token_budget:
-            return prefix
-        lines = graph_text.splitlines()
+            return prefix, len(lines)
         fitted = []
         for line in lines:
             candidate = f"{context}\n\n" + "\n".join(fitted + [line])
             if estimate_tokens(self.llm, candidate) > token_budget:
                 break
             fitted.append(line)
-        return (
-            f"{context}\n\n" + "\n".join(fitted)
-            if fitted
-            else context
+        if not fitted:
+            return context, 0
+        return f"{context}\n\n" + "\n".join(fitted), len(fitted)
+
+    def _append_graph_context_with_sources(
+        self,
+        context: str,
+        contexts: List[Dict[str, Any]],
+        *,
+        token_budget: int,
+    ) -> tuple[str, List[Dict[str, Any]]]:
+        """Keep each summary evidence entry and its citation together."""
+        entries = self._graph_context_entries(contexts)
+        if not entries:
+            return context, []
+        lines = [GRAPH_CONTEXT_HEADING, *(line for _, line in entries)]
+        combined, fitted_count = self._fit_graph_context(
+            context, "\n".join(lines), lines, token_budget=token_budget
         )
+        if fitted_count <= 1:
+            return context, []
+        included = {citation for citation, _ in entries[:fitted_count - 1]}
+        sources = [
+            source for source in self._graph_sources(contexts)
+            if source["citation_id"] in included
+        ]
+        return combined, sources
 
     def _format_graph_sources(
         self,
@@ -2496,6 +2544,13 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 }
 
             check_cancelled()
+            prompt = f"""请仅根据以下资料总结文档 {doc_id}。
+优先提取可直接回答用户问题的事实和规则。用简短要点呈现，每项保留稳定引用 ID，不逐条罗列无关或缺失内容。
+
+用户问题：{query}
+资料：
+"""
+            budget = self._context_budget(prompt, output_reserve=map_max_tokens)
             cache_key = self._summary_cache_key(
                 pipeline=pipeline,
                 document_id=doc_id,
@@ -2505,6 +2560,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 graph_mode=graph_mode,
                 graph_context=graph_context_by_document.get(doc_id),
                 max_output_tokens=map_max_tokens,
+                input_budget=budget,
                 model_id=effective_model,
             )
             cached = self._get_cached_document_summary(cache_key)
@@ -2520,13 +2576,6 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 # evidence ahead of equally ranked page samples.
                 item["score"] = lexical_overlap_score(query, item["content"])
 
-            prompt = f"""请仅根据以下资料总结文档 {doc_id}。
-优先提取可直接回答用户问题的事实和规则。用简短要点呈现，每项保留稳定引用 ID，不逐条罗列无关或缺失内容。
-
-用户问题：{query}
-资料：
-"""
-            budget = self._context_budget(prompt, output_reserve=map_max_tokens)
             context, sources, truncated = self._build_context(
                 prepared, token_budget=budget, return_details=True
             )
@@ -2536,12 +2585,11 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 if document_graph_context is not None
                 else []
             )
-            context = self._append_graph_context(
+            context, graph_sources = self._append_graph_context_with_sources(
                 context,
-                self._format_graph_context(document_graph_contexts),
+                document_graph_contexts,
                 token_budget=budget,
             )
-            graph_sources = self._graph_sources(document_graph_contexts)
             check_cancelled()
             summary = self._generate_summary(
                 f"{prompt}{context}\n",
@@ -2704,9 +2752,9 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 summary_context, reduce_truncated = self._fit_summary_context(
                     summary_parts, reduce_budget
                 )
-                summary_context = self._append_graph_context(
+                summary_context, shared_graph_sources = self._append_graph_context_with_sources(
                     summary_context,
-                    self._format_graph_context(shared_graph_contexts),
+                    shared_graph_contexts,
                     token_budget=reduce_budget,
                 )
             except ContextCapacityError:
@@ -2742,6 +2790,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
             emit_progress("completed", total_documents)
             return {
                 "answer": answer,
+                "shared_graph_sources": shared_graph_sources,
                 "truncated": reduce_truncated or any(item["truncated"] for item in mapped),
             }
 
@@ -2773,7 +2822,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
 
         # The structured result is projected in the tool caller's context.
         mapped = state["mapped"]
-        shared_graph_sources = self._graph_sources(state["shared_graph_contexts"])
+        shared_graph_sources = state["shared_graph_sources"]
         all_sources = [source for item in mapped for source in item["sources"]]
         all_graph_sources = shared_graph_sources + [
             source for item in mapped for source in item.get("graph_sources", [])
