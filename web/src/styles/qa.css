@@ -800,7 +800,7 @@
   }
 }
 
-/* 回答真实完成状态胶囊条 */
+/* 回答真实完成状态胶囊条与横向 4 步胶囊流程条 */
 .qa-answer-status {
   display: inline-flex;
   align-items: center;
@@ -814,6 +814,88 @@
   background: var(--color-surface-brand);
   font-size: var(--shell-text-xs);
   font-weight: 500;
+}
+
+.qa-step-track {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) var(--space-0) var(--space-0);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subtle);
+  list-style: none;
+}
+
+.qa-step-track__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: var(--shell-text-xs);
+}
+
+.qa-step-track__badge {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+
+.qa-step-track__item--done .qa-step-track__badge {
+  border-color: var(--color-brand-200);
+  color: var(--color-brand-700);
+  background: var(--color-surface-brand);
+}
+
+.qa-step-track__item--done .qa-step-track__label {
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+
+.qa-step-track__item--active .qa-step-track__badge {
+  border-color: var(--color-brand-600);
+  color: var(--color-primary-cta-text);
+  background: var(--color-brand-600);
+}
+
+.qa-step-track__item--active .qa-step-track__label {
+  color: var(--color-brand-700);
+  font-weight: 600;
+}
+
+.qa-step-track__item--error .qa-step-track__badge {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+}
+
+.qa-step-track__item--error .qa-step-track__label {
+  color: var(--color-danger);
+  font-weight: 500;
+}
+
+.qa-step-track__arrow {
+  margin-left: 2px;
+  color: var(--color-text-muted);
+}
+
+.qa-summary-status__head,
+.qa-summary-status__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
 }
 
 :root[data-theme="midnight"] .qa-workspace,

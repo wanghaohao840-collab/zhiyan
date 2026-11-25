@@ -326,6 +326,20 @@ export function uniqueUsername(prefix: string): string {
   return `${prefix}_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
 }
 
+export function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export async function normalizeOverviewGreeting(
+  page: Page,
+  prefix: "早上好" | "下午好" | "晚上好",
+): Promise<void> {
+  await page.locator(".overview-heading h1").evaluate((heading, nextPrefix) => {
+    heading.textContent =
+      heading.textContent?.replace(/^(早上好|下午好|晚上好)，/, `${nextPrefix}，`) ?? "";
+  }, prefix);
+}
+
 export async function registerUser(
   page: Page,
   appUrl: string,
@@ -337,7 +351,8 @@ export async function registerUser(
   await page.getByLabel("密码", { exact: true }).fill("e2e-only-passphrase");
   await page.getByRole("button", { name: "注册", exact: true }).click();
   await expect(page).toHaveURL(`${appUrl}/overview`, { timeout: 30_000 });
-  await expect(page.getByRole("heading", { level: 1, name: `你好，${username.slice(0, 32)}` })).toBeVisible();
+  const expectedName = new RegExp(`^(早上好|下午好|晚上好)，${escapeRegExp(username.slice(0, 32))}$`);
+  await expect(page.getByRole("heading", { level: 1, name: expectedName })).toBeVisible();
 }
 
 export async function openMore(page: Page, projectName: string) {

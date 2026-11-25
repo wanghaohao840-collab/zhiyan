@@ -108,3 +108,40 @@
   margin-right: var(--space-2);
   accent-color: var(--color-brand-600);
 }
+
+.markdown-preview mark {
+  padding: 0.08em 0.3em;
+  border-radius: var(--radius-sm);
+  color: var(--color-brand-700);
+  background: var(--color-surface-brand);
+}
+
+/* Style B · 深色 AI 感 Markdown 代码块、引用、表格与滚动条精修（零硬编码） */
+:root[data-theme="midnight"] .markdown-preview pre {
+  background: var(--color-canvas);
+  box-shadow: var(--shadow-card);
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-control) transparent;
+}
+
+:root[data-theme="midnight"] .markdown-preview :not(pre) > code {
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-brand-700);
+  background: var(--color-surface-subtle);
+}
+
+:root[data-theme="midnight"] .markdown-preview blockquote {
+  border-left-color: var(--color-brand-600);
+  background: var(--color-surface-translucent);
+}
+
+:root[data-theme="midnight"] .markdown-preview th {
+  color: var(--color-brand-700);
+  background: var(--color-surface-brand);
+}
+
+:root[data-theme="midnight"] .markdown-preview__code,
+:root[data-theme="midnight"] .markdown-preview__table {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-control) transparent;
+}

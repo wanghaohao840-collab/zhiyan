@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/AuthProvider";
 import { useSearchDocumentsQuery, useSearchMutation } from "../features/search/queries";
@@ -19,17 +19,29 @@ export function SearchPage() {
 }
 
 function SearchWorkspace() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [params] = useSearchParams();
   const documents = useSearchDocumentsQuery();
   const [chosen, setChosen] = useState<string[]>([]);
   const linkedDocument = useRef(params.get("documents"));
-  const [query, setQuery] = useState("");
+  const initialPrefill =
+    typeof (location.state as { prefillQuery?: unknown } | null)?.prefillQuery === "string"
+      ? ((location.state as { prefillQuery: string }).prefillQuery).slice(0, 1000)
+      : "";
+  const [query, setQuery] = useState(initialPrefill);
   const [filter, setFilter] = useState("");
   const [limit, setLimit] = useState<SearchInput["limit"]>(10);
   const [detail, setDetail] = useState<SearchResult | null>(null);
   const [initialEditing, setInitialEditing] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const items = documents.data?.items ?? [];
+  useEffect(() => {
+    const incoming = (location.state as { prefillQuery?: unknown } | null)?.prefillQuery;
+    if (typeof incoming !== "string") return;
+    setQuery(incoming.slice(0, 1000));
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+  }, [location.pathname, location.search, location.state, navigate]);
   useEffect(() => {
     const id = linkedDocument.current;
     if (!id || !documents.data) return;

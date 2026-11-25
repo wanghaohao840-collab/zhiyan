@@ -1,3 +1,4 @@
+import { AlertCircle, CheckCircle2, Clock3 } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { ApiError } from "../api/client";
@@ -6,6 +7,7 @@ import { ActivityTrend } from "../components/ActivityTrend/ActivityTrend";
 import { Button } from "../components/Button/Button";
 import { NavigationIcon } from "../components/NavigationIcon/NavigationIcon";
 import { useOverview } from "../features/insights/queries";
+import { useTodayLearningSummary } from "../features/learning/queries";
 import { useTheme } from "../theme/ThemeProvider";
 
 const formatDate = (value: string | null) =>
@@ -13,10 +15,32 @@ const formatDate = (value: string | null) =>
     ? new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium" }).format(new Date(value))
     : "时间未知";
 
+/**
+ * 根据本地真实小时返回问候语：05:00-11:59 早上好，12:00-17:59 下午好，其余晚上好。
+ */
+export function getTimeGreeting(hour = new Date().getHours()): "早上好" | "下午好" | "晚上好" {
+  if (hour >= 5 && hour < 12) return "早上好";
+  if (hour >= 12 && hour < 18) return "下午好";
+  return "晚上好";
+}
+
+/**
+ * 精确计算真实活跃占比（仅基于服务端返回的 active_days / window_days）。
+ */
+export function computeActiveRate(activeDays: number, windowDays: number): number {
+  if (windowDays <= 0 || activeDays <= 0) return 0;
+  return Math.min(100, Math.round((activeDays / windowDays) * 100));
+}
+
+function formatBucketCount(count: number, hasMore: boolean): string {
+  return hasMore ? `${count}+` : String(count);
+}
+
 export function OverviewPage() {
   const auth = useAuth();
   const { theme } = useTheme();
   const query = useOverview();
+  const todayLearning = useTodayLearningSummary();
   const isMidnight = theme === "midnight";
 
   if (query.isPending) {
@@ -40,6 +64,9 @@ export function OverviewPage() {
 
   const { stats, recent_documents: documents, recent_questions: questions } = query.data;
   const totalActions = stats.activity.reduce((sum, day) => sum + day.total, 0);
+  const activeRate = computeActiveRate(stats.active_days, stats.window_days);
+  const greeting = getTimeGreeting();
+  const todayData = todayLearning.data;
   const assets = [
     { count: stats.document_count, label: "文档", path: "/documents" },
     { count: stats.completed_question_count, label: "已完成问答", path: "/qa" },
@@ -56,11 +83,13 @@ export function OverviewPage() {
               ? "智能工作台 · DEEP KNOWLEDGE SPACE"
               : "学习概览 · YOUR KNOWLEDGE, GROWING"}
           </p>
-          <h1>你好，{auth.status === "authenticated" ? auth.username : "学习者"}</h1>
+          <h1>
+            {greeting}，{auth.status === "authenticated" ? auth.username : "学习者"}
+          </h1>
           <p>
             {isMidnight
               ? "今天也是积累的一天，在深邃中连接你的文档与思考。"
-              : "今天继续构建你的知识体系，让每一次理解都有迹可循。"}
+              : "继续学习，让知识在时间中沉淀。"}
           </p>
         </div>
         <Link className="button button--primary button--md" to="/documents">
@@ -76,11 +105,74 @@ export function OverviewPage() {
             </span>
           </header>
           <div className="overview-activity-value">
-            <strong className="tabular-nums">{stats.active_days}</strong>
-            <span>个活跃日</span>
+            <strong className="tabular-nums">{activeRate}%</strong>
+            <span className="tabular-nums">
+              活跃占比 · {stats.active_days}/{stats.window_days} 个活跃日
+            </span>
           </div>
           <ActivityTrend days={stats.activity} />
         </section>
+
+        <section className="insight-panel overview-today" aria-label="今日学习任务">
+          <header>
+            <h2>今日学习任务</h2>
+            <Link to="/learning">学习中心 →</Link>
+          </header>
+          {todayLearning.isPending ? (
+            <p className="overview-today__status" role="status">
+              正在读取今日任务…
+            </p>
+          ) : todayLearning.error || !todayData ? (
+            <div className="overview-today__fallback">
+              <p>今日任务暂时不可用，请前往学习中心查看。</p>
+              <Link to="/learning">打开学习中心</Link>
+            </div>
+          ) : (
+            <>
+              <ul className="overview-today__metrics">
+                <li>
+                  <span className="overview-today__icon overview-today__icon--brand" aria-hidden="true">
+                    <Clock3 size={15} strokeWidth={1.6} />
+                  </span>
+                  <div className="overview-today__copy">
+                    <strong className="tabular-nums">
+                      {formatBucketCount(todayData.todayCount, todayData.todayHasMore)}
+                    </strong>
+                    <span>今日待完成</span>
+                  </div>
+                </li>
+                <li>
+                  <span className="overview-today__icon overview-today__icon--success" aria-hidden="true">
+                    <CheckCircle2 size={15} strokeWidth={1.6} />
+                  </span>
+                  <div className="overview-today__copy">
+                    <strong className="tabular-nums">
+                      {formatBucketCount(todayData.completedCount, todayData.completedHasMore)}
+                    </strong>
+                    <span>今日已完成</span>
+                  </div>
+                </li>
+                <li>
+                  <span className="overview-today__icon overview-today__icon--warning" aria-hidden="true">
+                    <AlertCircle size={15} strokeWidth={1.6} />
+                  </span>
+                  <div className="overview-today__copy">
+                    <strong className="tabular-nums">
+                      {formatBucketCount(todayData.overdueCount, todayData.overdueHasMore)}
+                    </strong>
+                    <span>逾期未完成</span>
+                  </div>
+                </li>
+              </ul>
+              <p className="overview-today__next">
+                {todayData.nextTask
+                  ? `下一步：${todayData.nextTask.title}`
+                  : "今日暂无待办，可在学习中心按文档制定学习计划。"}
+              </p>
+            </>
+          )}
+        </section>
+
         <section className="insight-panel overview-assets" aria-label="学习指标">
           <header>
             <h2>你的知识资产</h2>
@@ -98,6 +190,7 @@ export function OverviewPage() {
             ))}
           </div>
         </section>
+
         <aside className="overview-reflection">
           <span className="overview-kicker">留一点时间，给理解</span>
           <span className="overview-quote-mark" aria-hidden="true">

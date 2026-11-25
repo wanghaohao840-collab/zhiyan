@@ -1,7 +1,14 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
 
-import { expect, notesTest as test, registerUser, settleVisuals } from "./fixtures";
+import {
+  escapeRegExp,
+  expect,
+  normalizeOverviewGreeting,
+  notesTest as test,
+  registerUser,
+  settleVisuals,
+} from "./fixtures";
 
 async function assertAccessibleAndNoOverflow(page: Page, label: string) {
   await settleVisuals(page);
@@ -28,7 +35,15 @@ test("captures deterministic baselines for overview, search, insights and learni
   const username = `pages_base_${testInfo.project.name}`;
   await registerUser(page, appUrl, username);
 
-  await expect(page.getByRole("heading", { level: 1, name: `你好，${username}` })).toBeVisible();
+  await expect(
+    page.getByRole("heading", {
+      level: 1,
+      name: new RegExp(`^(早上好|下午好|晚上好)，${escapeRegExp(username)}$`),
+    }),
+  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "今日学习任务" })).toBeVisible();
+  await expect(page.getByText("活跃占比 · 0/30 个活跃日")).toBeVisible();
+  await normalizeOverviewGreeting(page, "早上好");
   await assertAccessibleAndNoOverflow(page, "overview");
   await expect(page).toHaveScreenshot("overview-default.png");
 

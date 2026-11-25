@@ -1,5 +1,6 @@
 import {
   expect,
+  normalizeOverviewGreeting,
   openMore,
   registerUser,
   settleVisuals,
@@ -25,6 +26,10 @@ test("login baseline", async ({ appUrl, page }) => {
 
 test("authenticated shell baseline", async ({ appUrl, page }, testInfo) => {
   await registerUser(page, appUrl, `visual_shell_${testInfo.project.name}`);
+  await expect(page.getByRole("region", { name: "今日学习任务" })).toBeVisible();
+  // Normalize only the volatile local-hour greeting prefix so the fixed pixel
+  // baseline remains deterministic across morning, afternoon and evening runs.
+  await normalizeOverviewGreeting(page, "早上好");
   await settleVisuals(page);
   await expect(page).toHaveScreenshot("shell.png");
 });

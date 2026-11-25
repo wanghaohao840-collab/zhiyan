@@ -91,6 +91,88 @@ function noteDraftHref(kind: "qa_answer" | "qa_citation", messageId: string, cit
   return `/notes?${params.toString()}`;
 }
 
+type StepState = "done" | "active" | "idle" | "error";
+
+interface ProgressStepItem {
+  label: string;
+  state: StepState;
+}
+
+/**
+ * 基于真实服务端消息/任务状态的横向 4 步胶囊流程条（不编造未由后端返回的逐字思考日志）。
+ */
+function QaStepTrack({ steps, ariaLabel }: { steps: ProgressStepItem[]; ariaLabel: string }) {
+  return (
+    <ol className="qa-step-track" aria-label={ariaLabel}>
+      {steps.map((step, index) => (
+        <li key={step.label} className={`qa-step-track__item qa-step-track__item--${step.state}`}>
+          <span className="qa-step-track__badge tabular-nums" aria-hidden="true">
+            {index + 1}
+          </span>
+          <span className="qa-step-track__label">{step.label}</span>
+          {index < steps.length - 1 ? (
+            <span className="qa-step-track__arrow" aria-hidden="true">
+              →
+            </span>
+          ) : null}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function buildMessageSteps(message: QaMessage): ProgressStepItem[] {
+  if (message.status === "pending") {
+    return [
+      { label: "接收问题", state: "done" },
+      { label: "文档检索", state: "active" },
+      { label: "引用整理", state: "idle" },
+      { label: "生成回答", state: "idle" },
+    ];
+  }
+  if (message.status === "failed") {
+    return [
+      { label: "接收问题", state: "done" },
+      { label: "文档检索", state: "error" },
+      { label: "引用整理", state: "idle" },
+      { label: "生成回答", state: "idle" },
+    ];
+  }
+  const hasSources = message.sources.length > 0;
+  return [
+    { label: "接收问题", state: "done" },
+    { label: "文档检索", state: "done" },
+    { label: hasSources ? `证据引用 (${message.sources.length})` : "证据核对", state: "done" },
+    { label: "生成回答", state: "done" },
+  ];
+}
+
+function buildSummarySteps(job: QaJob): ProgressStepItem[] {
+  if (job.status === "completed") {
+    return [
+      { label: "任务排队", state: "done" },
+      { label: "聚合对话", state: "done" },
+      { label: "提炼摘要", state: "done" },
+      { label: "保存结果", state: "done" },
+    ];
+  }
+  if (job.status === "failed" || job.status === "cancelled") {
+    return [
+      { label: "任务排队", state: "done" },
+      { label: "聚合对话", state: "error" },
+      { label: "提炼摘要", state: "idle" },
+      { label: "保存结果", state: "idle" },
+    ];
+  }
+  const progress = job.progress;
+  const activeIndex = job.status === "queued" ? 0 : progress < 40 ? 1 : progress < 80 ? 2 : 3;
+  const labels = ["任务排队", "聚合对话", "提炼摘要", "保存结果"];
+  return labels.map((label, index) => ({
+    label,
+    state: index < activeIndex ? "done" : index === activeIndex ? "active" : "idle",
+  }));
+}
+
 export function MessageList({
   messages,
   onSources,
@@ -147,6 +229,9 @@ export function MessageList({
             ) : (
               <p>{message.content || (message.status === "failed" ? "回答失败，原问题已保留。" : "")}</p>
             )}
+            {message.role === "assistant" ? (
+              <QaStepTrack steps={buildMessageSteps(message)} ariaLabel="回答处理阶段" />
+            ) : null}
             {message.status === "failed" ? (
               <div className="qa-message__failure" role="alert">
                 <span>{message.safe_error_code ?? "QA_OPERATION_FAILED"}</span>
@@ -312,17 +397,20 @@ export function SummaryStatus({ job, onCancel }: { job?: QaJob; onCancel: () => 
   const active = job.status === "queued" || job.status === "running";
   return (
     <section className="qa-summary-status" data-status={job.status} aria-live="polite">
-      <strong>
-        学习摘要 · {active ? "生成中" : job.status === "completed" ? "已完成" : job.status === "cancelled" ? "已取消" : "失败"}
-      </strong>
-      <span className="tabular-nums">
-        {job.stage} · {job.progress}%{job.safe_error_code ? ` · ${job.safe_error_code}` : ""}
-      </span>
+      <div className="qa-summary-status__head">
+        <strong>
+          学习摘要 · {active ? "生成中" : job.status === "completed" ? "已完成" : job.status === "cancelled" ? "已取消" : "失败"}
+        </strong>
+        <span className="tabular-nums">
+          {job.stage} · {job.progress}%{job.safe_error_code ? ` · ${job.safe_error_code}` : ""}
+        </span>
+      </div>
+      <QaStepTrack steps={buildSummarySteps(job)} ariaLabel="摘要任务阶段" />
       {active ? (
-        <>
+        <div className="qa-summary-status__actions">
           <span className="qa-summary-status__skeleton" aria-hidden="true" />
           <Button hierarchy="ghost" onClick={onCancel}>取消生成</Button>
-        </>
+        </div>
       ) : null}
     </section>
   );

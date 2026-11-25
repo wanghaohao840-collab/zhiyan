@@ -1,7 +1,7 @@
 import { expect, openMore, registerUser, test, uniqueUsername } from "./fixtures";
 
 const destinations = [
-  { path: "/overview", desktop: "概览", mobile: "概览", heading: /^你好，/ },
+  { path: "/overview", desktop: "概览", mobile: "概览", heading: /^(早上好|下午好|晚上好)，/ },
   { path: "/documents", desktop: "文档库", mobile: "文档", heading: "文档库" },
   { path: "/qa", desktop: "智能问答", mobile: "问答", heading: "智能问答" },
   { path: "/search", desktop: "文献检索", mobile: "检索", heading: "文献检索" },

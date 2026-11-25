@@ -30,7 +30,7 @@
 - 仓库单一事实源为根目录 [`DESIGN.md`](../../DESIGN.md) 与支持 W3C DTCG `$modes` 双模的 [`design/tokens/zhiyan.tokens.json`](../../design/tokens/zhiyan.tokens.json)（经 [`scripts/design_tokens.mjs`](../../scripts/design_tokens.mjs) 编译为 [`web/src/styles/tokens.css`](../../web/src/styles/tokens.css)）；
 - 通过 `@fontsource-variable/inter` 自托管单一拉丁 WOFF2 子集（零外链、自动同源 `preload`）；
 - 全站 5 套业务弹层及 `MoreDrawer` 统一收敛至 `OverlayDialog` 原语，QA 单条引用转笔记唯一收敛于右侧 `SourcePanel`；
-- 全站固定像素基线扩展至 56 张（`visual.spec.ts` 22 张契约基线、`qa.spec.ts` 8 张、`notes.spec.ts` 4 张、新增 `pages-baselines.spec.ts` 4 页三视口 12 张、`theme-dual-mode.spec.ts` Style B 10 张）；
+- 全站固定像素基线扩展至 58 张（`visual.spec.ts` 22 张契约基线、`qa.spec.ts` 8 张、`notes.spec.ts` 4 张、新增 `pages-baselines.spec.ts` 4 页三视口 12 张、`theme-dual-mode.spec.ts` Style B 含笔记 Markdown 预览共 12 张，并覆盖 Search/Notes/Insights/Learning 四页 Style B 的 Axe 与 `320px` 零溢出）；
 - 旧 Penpot 画板仅保留历史参考与导出映射契约，未同步改动远端画板。
 
 （历史记录：2026-09-10 浅色界面视觉依据为用户确认的左侧参考图及
@@ -219,7 +219,7 @@ mobile `390 × 844`。认证、导航、键盘焦点与响应式行为在这些�
 应用外壳基线位于 `web/e2e/visual.spec.ts-snapshots/`（22 张锁定契约），QA 八态基线位于
 `web/e2e/qa.spec.ts-snapshots/`（8 张），Notes 基线位于 `web/e2e/notes.spec.ts-snapshots/`（4 张），
 概览/检索/洞察/学习中心三视口基线位于 `web/e2e/pages-baselines.spec.ts-snapshots/`（12 张），
-Style B 深色 AI 感与双主题切换基线位于 `web/e2e/theme-dual-mode.spec.ts-snapshots/`（10 张）。截图禁用动画、隐藏插入光标并
+Style B 深色 AI 感与双主题切换基线位于 `web/e2e/theme-dual-mode.spec.ts-snapshots/`（12 张，含笔记深色 Markdown 预览）。截图禁用动画、隐藏插入光标并
 启用 reduced motion。只有 Penpot 批准的视觉变化或经过审阅的有意实现变更才可
 运行 `npx playwright test --update-snapshots`；更新前后必须以匹配视口对照
 [`reference/penpot/`](reference/penpot/)，逐张检查布局、换行、状态和裁切。不要

@@ -284,6 +284,19 @@ describe("AppShell", () => {
     expect(within(drawer).getByRole("button", { name: "退出登录" })).toHaveFocus();
   });
 
+  it("navigates to /search with in-memory prefill when pressing Enter in TopBar quick search", async () => {
+    mockAuthenticatedSession();
+    const router = renderShell("/overview");
+    const user = userEvent.setup();
+
+    const input = await screen.findByLabelText("快捷检索文档或内容");
+    await user.type(input, "GraphRAG 检索{Enter}");
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/search"));
+    expect(router.state.location.search).toBe("");
+    expect(router.state.location.state).toEqual({ prefillQuery: "GraphRAG 检索" });
+  });
+
   it("logs out through the Task 3 authentication contract", async () => {
     mockAuthenticatedSession();
     const router = renderShell();

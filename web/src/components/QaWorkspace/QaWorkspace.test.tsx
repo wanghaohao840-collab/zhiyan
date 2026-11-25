@@ -147,6 +147,8 @@ describe("QA workspace components", () => {
     );
 
     expect(screen.getByRole("heading", { level: 3, name: "核心结论" })).toBeVisible();
+    expect(screen.getByRole("list", { name: "回答处理阶段" })).toBeVisible();
+    expect(screen.getByText("证据引用 (2)")).toBeVisible();
     expect(document.querySelector("script")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /记录引用/ })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /\[2\]/ }));
