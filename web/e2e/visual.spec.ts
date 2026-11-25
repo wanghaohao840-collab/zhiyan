@@ -101,6 +101,8 @@ test("server error baseline", async ({ appServer, appUrl, page }) => {
   // Windows filesystem while the browser resolves the failed request.
   test.slow();
   await page.goto(`${appUrl}/login`);
+  await expect(page.getByRole("heading", { level: 1, name: "登录" })).toBeVisible();
+  await settleVisuals(page);
   await appServer.stop();
   try {
     await fillLogin(page);

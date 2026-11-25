@@ -1057,3 +1057,13 @@
     width: 100%;
   }
 }
+
+:root[data-theme="midnight"] .notes-list,
+:root[data-theme="midnight"] .notes-editor,
+:root[data-theme="midnight"] .notes-source,
+:root[data-theme="midnight"] .notes-welcome,
+:root[data-theme="midnight"] .notes-dialog,
+:root[data-theme="midnight"] .notes-sheet {
+  background: var(--color-surface-translucent);
+  backdrop-filter: blur(18px);
+}

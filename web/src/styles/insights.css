@@ -2,6 +2,8 @@
 .overview-page,
 .insights-page {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: var(--space-6);
 }
 
@@ -446,19 +448,25 @@
 
 .insights-page [role="tabpanel"] {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: var(--space-5);
 }
 
 .activity-chart {
+  position: relative;
   display: flex;
   align-items: end;
   gap: 4px;
+  max-width: 100%;
+  min-width: 0;
   height: 180px;
   margin-top: var(--space-6);
   overflow-x: auto;
 }
 
 .activity-day {
+  position: relative;
   display: grid;
   grid-template-rows: 1fr auto;
   align-items: end;
@@ -659,4 +667,26 @@
   .report-downloads a {
     min-height: 44px;
   }
+}
+
+/* Style B · 深色 AI 感专属玻璃与曲线微光强化 */
+:root[data-theme="midnight"] .insight-panel,
+:root[data-theme="midnight"] .metric-grid article,
+:root[data-theme="midnight"] .overview-reflection {
+  background: var(--color-surface-translucent);
+  backdrop-filter: blur(18px);
+}
+
+:root[data-theme="midnight"] .overview-reflection {
+  border: 1px solid var(--color-border-subtle);
+  background: radial-gradient(
+      ellipse 90% 80% at 100% 0%,
+      var(--color-surface-brand) 0%,
+      transparent 70%
+    ),
+    var(--color-surface-translucent);
+}
+
+:root[data-theme="midnight"] .activity-trend__line {
+  filter: drop-shadow(0 0 6px var(--color-brand-200));
 }

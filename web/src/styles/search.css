@@ -828,6 +828,14 @@
   }
 }
 
+:root[data-theme="midnight"] .search-scope,
+:root[data-theme="midnight"] .research-command-bar,
+:root[data-theme="midnight"] .search-result,
+:root[data-theme="midnight"] .search-detail {
+  background: var(--color-surface-translucent);
+  backdrop-filter: blur(18px);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .search-page *,
   .search-page *::before,

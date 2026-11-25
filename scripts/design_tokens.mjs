@@ -35,8 +35,13 @@ function formatSingleShadow(value) {
     formatDimension(value?.blur),
     formatDimension(value?.spread),
   ];
-  if (typeof value?.color === "string" && dimensions.every(Boolean)) {
-    return `${dimensions.join(" ")} ${value.color}`;
+  if (
+    typeof value?.color === "string" &&
+    dimensions.every(Boolean) &&
+    (value?.inset === undefined || typeof value.inset === "boolean")
+  ) {
+    const prefix = value.inset ? "inset " : "";
+    return `${prefix}${dimensions.join(" ")} ${value.color}`;
   }
   return null;
 }
@@ -149,14 +154,37 @@ export function flattenTokens(root) {
   return entries;
 }
 
-export function renderCss(tokens) {
-  const entries = flattenTokens(tokens).sort(([left], [right]) =>
-    left.localeCompare(right),
-  );
+function renderRuleBlock(selector, entries) {
   const declarations = entries
+    .slice()
+    .sort(([left], [right]) => left.localeCompare(right))
     .map(([name, value]) => `  --${name}: ${value};`)
     .join("\n");
-  return `:root {\n${declarations}\n}\n`;
+  return `${selector} {\n${declarations}\n}`;
+}
+
+export function renderCss(tokens) {
+  const blocks = [renderRuleBlock(":root", flattenTokens(tokens))];
+  if (Object.hasOwn(tokens, "$modes")) {
+    const modes = tokens.$modes;
+    if (!modes || typeof modes !== "object" || Array.isArray(modes)) {
+      throw new Error("Invalid $modes block");
+    }
+    for (const modeName of Object.keys(modes).sort((left, right) =>
+      left.localeCompare(right),
+    )) {
+      if (!/^[a-z0-9-]+$/.test(modeName)) {
+        throw new Error(`Invalid theme mode name: ${modeName}`);
+      }
+      blocks.push(
+        renderRuleBlock(
+          `:root[data-theme="${modeName}"]`,
+          flattenTokens(modes[modeName]),
+        ),
+      );
+    }
+  }
+  return `${blocks.join("\n\n")}\n`;
 }
 
 export function loadTokens(inputPath) {

@@ -7,6 +7,7 @@ import { NoteClearDialog } from "./NoteClearDialog";
 import { NoteEditor, type EditorDraft } from "./NoteEditor";
 import { NoteList } from "./NoteList";
 import { NoteSourcePanel } from "./NoteSourcePanel";
+import { OverlayDialog } from "../ui";
 import "./notes-workspace.css";
 
 export type NoteSaveInput = { body_markdown: string; concept: string | null; tags: string[]; expected_version?: number; client_request_id?: string };
@@ -21,11 +22,21 @@ const emptyDraft: EditorDraft = { body_markdown: "", concept: "", tags: [] };
 const message = (error: unknown, fallback: string) => error instanceof ApiError ? error.message : fallback;
 
 function NotesOverlay({ label, onClose, returnFocusTo, children }: { label: string; onClose: () => void; returnFocusTo?: HTMLElement | null; children: React.ReactNode }) {
-  const panel = useRef<HTMLElement>(null);
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
-  useEffect(() => { const prior = document.body.style.overflow; document.body.style.overflow = "hidden"; panel.current?.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled])')?.focus(); const keyDown = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); closeRef.current(); return; } if (event.key !== "Tab") return; const focusable = Array.from(panel.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), a[href]') ?? []); const first = focusable[0]; const last = focusable.at(-1); if (!first || !last) return; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } }; window.addEventListener("keydown", keyDown); return () => { window.removeEventListener("keydown", keyDown); document.body.style.overflow = prior; returnFocusTo?.focus(); }; }, [returnFocusTo]);
-  return <div className="notes-overlay"><button className="notes-overlay__scrim" aria-label={`关闭${label}遮罩`} onClick={onClose} /><section ref={panel} className="notes-dialog" role="dialog" aria-modal="true" aria-label={label}>{children}</section></div>;
+  return (
+    <OverlayDialog
+      open
+      hideHeader
+      ariaLabel={label}
+      layerClassName="notes-overlay"
+      scrimClassName="notes-overlay__scrim"
+      scrimLabel={`关闭${label}遮罩`}
+      panelClassName="notes-dialog"
+      returnFocusTo={returnFocusTo}
+      onClose={onClose}
+    >
+      {children}
+    </OverlayDialog>
+  );
 }
 
 export function NotesWorkspace({ onResetFilters, onOpenSearch, items, selectedNote, selectedId, selectedLoading = false, selectedError, hasMore = false, loadingMore = false, saving = false, actionError, onSelect, onSave, onCommitted, onCreate, onDelete, onClear, onRetryProjection, onLoadMore = () => undefined, onReload, onBack, clearing = false, onOpenQa = () => undefined, queryValue = "", tagsValue = "", sourceValue = "", onFilterChange, onDirtyChange }: Props) {

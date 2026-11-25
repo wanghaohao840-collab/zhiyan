@@ -275,6 +275,10 @@ describe("AppShell", () => {
     await user.tab();
     expect(within(drawer).getByRole("link", { name: "学习中心" })).toHaveFocus();
     await user.tab();
+    expect(within(drawer).getByRole("button", { name: "极简知识感" })).toHaveFocus();
+    await user.tab();
+    expect(within(drawer).getByRole("button", { name: "深色 AI 感" })).toHaveFocus();
+    await user.tab();
     await user.tab();
 
     expect(within(drawer).getByRole("button", { name: "退出登录" })).toHaveFocus();

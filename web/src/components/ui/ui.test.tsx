@@ -2,7 +2,8 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { EmptyState, OverlayDialog, PageHeader, Skeleton, StatusBadge } from "./index";
+import { ThemeProvider } from "../../theme/ThemeProvider";
+import { EmptyState, OverlayDialog, PageHeader, Skeleton, StatusBadge, ThemeSwitcher } from "./index";
 
 describe("shared UI primitives", () => {
   it("renders PageHeader with semantic heading, description and actions", () => {
@@ -68,5 +69,31 @@ describe("shared UI primitives", () => {
     );
     expect(trigger).toHaveFocus();
     trigger.remove();
+  });
+
+  it("switches between paper and midnight themes and persists preference cleanly", async () => {
+    window.localStorage.removeItem("zhiyan.ui.theme");
+    document.documentElement.dataset.theme = "paper";
+    const user = userEvent.setup();
+    render(
+      <ThemeProvider>
+        <ThemeSwitcher />
+      </ThemeProvider>,
+    );
+
+    const paperButton = screen.getByRole("button", { name: "极简知识感" });
+    const midnightButton = screen.getByRole("button", { name: "深色 AI 感" });
+    expect(paperButton).toHaveAttribute("aria-pressed", "true");
+    expect(midnightButton).toHaveAttribute("aria-pressed", "false");
+
+    await user.click(midnightButton);
+    expect(document.documentElement.dataset.theme).toBe("midnight");
+    expect(window.localStorage.getItem("zhiyan.ui.theme")).toBe("midnight");
+    expect(midnightButton).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(paperButton);
+    expect(document.documentElement.dataset.theme).toBe("paper");
+    expect(window.localStorage.getItem("zhiyan.ui.theme")).toBe("paper");
+    window.localStorage.removeItem("zhiyan.ui.theme");
   });
 });

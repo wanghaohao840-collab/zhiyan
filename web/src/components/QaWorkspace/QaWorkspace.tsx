@@ -1,44 +1,25 @@
-import { Plus, X } from "lucide-react";
-import { type KeyboardEvent, type PropsWithChildren, useEffect, useRef, useState } from "react";
+import { ArrowUp, CheckCircle2, Plus } from "lucide-react";
+import { type PropsWithChildren, useRef, useState } from "react";
 import { Button } from "../Button/Button";
 import { MarkdownPreview } from "../MarkdownPreview/MarkdownPreview";
-import { ConstellationMark } from "../ui/ConstellationMark";
+import { ConstellationMark, OverlayDialog } from "../ui";
 import type { QaConversation, QaJob, QaMessage, QaMode, QaSource } from "../../features/qa/types";
-
-const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 type OverlayProps = PropsWithChildren<{ title: string; className?: string; onClose: () => void; returnFocusTo?: HTMLElement | null }>;
 export function QaOverlay({ title, className = "", onClose, returnFocusTo, children }: OverlayProps) {
-  const panel = useRef<HTMLDivElement>(null);
-  const close = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    close.current?.focus();
-    return () => { document.body.style.overflow = overflow; returnFocusTo?.focus(); };
-  }, [returnFocusTo]);
-  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
-    if (event.key !== "Tab") return;
-    const items = Array.from(panel.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []);
-    const first = items[0]; const last = items.at(-1);
-    if (!first || !last) event.preventDefault();
-    else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-  }
   return (
-    <div className="qa-overlay">
-      <button className="qa-overlay__scrim" tabIndex={-1} aria-hidden="true" onClick={onClose} />
-      <div ref={panel} className={`qa-overlay__panel ${className}`} role="dialog" aria-modal="true" aria-label={title} onKeyDown={onKeyDown}>
-        <header>
-          <h2>{title}</h2>
-          <button ref={close} className="qa-icon-button" aria-label={`关闭${title}`} onClick={onClose}>
-            <X size={18} strokeWidth={1.6} aria-hidden="true" />
-          </button>
-        </header>
-        {children}
-      </div>
-    </div>
+    <OverlayDialog
+      open
+      title={title}
+      closeLabel={`关闭${title}`}
+      layerClassName="qa-overlay"
+      scrimClassName="qa-overlay__scrim"
+      panelClassName={`qa-overlay__panel ${className}`.trim()}
+      returnFocusTo={returnFocusTo}
+      onClose={onClose}
+    >
+      {children}
+    </OverlayDialog>
   );
 }
 
@@ -147,6 +128,16 @@ export function MessageList({
             data-status={message.status}
           >
             <span className="qa-message__role">{message.role === "user" ? "你" : "知研"}</span>
+            {message.role === "assistant" && message.status === "completed" ? (
+              <div className="qa-answer-status">
+                <CheckCircle2 size={14} strokeWidth={1.6} aria-hidden="true" />
+                <span>
+                  {message.sources.length
+                    ? `已完成文档检索与组织 · 参考来源 ${message.sources.length} 条`
+                    : "已完成回答"}
+                </span>
+              </div>
+            ) : null}
             {message.status === "pending" ? (
               <p className="qa-message__pending" role="status">正在查找并组织答案…</p>
             ) : message.role === "assistant" && message.content ? (
@@ -189,15 +180,6 @@ export function MessageList({
             {notesEnabled && message.role === "assistant" && message.status === "completed" ? (
               <div className="qa-message__note-actions">
                 <a className="qa-note-action" href={noteDraftHref("qa_answer", message.message_id)}>记为笔记</a>
-                {message.sources.map((source, index) => (
-                  <a
-                    key={source.citation_id}
-                    className="qa-note-action"
-                    href={noteDraftHref("qa_citation", message.message_id, source.citation_id)}
-                  >
-                    {message.sources.length === 1 ? "记录此引用" : `记录引用 [${index + 1}]`}
-                  </a>
-                ))}
               </div>
             ) : null}
           </li>
@@ -239,7 +221,10 @@ export function QaComposer({ busy, documentCount, onSubmit }: { busy: boolean; d
           <option value="joint">联合分析</option>
           <option value="compare" disabled={documentCount < 2}>对比（需至少两篇文档）</option>
         </select>
-        <Button loading={busy} onClick={submit}>发送</Button>
+        <Button loading={busy} onClick={submit}>
+          <ArrowUp size={15} strokeWidth={1.6} aria-hidden="true" />
+          发送
+        </Button>
       </div>
     </div>
   );

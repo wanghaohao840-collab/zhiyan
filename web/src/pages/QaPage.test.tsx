@@ -109,7 +109,8 @@ describe("QaPage", () => {
       "href",
       "/notes?source_kind=qa_answer&qa_message_id=message-complete",
     );
-    expect(screen.getByRole("link", { name: "记录此引用" })).toHaveAttribute(
+    expect(screen.queryByRole("link", { name: "记录此引用" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "存入笔记" })).toHaveAttribute(
       "href",
       "/notes?source_kind=qa_citation&qa_message_id=message-complete&citation_id=S-1",
     );
@@ -119,14 +120,14 @@ describe("QaPage", () => {
     renderPage(true, `/qa?conversation=${conversation.conversation_id}`, [completedMessage], { notesCapability: "disabled" });
     expect(await screen.findByText("服务器证据")).toBeVisible();
     expect(screen.queryByRole("link", { name: "记为笔记" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "记录此引用" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "存入笔记" })).not.toBeInTheDocument();
   });
 
   it.each(["pending", "error"] as const)("fails closed while Notes capability is %s", async (notesCapability) => {
     renderPage(true, `/qa?conversation=${conversation.conversation_id}`, [completedMessage], { notesCapability });
     expect(await screen.findByText("服务器证据")).toBeVisible();
     expect(screen.queryByRole("link", { name: "记为笔记" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "记录此引用" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "存入笔记" })).not.toBeInTheDocument();
   });
 
   it("renders durable summary completion and deletion confirmation", async () => {

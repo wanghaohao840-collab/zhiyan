@@ -1,4 +1,4 @@
-/* 知研全局基础样式与认证页（Paper & Forest v2.0） */
+/* 知研全局基础样式与双气质认证页（Style A 极简知识感 × Style B 深色 AI 感） */
 * {
   box-sizing: border-box;
 }
@@ -12,6 +12,15 @@ html {
   text-rendering: optimizeLegibility;
 }
 
+html[data-theme="midnight"] {
+  color-scheme: dark;
+}
+
+html.theme-switching,
+html.theme-switching * {
+  transition: none !important;
+}
+
 @media (pointer: fine) {
   html {
     overscroll-behavior: none;
@@ -22,6 +31,12 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: var(--space-0);
+  background: radial-gradient(
+      ellipse 70% 42% at 62% -8%,
+      var(--color-canvas-glow) 0%,
+      transparent 72%
+    ),
+    var(--color-canvas);
   line-height: var(--leading-ui);
 }
 
@@ -75,26 +90,56 @@ a:hover {
   color: var(--color-text-secondary);
 }
 
-/* 登录与注册：暖纸编辑感双栏布局 */
+/* 登录与注册：双气质 1:1 复刻布局 */
 .auth-page {
+  position: relative;
   display: grid;
   min-height: 100vh;
   min-height: 100dvh;
-  background: var(--color-canvas);
+  background: radial-gradient(
+      ellipse 72% 48% at 70% 0%,
+      var(--color-canvas-glow) 0%,
+      transparent 72%
+    ),
+    var(--color-canvas);
+}
+
+.auth-topbar {
+  position: fixed;
+  z-index: 20;
+  top: var(--space-4);
+  right: var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .auth-intro {
+  position: relative;
   min-height: 168px;
   padding: var(--space-6);
+  padding-top: calc(var(--space-12) + var(--space-3));
   color: var(--color-text-primary);
   background: radial-gradient(
     ellipse at 32% 82%,
     var(--color-surface-brand) 0%,
-    var(--color-canvas) 68%
+    var(--color-canvas) 70%
   );
+  overflow: hidden;
+}
+
+:root[data-theme="midnight"] .auth-intro {
+  background: radial-gradient(
+      ellipse 80% 70% at 62% 54%,
+      var(--color-canvas-glow) 0%,
+      transparent 68%
+    ),
+    var(--color-canvas);
 }
 
 .auth-intro__brand {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -137,11 +182,44 @@ a:hover {
   font-weight: 600;
 }
 
+:root[data-theme="midnight"] .auth-intro__hero h2 {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+
+.auth-intro__art-frame {
+  position: relative;
+  margin: var(--space-2) var(--space-0);
+  border-radius: var(--radius-elevated);
+  overflow: hidden;
+}
+
 .auth-intro__art {
   display: block;
   width: 100%;
   height: auto;
   mix-blend-mode: multiply;
+}
+
+:root[data-theme="midnight"] .auth-intro__art-frame {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+:root[data-theme="midnight"] .auth-intro__art {
+  mix-blend-mode: lighten;
+  mask-image: radial-gradient(
+    ellipse 84% 82% at 54% 52%,
+    black 48%,
+    transparent 98%
+  );
+  -webkit-mask-image: radial-gradient(
+    ellipse 84% 82% at 54% 52%,
+    black 48%,
+    transparent 98%
+  );
 }
 
 .auth-intro__caption {
@@ -157,6 +235,12 @@ a:hover {
   font-family: var(--font-serif);
 }
 
+:root[data-theme="midnight"] .auth-intro__caption em {
+  font-family: var(--font-mono);
+  font-style: normal;
+  letter-spacing: 0.06em;
+}
+
 .auth-intro__mobile-tagline {
   margin: var(--space-4) var(--space-0) var(--space-0);
   color: var(--color-brand-700);
@@ -170,6 +254,12 @@ a:hover {
   border-radius: var(--radius-elevated);
   background: var(--color-surface);
   box-shadow: var(--shadow-card);
+}
+
+:root[data-theme="midnight"] .auth-card {
+  background: var(--color-surface-translucent);
+  backdrop-filter: blur(20px);
+  box-shadow: var(--shadow-surface);
 }
 
 .auth-card h1 {
@@ -271,25 +361,27 @@ a:hover {
 .auth-submit {
   width: 100%;
   min-height: 44px;
-  border: 1px solid var(--color-brand-600);
+  border: 1px solid var(--color-primary-cta-bg);
   border-radius: var(--radius-md);
-  color: var(--color-surface);
-  background: var(--color-brand-600);
+  color: var(--color-primary-cta-text);
+  background: var(--color-primary-cta-bg);
   cursor: pointer;
   font-weight: 500;
   transition: background-color var(--duration-fast) var(--ease-standard),
     border-color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard),
     opacity var(--duration-fast) var(--ease-standard);
 }
 
 .auth-submit:hover:not(:disabled) {
-  border-color: var(--color-brand-700);
-  background: var(--color-brand-700);
+  border-color: var(--color-primary-cta-bg-hover);
+  background: var(--color-primary-cta-bg-hover);
 }
 
 .auth-submit:active:not(:disabled) {
-  border-color: var(--color-brand-800);
-  background: var(--color-brand-800);
+  border-color: var(--color-primary-cta-bg-active);
+  background: var(--color-primary-cta-bg-active);
+  transform: scale(0.98);
 }
 
 .auth-submit:disabled {
@@ -314,20 +406,13 @@ a:hover {
   place-items: center;
 }
 
-.session-dialog-layer::before {
-  position: absolute;
-  inset: var(--space-0);
-  background: var(--color-scrim);
-  content: "";
-}
-
 .session-dialog {
   position: relative;
   width: min(100%, 480px);
   padding: var(--space-8);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-elevated);
-  background: var(--color-surface);
+  background: var(--color-surface-elevated);
   box-shadow: var(--shadow-dialog);
   overscroll-behavior: contain;
 }
@@ -359,10 +444,10 @@ a:hover {
   min-width: 128px;
   min-height: 44px;
   padding: var(--space-2) var(--space-4);
-  border: 1px solid var(--color-brand-600);
+  border: 1px solid var(--color-primary-cta-bg);
   border-radius: var(--radius-md);
-  color: var(--color-surface);
-  background: var(--color-brand-600);
+  color: var(--color-primary-cta-text);
+  background: var(--color-primary-cta-bg);
   cursor: pointer;
   font-weight: 500;
   transition: background-color var(--duration-fast) var(--ease-standard),
@@ -370,8 +455,8 @@ a:hover {
 }
 
 .session-dialog__actions button:hover {
-  border-color: var(--color-brand-700);
-  background: var(--color-brand-700);
+  border-color: var(--color-primary-cta-bg-hover);
+  background: var(--color-primary-cta-bg-hover);
 }
 
 .session-dialog__actions .session-dialog__secondary {
@@ -618,8 +703,12 @@ a:hover {
   padding: var(--space-6);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-elevated);
-  background: var(--color-surface);
+  background: var(--color-surface-elevated);
   box-shadow: var(--shadow-dialog);
+}
+
+:root[data-theme="midnight"] .ui-overlay__panel {
+  backdrop-filter: blur(22px);
 }
 
 .ui-overlay__panel--drawer {
@@ -671,12 +760,78 @@ a:hover {
   gap: var(--space-4);
 }
 
+/* 双气质主题切换药丸控件 */
+.theme-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-subtle);
+  box-shadow: var(--shadow-card);
+}
+
+.theme-switcher__option {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  color: var(--color-text-secondary);
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  transition: background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
+}
+
+.theme-switcher__option:hover:not(.is-active) {
+  color: var(--color-text-primary);
+}
+
+.theme-switcher__option:active {
+  transform: scale(0.97);
+}
+
+.theme-switcher__option.is-active {
+  border-color: var(--color-border-subtle);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+:root[data-theme="midnight"] .theme-switcher {
+  background: var(--color-surface-translucent);
+  backdrop-filter: blur(12px);
+}
+
+:root[data-theme="midnight"] .theme-switcher__option.is-active {
+  border-color: var(--color-brand-200);
+  color: var(--color-brand-700);
+  background: var(--color-surface-brand);
+}
+
+.theme-switcher--compact .theme-switcher__option {
+  min-height: 30px;
+  padding: var(--space-1) var(--space-2);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .form-field input,
   .password-field .password-field__toggle,
   .auth-submit,
   .session-dialog__actions button,
-  .ui-overlay__close {
+  .ui-overlay__close,
+  .theme-switcher__option {
     transition: none;
   }
 

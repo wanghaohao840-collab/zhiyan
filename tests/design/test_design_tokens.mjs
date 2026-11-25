@@ -84,6 +84,37 @@ test("renders shadows in standard CSS order", () => {
   );
 });
 
+test("renders multi-mode theme overrides and inset shadows deterministically", () => {
+  const css = renderCss({
+    color: { canvas: token("color", "#F7F6F2") },
+    $modes: {
+      midnight: {
+        color: { canvas: token("color", "#070C15") },
+        shadow: {
+          glass: token("shadow", [
+            {
+              inset: true,
+              color: "rgba(255, 255, 255, 0.06)",
+              offsetX: { value: 0, unit: "px" },
+              offsetY: { value: 1, unit: "px" },
+              blur: { value: 0, unit: "px" },
+              spread: { value: 0, unit: "px" },
+            },
+          ]),
+        },
+      },
+    },
+  });
+
+  assert.match(css, /^:root \{\n  --color-canvas: #F7F6F2;\n\}\n\n:root\[data-theme="midnight"\] \{/);
+  assert.match(css, /--color-canvas: #070C15;/);
+  assert.match(css, /--shadow-glass: inset 0px 1px 0px 0px rgba\(255, 255, 255, 0\.06\);/);
+  assert.throws(
+    () => renderCss({ color: { canvas: token("color", "#fff") }, $modes: { "BAD MODE": {} } }),
+    /Invalid theme mode name: BAD MODE/,
+  );
+});
+
 test("rejects duplicate flattened names with a token path", () => {
   assert.throws(
     () => flattenTokens({ color: { brand: token("color", "#fff") }, "color.brand": token("color", "#000") }),

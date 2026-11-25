@@ -308,3 +308,8 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+:root[data-theme="midnight"] .learning-card {
+  background: var(--color-surface-translucent);
+  backdrop-filter: blur(18px);
+}

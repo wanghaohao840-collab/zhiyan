@@ -1,25 +1,25 @@
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { ApiError } from "../api/client";
 import { Button } from "../components/Button/Button";
 import { DocumentList } from "../components/DocumentList/DocumentList";
-import { DocumentToolbar } from "../components/DocumentToolbar/DocumentToolbar";
+import {
+  DocumentToolbar,
+  type DocumentTypeFilter,
+} from "../components/DocumentToolbar/DocumentToolbar";
 import {
   ImportBatchPanel,
   importStageText,
 } from "../components/ImportBatchPanel/ImportBatchPanel";
 import { ImportDialog } from "../components/ImportDialog/ImportDialog";
-import { ConstellationMark } from "../components/ui/ConstellationMark";
+import { ConstellationMark, OverlayDialog } from "../components/ui";
 import {
   useDocumentMutations,
   useDocumentsQuery,
   useImportsQuery,
 } from "../features/documents/queries";
 import type { Document, ImportBatch } from "../features/documents/types";
-
-const FOCUSABLE_SELECTOR =
-  'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 function safeMessage(reason: unknown, fallback: string): string {
   return reason instanceof ApiError ? reason.message : fallback;
@@ -80,92 +80,50 @@ function DeleteDialog({
   pending,
   returnFocusTo,
 }: DeleteDialogProps) {
-  const dialogRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
-
-  useEffect(() => {
-    const previousOverflow = documentBodyOverflow();
-    window.document.body.style.overflow = "hidden";
-    cancelRef.current?.focus();
-    return () => {
-      window.document.body.style.overflow = previousOverflow;
-      returnFocusTo?.focus();
-    };
-  }, [returnFocusTo]);
 
   useEffect(() => {
     if (error) errorRef.current?.focus();
   }, [error]);
 
-  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      if (!pending) onClose();
-      return;
-    }
-    if (event.key !== "Tab") return;
-    const focusable = Array.from(
-      dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR) ?? [],
-    ).filter((element) => !element.hasAttribute("disabled"));
-    const first = focusable[0];
-    const last = focusable.at(-1);
-    if (!first || !last) {
-      event.preventDefault();
-    } else if (event.shiftKey && window.document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && window.document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  }
-
   return (
-    <div className="document-dialog-layer">
-      <button
-        type="button"
-        className="document-dialog-backdrop"
-        aria-label={`关闭删除 ${document.name} 遮罩`}
-        tabIndex={-1}
-        onClick={() => { if (!pending) onClose(); }}
-      />
-      <div
-        ref={dialogRef}
-        className="delete-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="delete-dialog-title"
-        onKeyDown={handleKeyDown}
-      >
-        <h2 id="delete-dialog-title">删除 {document.name}</h2>
-        <p>确认删除“{document.name}”？此操作会删除该文档及相关检索数据。</p>
-        {error ? (
-          <p ref={errorRef} className="document-error" role="alert" tabIndex={-1}>
-            {error}
-          </p>
-        ) : null}
-        <div className="delete-dialog__actions">
-          <button
-            ref={cancelRef}
-            type="button"
-            className="button button--secondary button--md"
-            disabled={pending}
-            onClick={onClose}
-          >
-            <span>取消</span>
-          </button>
-          <Button hierarchy="danger" loading={pending} onClick={onConfirm}>
-            确认删除
-          </Button>
-        </div>
+    <OverlayDialog
+      open
+      hideHeader
+      canClose={!pending}
+      ariaLabel={`删除 ${document.name}`}
+      layerClassName="document-dialog-layer"
+      scrimClassName="document-dialog-backdrop"
+      scrimLabel={`关闭删除 ${document.name} 遮罩`}
+      panelClassName="delete-dialog"
+      initialFocusRef={cancelRef}
+      returnFocusTo={returnFocusTo}
+      onClose={onClose}
+    >
+      <h2 id="delete-dialog-title">删除 {document.name}</h2>
+      <p>确认删除“{document.name}”？此操作会删除该文档及相关检索数据。</p>
+      {error ? (
+        <p ref={errorRef} className="document-error" role="alert" tabIndex={-1}>
+          {error}
+        </p>
+      ) : null}
+      <div className="delete-dialog__actions">
+        <button
+          ref={cancelRef}
+          type="button"
+          className="button button--secondary button--md"
+          disabled={pending}
+          onClick={onClose}
+        >
+          <span>取消</span>
+        </button>
+        <Button hierarchy="danger" loading={pending} onClick={onConfirm}>
+          确认删除
+        </Button>
       </div>
-    </div>
+    </OverlayDialog>
   );
-}
-
-function documentBodyOverflow(): string {
-  return window.document.body.style.overflow;
 }
 
 export function DocumentsPage() {
@@ -174,6 +132,7 @@ export function DocumentsPage() {
   const importsQuery = useImportsQuery();
   const mutations = useDocumentMutations();
   const [filter, setFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState<DocumentTypeFilter>("all");
   const [importOpen, setImportOpen] = useState(false);
   const [importTrigger, setImportTrigger] = useState<HTMLElement | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Document>();
@@ -193,11 +152,19 @@ export function DocumentsPage() {
 
   const filteredDocuments = useMemo(() => {
     const normalized = filter.trim().toLocaleLowerCase("zh-CN");
-    if (!normalized) return documents;
-    return documents.filter((document) =>
-      document.name.toLocaleLowerCase("zh-CN").includes(normalized),
-    );
-  }, [documents, filter]);
+    return documents.filter((document) => {
+      if (typeFilter !== "all") {
+        const suffix = (document.file_suffix || "").toLowerCase();
+        const matchesType =
+          typeFilter === "md"
+            ? suffix === ".md" || suffix === ".markdown"
+            : suffix === `.${typeFilter}`;
+        if (!matchesType) return false;
+      }
+      if (!normalized) return true;
+      return document.name.toLocaleLowerCase("zh-CN").includes(normalized);
+    });
+  }, [documents, filter, typeFilter]);
 
   const initialLoading =
     (documentsQuery.isPending && !documentsQuery.data) ||
@@ -244,6 +211,8 @@ export function DocumentsPage() {
         onFilterChange={setFilter}
         onOpenImport={openImport}
         showFilter={documents.length > 0}
+        typeFilter={typeFilter}
+        onTypeFilterChange={setTypeFilter}
       />
       <div
         className="document-live-region"

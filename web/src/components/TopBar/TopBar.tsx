@@ -1,8 +1,9 @@
-import { Menu } from "lucide-react";
+import { Menu, Search } from "lucide-react";
 import type { MouseEvent } from "react";
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 import { navigationItems } from "../../layout/navigation";
+import { ThemeSwitcher } from "../ui";
 
 type TopBarProps = {
   moreOpen: boolean;
@@ -21,6 +22,15 @@ export function TopBar({ moreOpen, onOpenMore, username }: TopBarProps) {
       <span className="topbar__desktop-title">{contextLabel}</span>
       <strong className="topbar__mobile-title">知研</strong>
       <div className="topbar__actions">
+        <Link
+          to="/search"
+          className="topbar__search-trigger"
+          aria-label="快捷前往文献检索"
+        >
+          <Search size={15} strokeWidth={1.6} aria-hidden="true" />
+          <span>搜索文档、提问或内容…</span>
+        </Link>
+        <ThemeSwitcher compact className="topbar__theme-switcher" />
         <button
           type="button"
           className="topbar__more"

@@ -83,13 +83,19 @@ describe("QA workspace components", () => {
       sources: [source],
     };
     const pending: QaMessage = { ...failed, message_id: "pending-1", status: "pending", sources: [source] };
-    render(<MessageList messages={[completed, failed, pending]} onSources={vi.fn()} onRetry={vi.fn()} />);
+    render(
+      <>
+        <MessageList messages={[completed, failed, pending]} onSources={vi.fn()} onRetry={vi.fn()} />
+        <SourcePanel sources={[source]} messageId={completed.message_id} notesEnabled />
+      </>,
+    );
 
     expect(screen.getByRole("link", { name: "记为笔记" })).toHaveAttribute(
       "href",
       "/notes?source_kind=qa_answer&qa_message_id=answer+%26+1",
     );
-    expect(screen.getByRole("link", { name: "记录此引用" })).toHaveAttribute(
+    expect(screen.queryByRole("link", { name: "记录此引用" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "存入笔记" })).toHaveAttribute(
       "href",
       "/notes?source_kind=qa_citation&qa_message_id=answer+%26+1&citation_id=citation-1",
     );
@@ -99,9 +105,14 @@ describe("QA workspace components", () => {
 
   it("hides note actions when the Notes route is disabled", () => {
     const completed: QaMessage = { ...failed, status: "completed", content: "答案", sources: [source] };
-    render(<MessageList messages={[completed]} notesEnabled={false} onSources={vi.fn()} onRetry={vi.fn()} />);
+    render(
+      <>
+        <MessageList messages={[completed]} notesEnabled={false} onSources={vi.fn()} onRetry={vi.fn()} />
+        <SourcePanel sources={[source]} messageId={completed.message_id} notesEnabled={false} />
+      </>,
+    );
     expect(screen.queryByRole("link", { name: "记为笔记" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "记录此引用" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "存入笔记" })).not.toBeInTheDocument();
   });
 
   it("renders a decorative cue only while summary work is active", () => {
@@ -137,18 +148,20 @@ describe("QA workspace components", () => {
 
     expect(screen.getByRole("heading", { level: 3, name: "核心结论" })).toBeVisible();
     expect(document.querySelector("script")).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "记录引用 [1]" })).toHaveAttribute(
-      "href",
-      "/notes?source_kind=qa_citation&qa_message_id=rich-1&citation_id=citation-1",
-    );
-    expect(screen.getByRole("link", { name: "记录引用 [2]" })).toHaveAttribute(
-      "href",
-      "/notes?source_kind=qa_citation&qa_message_id=rich-1&citation_id=citation-2",
-    );
+    expect(screen.queryByRole("link", { name: /记录引用/ })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /\[2\]/ }));
     expect(onSources).toHaveBeenCalledWith(rich, expect.any(HTMLButtonElement), "citation-2");
     expect(document.querySelector('li[data-citation-id="citation-2"]')).toHaveClass("is-active");
-    expect(screen.getAllByRole("link", { name: "存入笔记" })).toHaveLength(2);
+    const saveLinks = screen.getAllByRole("link", { name: "存入笔记" });
+    expect(saveLinks).toHaveLength(2);
+    expect(saveLinks[0]).toHaveAttribute(
+      "href",
+      "/notes?source_kind=qa_citation&qa_message_id=rich-1&citation_id=citation-1",
+    );
+    expect(saveLinks[1]).toHaveAttribute(
+      "href",
+      "/notes?source_kind=qa_citation&qa_message_id=rich-1&citation_id=citation-2",
+    );
   });
 
   it("traps focus, closes on Escape and returns focus", async () => {

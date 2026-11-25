@@ -800,6 +800,36 @@
   }
 }
 
+/* 回答真实完成状态胶囊条 */
+.qa-answer-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  margin-bottom: var(--space-3);
+  padding: 4px var(--space-3);
+  border: 1px solid var(--color-brand-200);
+  border-radius: var(--radius-pill);
+  color: var(--color-brand-700);
+  background: var(--color-surface-brand);
+  font-size: var(--shell-text-xs);
+  font-weight: 500;
+}
+
+:root[data-theme="midnight"] .qa-workspace,
+:root[data-theme="midnight"] .qa-message--assistant,
+:root[data-theme="midnight"] .qa-composer,
+:root[data-theme="midnight"] .qa-sources li,
+:root[data-theme="midnight"] .qa-overlay__panel {
+  background: var(--color-surface-translucent);
+  backdrop-filter: blur(18px);
+}
+
+:root[data-theme="midnight"] .qa-message--user {
+  border-color: var(--color-brand-200);
+  background: var(--color-surface-brand);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .qa-page *,
   .qa-overlay * {

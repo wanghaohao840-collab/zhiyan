@@ -5,6 +5,7 @@ import { Link, Navigate, useLocation } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { resolveAuthDestination, useAuth } from "../auth/AuthProvider";
 import { AuthIntro } from "../components/AuthIntro/AuthIntro";
+import { ThemeSwitcher } from "../components/ui";
 
 type LocationState = { from?: unknown };
 
@@ -116,6 +117,9 @@ export function RegisterPage() {
           </Link>
         </p>
       </section>
+      <div className="auth-topbar">
+        <ThemeSwitcher />
+      </div>
     </main>
   );
 }

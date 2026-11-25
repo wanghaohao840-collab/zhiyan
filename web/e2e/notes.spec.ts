@@ -250,7 +250,12 @@ test("completed QA citation saves a server-resolved source that is scrubbed afte
   const username = uniqueUsername(`notes_source_${testInfo.project.name}`);
   await registerUser(page, appUrl, username);
   const { filename, row } = await importAndAsk(page, appUrl, username);
-  await page.getByRole("link", { name: "记录此引用" }).click();
+  if (testInfo.project.name !== "desktop") {
+    await page.getByRole("button", { name: "引用 1", exact: true }).click();
+    await page.getByRole("dialog", { name: "引用证据" }).getByRole("link", { name: "存入笔记" }).click();
+  } else {
+    await page.getByRole("complementary", { name: "引用来源" }).getByRole("link", { name: "存入笔记" }).click();
+  }
   await expect.poll(() => page.url(), { timeout: 15_000 }).toMatch(/\/notes\?source_kind=qa_citation/);
   const prefill = new URL(page.url()).searchParams;
   expect(prefill.get("qa_message_id")).toBeTruthy();

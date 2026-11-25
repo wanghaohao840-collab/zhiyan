@@ -2,8 +2,6 @@ import { X } from "lucide-react";
 import {
   type ChangeEvent,
   type DragEvent,
-  type KeyboardEvent,
-  useEffect,
   useId,
   useRef,
   useState,
@@ -11,13 +9,12 @@ import {
 
 import { ApiError } from "../../api/client";
 import { Button } from "../Button/Button";
+import { OverlayDialog } from "../ui";
 
 const ACCEPTED_SUFFIXES = [".pdf", ".txt", ".md", ".markdown", ".docx"];
 const MAX_FILES = 20;
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
 const MAX_BATCH_BYTES = 500 * 1024 * 1024;
-const FOCUSABLE_SELECTOR =
-  'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 type SelectedFile = {
   file: File;
@@ -114,35 +111,12 @@ export function ImportDialog({
   returnFocusTo,
 }: ImportDialogProps) {
   const inputId = `document-files-${useId()}`;
-  const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
-  const wasOpenRef = useRef(false);
   const localKeyRef = useRef(0);
   const [selected, setSelected] = useState<SelectedFile[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [error, setError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    if (!open) {
-      if (wasOpenRef.current) {
-        wasOpenRef.current = false;
-        returnFocusTo?.focus();
-      }
-      return;
-    }
-    wasOpenRef.current = true;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    closeRef.current?.focus();
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [open, returnFocusTo]);
-
-  if (!open) {
-    return null;
-  }
 
   function addFiles(files: File[]) {
     setDragActive(false);
@@ -200,102 +174,76 @@ export function ImportDialog({
     }
   }
 
-  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      if (!submitting) onClose();
-      return;
-    }
-    if (event.key !== "Tab") return;
-    const focusable = Array.from(
-      dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR) ?? [],
-    ).filter((element) => !element.hasAttribute("disabled"));
-    const first = focusable[0];
-    const last = focusable.at(-1);
-    if (!first || !last) {
-      event.preventDefault();
-    } else if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  }
-
   const pickerState = error ? "invalid" : dragActive ? "drag-active" : "idle";
+
   return (
-    <div className="document-dialog-layer">
-      <button
-        type="button"
-        className="document-dialog-backdrop"
-        aria-label="关闭导入遮罩"
-        tabIndex={-1}
-        onClick={() => { if (!submitting) onClose(); }}
+    <OverlayDialog
+      open={open}
+      hideHeader
+      canClose={!submitting}
+      ariaLabel="导入文档"
+      layerClassName="document-dialog-layer"
+      scrimClassName="document-dialog-backdrop"
+      scrimLabel="关闭导入遮罩"
+      panelClassName="import-dialog"
+      initialFocusRef={closeRef}
+      returnFocusTo={returnFocusTo}
+      onClose={onClose}
+    >
+      <header className="import-dialog__header">
+        <h2 id="import-dialog-title">导入文档</h2>
+        <button
+          ref={closeRef}
+          type="button"
+          className="import-dialog__close document-action-target"
+          aria-label="关闭导入文档"
+          disabled={submitting}
+          onClick={onClose}
+        >
+          <X size={18} strokeWidth={1.6} aria-hidden="true" />
+        </button>
+      </header>
+      <p className="import-dialog__intro">选择文件后立即创建持久任务；不同文件独立成功或失败。</p>
+      <FilePicker
+        inputId={inputId}
+        state={pickerState}
+        error={error}
+        onChange={handleChange}
+        onDragOver={handleDragOver}
+        onDragLeave={() => setDragActive(false)}
+        onDrop={handleDrop}
       />
-      <div
-        ref={dialogRef}
-        className="import-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="import-dialog-title"
-        onKeyDown={handleKeyDown}
-      >
-        <header className="import-dialog__header">
-          <h2 id="import-dialog-title">导入文档</h2>
-          <button
-            ref={closeRef}
-            type="button"
-            className="import-dialog__close document-action-target"
-            aria-label="关闭导入文档"
-            disabled={submitting}
-            onClick={onClose}
-          >
-            <X size={18} strokeWidth={1.6} aria-hidden="true" />
-          </button>
-        </header>
-        <p className="import-dialog__intro">选择文件后立即创建持久任务；不同文件独立成功或失败。</p>
-        <FilePicker
-          inputId={inputId}
-          state={pickerState}
-          error={error}
-          onChange={handleChange}
-          onDragOver={handleDragOver}
-          onDragLeave={() => setDragActive(false)}
-          onDrop={handleDrop}
-        />
-        {selected.length ? (
-          <ul className="selected-files" aria-label="已选择文档">
-            {selected.map(({ file, key }) => (
-              <li key={key}>
-                <span>{file.name}</span>
-                <button
-                  type="button"
-                  className="document-action-target"
-                  aria-label={`移除 ${file.name}`}
-                  disabled={submitting}
-                  onClick={() => removeFile(key)}
-                >
-                  <X size={16} strokeWidth={1.6} aria-hidden="true" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        <p className="import-dialog__limits">每批最多 20 个文件 · 总计不超过 500 MiB</p>
-        <div className="import-dialog__actions">
-          <Button
-            className="import-dialog__primary"
-            loading={submitting}
-            onClick={() => void startImport()}
-          >
-            开始导入
-          </Button>
-          <Button hierarchy="secondary" disabled={submitting} onClick={onClose}>
-            取消
-          </Button>
-        </div>
+      {selected.length ? (
+        <ul className="selected-files" aria-label="已选择文档">
+          {selected.map(({ file, key }) => (
+            <li key={key}>
+              <span>{file.name}</span>
+              <button
+                type="button"
+                className="document-action-target"
+                aria-label={`移除 ${file.name}`}
+                disabled={submitting}
+                onClick={() => removeFile(key)}
+              >
+                <X size={16} strokeWidth={1.6} aria-hidden="true" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p className="import-dialog__limits">每批最多 20 个文件 · 总计不超过 500 MiB</p>
+      <div className="import-dialog__actions">
+        <Button
+          className="import-dialog__primary"
+          loading={submitting}
+          onClick={() => void startImport()}
+        >
+          开始导入
+        </Button>
+        <Button hierarchy="secondary" disabled={submitting} onClick={onClose}>
+          取消
+        </Button>
       </div>
-    </div>
+    </OverlayDialog>
   );
 }

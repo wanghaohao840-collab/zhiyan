@@ -1,11 +1,29 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="paper">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#F8F7F3" />
+    <meta name="theme-color" content="#F7F6F2" />
     <meta name="description" content="知研智能文档学习助手" />
     <title>知研</title>
+    <script>
+      (function () {
+        try {
+          var stored = window.localStorage.getItem("zhiyan.ui.theme");
+          var theme = stored === "midnight" ? "midnight" : "paper";
+          var root = document.documentElement;
+          root.dataset.theme = theme;
+          root.style.colorScheme = theme === "midnight" ? "dark" : "light";
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) {
+            meta.setAttribute("content", theme === "midnight" ? "#070C15" : "#F7F6F2");
+          }
+        } catch (error) {
+          document.documentElement.dataset.theme = "paper";
+          document.documentElement.style.colorScheme = "light";
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

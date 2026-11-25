@@ -355,6 +355,17 @@ export async function settleVisuals(page: Page): Promise<void> {
   });
   await page.evaluate(async () => {
     await document.fonts.ready;
+    await Promise.all(
+      Array.from(document.images).map((image) => {
+        if (image.complete) {
+          return image.decode().catch(() => undefined);
+        }
+        return new Promise<void>((resolveImage) => {
+          image.addEventListener("load", () => resolveImage(), { once: true });
+          image.addEventListener("error", () => resolveImage(), { once: true });
+        });
+      }),
+    );
     await new Promise<void>((resolveFrame) =>
       requestAnimationFrame(() => requestAnimationFrame(() => resolveFrame())),
     );

@@ -1,77 +1,40 @@
 import { Eye, EyeOff } from "lucide-react";
-import {
-  type FormEvent,
-  type KeyboardEvent,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 
 import { ApiError } from "../api/client";
 import { resolveAuthDestination, useAuth } from "../auth/AuthProvider";
 import { AuthIntro } from "../components/AuthIntro/AuthIntro";
+import { OverlayDialog, ThemeSwitcher } from "../components/ui";
 
 type LocationState = { from?: unknown; sessionExpired?: unknown };
 
-const dialogFocusableSelector = "button:not([disabled])";
-
 function SessionExpiredDialog({ onClose }: { onClose: () => void }) {
-  const dialogRef = useRef<HTMLElement>(null);
   const primaryActionRef = useRef<HTMLButtonElement>(null);
 
-  useEffect(() => {
-    primaryActionRef.current?.focus();
-  }, []);
-
-  function handleKeyDown(event: KeyboardEvent<HTMLElement>) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      onClose();
-      return;
-    }
-    if (event.key !== "Tab") {
-      return;
-    }
-
-    const focusable = Array.from(
-      dialogRef.current?.querySelectorAll<HTMLButtonElement>(dialogFocusableSelector) ?? [],
-    );
-    const first = focusable[0];
-    const last = focusable.at(-1);
-    if (!first || !last) {
-      event.preventDefault();
-    } else if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  }
-
   return (
-    <div className="session-dialog-layer">
-      <section
-        ref={dialogRef}
-        className="session-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="session-dialog-title"
-        onKeyDown={handleKeyDown}
-      >
-        <h2 id="session-dialog-title">会话已过期</h2>
-        <p>为保护你的学习数据，本次会话已结束。请重新登录后继续。</p>
-        <div className="session-dialog__actions">
-          <button className="session-dialog__secondary" type="button" onClick={onClose}>
-            退出登录
-          </button>
-          <button ref={primaryActionRef} type="button" onClick={onClose}>
-            重新登录
-          </button>
-        </div>
-      </section>
-    </div>
+    <OverlayDialog
+      open
+      hideHeader
+      dismissible={false}
+      ariaLabel="会话已过期"
+      layerClassName="session-dialog-layer"
+      panelClassName="session-dialog"
+      initialFocusRef={primaryActionRef}
+      returnFocusTo={null}
+      onClose={onClose}
+    >
+      <h2 id="session-dialog-title">会话已过期</h2>
+      <p>为保护你的学习数据，本次会话已结束。请重新登录后继续。</p>
+      <div className="session-dialog__actions">
+        <button className="session-dialog__secondary" type="button" onClick={onClose}>
+          退出登录
+        </button>
+        <button ref={primaryActionRef} type="button" onClick={onClose}>
+          重新登录
+        </button>
+      </div>
+    </OverlayDialog>
   );
 }
 
@@ -206,6 +169,10 @@ export function LoginPage() {
           </Link>
         </p>
       </section>
+      {/* NOTE: 保持固定视觉定位于右上角，同时让键盘 Tab 优先进入登录表单主任务流 */}
+      <div className="auth-topbar">
+        <ThemeSwitcher />
+      </div>
       {sessionExpiredOpen ? <SessionExpiredDialog onClose={dismissSessionExpired} /> : null}
     </main>
   );
