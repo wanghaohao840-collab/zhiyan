@@ -39,6 +39,24 @@ def replay_hits(chunk_by_id, case, ids):
     return hits
 
 
+def replay_case(original, case, variant, ranks, generate):
+    chunk_by_id = {
+        chunk["id"]: chunk for doc in case.scope for chunk in original.get_document_chunks(doc)
+    }
+    hits = replay_hits(chunk_by_id, case, ranks)
+
+    def search(*, query, document_ids, limit, **_):
+        if query != case.question or tuple(document_ids) != case.scope or limit != TOP_K:
+            raise ValueError("Application replay changed query, scope or rank limit")
+        return hits
+
+    pipeline = SimpleNamespace(search=search, get_document_chunk=original.get_document_chunk)
+    answer = evaluate_case(pipeline, case, variant, generate=generate, repeats=0)
+    if answer["ranked_chunks"] != ranks:
+        raise ValueError("Application replay changed the saved ranking")
+    return answer
+
+
 def replay_trials(pipelines, cases, rankings, generate):
     variants = tuple(
         replace(BASELINE, name=name, verify_evidence=True, evidence_strategy="adaptive",
@@ -46,23 +64,9 @@ def replay_trials(pipelines, cases, rankings, generate):
         for name in (CONTROL, CANDIDATE)
     )
     for case in cases:
-        original = pipelines[case.namespace]
-        chunk_by_id = {
-            chunk["id"]: chunk for doc in case.scope for chunk in original.get_document_chunks(doc)
-        }
         for variant in variants:
             ranked = rankings[case.id, variant.name]
-            hits = replay_hits(chunk_by_id, case, ranked["top"])
-
-            def search(*, query, document_ids, limit, **_):
-                if query != case.question or tuple(document_ids) != case.scope or limit != TOP_K:
-                    raise ValueError("Application replay changed query, scope or rank limit")
-                return hits
-
-            pipeline = SimpleNamespace(search=search, get_document_chunk=original.get_document_chunk)
-            answer = evaluate_case(pipeline, case, variant, generate=generate, repeats=0)
-            if answer["ranked_chunks"] != ranked["top"]:
-                raise ValueError("Application replay changed the saved ranking")
+            answer = replay_case(pipelines[case.namespace], case, variant, ranked["top"], generate)
             answer["original_retrieval_ms"] = ranked["retrieval_ms"]
             answer["all_evidence_in_ranked_top"] = ranked["top_all"]
             yield answer

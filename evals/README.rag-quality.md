@@ -126,3 +126,14 @@
 ~~~powershell
 .\venv\Scripts\python.exe -m evals.rag_quality_crowding --dataset scale --split holdout --pool-k 20 --expanded-pool-k 24 --embedding-env-file deploy/.env --output-dir output/rag-crowding-scale-holdout
 ~~~
+
+
+### 有证据仍拒答的定位
+
+从跨规模开发集的已保存排名构造四种候选顺序和缺证据对照。每组只发一次模型请求。报告同时记录原始 JSON、最终答复、校验错误和引文回查，区分模型主动拒答和校验拒绝。模型提示中只包含问题和传入的候选原文。
+
+~~~powershell
+.\venv\Scripts\python.exe -m evals.rag_present_evidence_diag --retrieval-dir output/rag-crowding-scale-dev --chat-env-file .env --output-dir output/rag-present-evidence-diag
+~~~
+
+将 --retrieval-dir 及其参数替换为 --supplemental 可运行独立补充样本，覆盖版本分界、已确认与待确认的状态、同实体字段以及跨段关联。移除必要证据后的原始错误回答与校验拦截仍保留在逐题报告里。
