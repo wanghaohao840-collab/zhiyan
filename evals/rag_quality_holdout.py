@@ -24,9 +24,11 @@ def main(argv=None):
     mode.add_argument("--grounding-latency", action="store_true")
     mode.add_argument("--grounding-release", action="store_true")
     mode.add_argument("--grounding-adaptive", action="store_true")
+    mode.add_argument("--grounding-fields", action="store_true")
     parser.add_argument("--dataset", type=Path)
     args = parser.parse_args(argv)
-    grounding_comparison = args.grounding_latency or args.grounding_release or args.grounding_adaptive
+    application_comparison = args.grounding_release or args.grounding_adaptive or args.grounding_fields
+    grounding_comparison = args.grounding_latency or application_comparison
     if grounding_comparison and args.chat_env_file is None:
         parser.error("grounding comparisons require --chat-env-file")
     embedder, online = configure_embedding(args.embedding_env_file)
@@ -40,6 +42,8 @@ def main(argv=None):
         dataset = HOLDOUT_DATASET.with_name("rag_quality_adaptive.json")
     elif args.dataset is None and args.grounding_release:
         dataset = HOLDOUT_DATASET.with_name("rag_quality_release.json")
+    elif args.dataset is None and args.grounding_fields:
+        dataset = HOLDOUT_DATASET.with_name("rag_quality_fields.json")
     chunks, cases = load_gold_dataset(dataset)
     metadata = {
         "dataset_sha256": sha256(dataset.read_bytes()).hexdigest(), "providers": providers,
@@ -56,14 +60,26 @@ def main(argv=None):
                 tuple(replace(variant, generate=False) for variant in (BASELINE, HYBRID, RERANK)),
                 repeats=args.retrieval_repeats,
             )
-        max_tokens = 4096 if args.grounding_release or args.grounding_adaptive else 3072
-        chat, providers["chat"] = configure_chat(args.chat_env_file, stack, max_tokens=max_tokens)
+        max_tokens = 4096 if application_comparison else 3072
+        chat, providers["chat"] = configure_chat(
+            args.chat_env_file, stack, max_tokens=max_tokens, capture_metrics=args.grounding_fields,
+        )
         write_report(args.output_dir, metadata, tracks)
         if args.chat_env_file and chat is None:
             return 1
-        if grounding_comparison:
+        if args.grounding_fields:
+            print("Comparing verified QA with and without field binding checks", flush=True)
+            control = replace(
+                BASELINE, name="adaptive", verify_evidence=True, evidence_strategy="adaptive",
+                use_application_engine=True, evidence_max_tokens=max_tokens,
+            )
+            tracks["grounding_fields"] = run_trials(
+                pipelines, cases, (control, replace(control, name="field_check", evidence_check_fields=True)),
+                generate=chat, repeats=0, workers=2,
+            )
+            write_report(args.output_dir, metadata, tracks)
+        elif grounding_comparison:
             print("Comparing one-call and two-call verified QA", flush=True)
-            application_comparison = args.grounding_release or args.grounding_adaptive
             baseline = BASELINE if application_comparison else RERANK
             two_pass = replace(
                 baseline, name="two_pass", verify_evidence=True, use_application_engine=application_comparison,

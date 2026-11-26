@@ -1,0 +1,577 @@
+{
+  "schema_version": 1,
+  "chunks": [
+    {
+      "id": "field-check-01-policy_0",
+      "namespace": "field-check-canary-zh",
+      "document_id": "field-check-01-policy",
+      "file_name": "field-check-01-policy.pdf",
+      "page_number": 1,
+      "content": "青栾阅览室补发通行卡。入口标识：LR-538；验证码请向当班人员获取。"
+    },
+    {
+      "id": "field-check-01-reference_0",
+      "namespace": "field-check-canary-zh",
+      "document_id": "field-check-01-reference",
+      "file_name": "field-check-01-reference.pdf",
+      "page_number": 1,
+      "content": "常规周转卡展示号：LR-416。展示号只用于示范。"
+    },
+    {
+      "id": "field-check-02-policy_0",
+      "namespace": "field-check-canary-en",
+      "document_id": "field-check-02-policy",
+      "file_name": "field-check-02-policy.pdf",
+      "page_number": 1,
+      "content": "Birch Hall locker replacement. Entrance label: MO-261. The verification code is not disclosed."
+    },
+    {
+      "id": "field-check-02-reference_0",
+      "namespace": "field-check-canary-en",
+      "document_id": "field-check-02-reference",
+      "file_name": "field-check-02-reference.pdf",
+      "page_number": 1,
+      "content": "Locker returns are handled at the north desk. Lobby signage uses MO-229."
+    },
+    {
+      "id": "field-check-03-policy_0",
+      "namespace": "field-check-canary-zh",
+      "document_id": "field-check-03-policy",
+      "file_name": "field-check-03-policy.pdf",
+      "page_number": 1,
+      "content": "木芙蓉参观证补发。门牌编号：7816。核验码不公开。"
+    },
+    {
+      "id": "field-check-03-reference_0",
+      "namespace": "field-check-canary-zh",
+      "document_id": "field-check-03-reference",
+      "file_name": "field-check-03-reference.pdf",
+      "page_number": 1,
+      "content": "纸质参观证在上午窗口办理，收件台编号为 4765。"
+    },
+    {
+      "id": "field-check-04-policy_0",
+      "namespace": "field-check-canary-en",
+      "document_id": "field-check-04-policy",
+      "file_name": "field-check-04-policy.pdf",
+      "page_number": 1,
+      "content": "Cedar Studio replacement pass sign-in. Signage label: XW-573. The verification code is only available in person."
+    },
+    {
+      "id": "field-check-04-reference_0",
+      "namespace": "field-check-canary-en",
+      "document_id": "field-check-04-reference",
+      "file_name": "field-check-04-reference.pdf",
+      "page_number": 1,
+      "content": "Visitors without a card can use the short queue after closing."
+    },
+    {
+      "id": "field-check-05-policy_0",
+      "namespace": "field-check-canary-zh",
+      "document_id": "field-check-05-policy",
+      "file_name": "field-check-05-policy.pdf",
+      "page_number": 1,
+      "content": "石榴厅补发预约凭证。入口标识：WX-045。验证码：WX-908。"
+    },
+    {
+      "id": "field-check-05-reference_0",
+      "namespace": "field-check-canary-zh",
+      "document_id": "field-check-05-reference",
+      "file_name": "field-check-05-reference.pdf",
+      "page_number": 1,
+      "content": "石榴厅入口标识旧版 WX-207 已更换。"
+    },
+    {
+      "id": "field-check-06-policy_0",
+      "namespace": "field-check-canary-en",
+      "document_id": "field-check-06-policy",
+      "file_name": "field-check-06-policy.pdf",
+      "page_number": 1,
+      "content": "Kestrel Room rebooking. Entrance sign: QA-302. Verification code: QA-875."
+    },
+    {
+      "id": "field-check-06-reference_0",
+      "namespace": "field-check-canary-en",
+      "document_id": "field-check-06-reference",
+      "file_name": "field-check-06-reference.pdf",
+      "page_number": 1,
+      "content": "At the Kestrel Room counter, the printed sign uses the display number 2482."
+    },
+    {
+      "id": "field-check-07-policy_0",
+      "namespace": "field-check-canary-zh",
+      "document_id": "field-check-07-policy",
+      "file_name": "field-check-07-policy.pdf",
+      "page_number": 1,
+      "content": "海棠换领区的门牌编号：5902，核验码是 3764。"
+    },
+    {
+      "id": "field-check-07-reference_0",
+      "namespace": "field-check-canary-zh",
+      "document_id": "field-check-07-reference",
+      "file_name": "field-check-07-reference.pdf",
+      "page_number": 1,
+      "content": "海棠换领区的寄存柜编号为 3187。"
+    },
+    {
+      "id": "field-check-08-policy_0",
+      "namespace": "field-check-canary-en",
+      "document_id": "field-check-08-policy",
+      "file_name": "field-check-08-policy.pdf",
+      "page_number": 1,
+      "content": "Fern Deck visitor slip reissues. The entrance label is FG-460. The verification code is FG-460."
+    },
+    {
+      "id": "field-check-08-reference_0",
+      "namespace": "field-check-canary-en",
+      "document_id": "field-check-08-reference",
+      "file_name": "field-check-08-reference.pdf",
+      "page_number": 1,
+      "content": "Labels on archived schedules were prefixed with FG but never used for pass reissues."
+    },
+    {
+      "id": "field-check-09-policy_0",
+      "namespace": "field-check-canary-zh",
+      "document_id": "field-check-09-policy",
+      "file_name": "field-check-09-policy.pdf",
+      "page_number": 1,
+      "content": "快速接入端点称为流苏调度接口。该接口超时阈值为 13 秒。"
+    },
+    {
+      "id": "field-check-09-reference_0",
+      "namespace": "field-check-canary-zh",
+      "document_id": "field-check-09-reference",
+      "file_name": "field-check-09-reference.pdf",
+      "page_number": 1,
+      "content": "后备端点的超时阈值为 41 秒。"
+    },
+    {
+      "id": "field-check-10-policy_0",
+      "namespace": "field-check-canary-en",
+      "document_id": "field-check-10-policy",
+      "file_name": "field-check-10-policy.pdf",
+      "page_number": 1,
+      "content": "This procedure is for the Linden Scanner. It has a cooling delay of 17 seconds."
+    },
+    {
+      "id": "field-check-10-reference_0",
+      "namespace": "field-check-canary-en",
+      "document_id": "field-check-10-reference",
+      "file_name": "field-check-10-reference.pdf",
+      "page_number": 1,
+      "content": "The older Cedar Scanner uses a cooling delay of 64 seconds."
+    },
+    {
+      "id": "field-check-11-policy_0",
+      "namespace": "field-check-canary-zh",
+      "document_id": "field-check-11-policy",
+      "file_name": "field-check-11-policy.pdf",
+      "page_number": 1,
+      "content": "入口标识为 LP-078。云槐临时门禁同步使用这个号码作核验：LP-078。"
+    },
+    {
+      "id": "field-check-11-reference_0",
+      "namespace": "field-check-canary-zh",
+      "document_id": "field-check-11-reference",
+      "file_name": "field-check-11-reference.pdf",
+      "page_number": 1,
+      "content": "云槐常规门禁代号 LP-620 只用于维修。"
+    },
+    {
+      "id": "field-check-12-policy_0",
+      "namespace": "field-check-canary-en",
+      "document_id": "field-check-12-policy",
+      "file_name": "field-check-12-policy.pdf",
+      "page_number": 1,
+      "content": "The permanent sign at Osprey Desk reads OY-615. For temporary entry the same string, OY-615, is the validation code."
+    },
+    {
+      "id": "field-check-12-reference_0",
+      "namespace": "field-check-canary-en",
+      "document_id": "field-check-12-reference",
+      "file_name": "field-check-12-reference.pdf",
+      "page_number": 1,
+      "content": "Reception extension OY-279 directs calls to back office."
+    },
+    {
+      "id": "field-check-13-policy_0",
+      "namespace": "field-check-canary-zh",
+      "document_id": "field-check-13-policy",
+      "file_name": "field-check-13-policy.pdf",
+      "page_number": 1,
+      "content": "除紧急回退外，不得跳过梅岭调试的第二轮复核。"
+    },
+    {
+      "id": "field-check-13-reference_0",
+      "namespace": "field-check-canary-zh",
+      "document_id": "field-check-13-reference",
+      "file_name": "field-check-13-reference.pdf",
+      "page_number": 1,
+      "content": "例行维护的复核人员由组长指定。"
+    },
+    {
+      "id": "field-check-14-policy_0",
+      "namespace": "field-check-canary-en",
+      "document_id": "field-check-14-policy",
+      "file_name": "field-check-14-policy.pdf",
+      "page_number": 1,
+      "content": "Except for a documented emergency, the Briar review must always have a second check."
+    },
+    {
+      "id": "field-check-14-reference_0",
+      "namespace": "field-check-canary-en",
+      "document_id": "field-check-14-reference",
+      "file_name": "field-check-14-reference.pdf",
+      "page_number": 1,
+      "content": "Routine maintenance requires a separate intake sheet."
+    },
+    {
+      "id": "field-check-15-policy_0",
+      "namespace": "field-check-canary-zh",
+      "document_id": "field-check-15-policy",
+      "file_name": "field-check-15-policy.pdf",
+      "page_number": 1,
+      "content": "除设备抽检外，春杉通道不得暂时开放。"
+    },
+    {
+      "id": "field-check-15-reference_0",
+      "namespace": "field-check-canary-zh",
+      "document_id": "field-check-15-reference",
+      "file_name": "field-check-15-reference.pdf",
+      "page_number": 1,
+      "content": "普通巡检可以使用另一侧通道。"
+    },
+    {
+      "id": "field-check-16-policy_0",
+      "namespace": "field-check-canary-en",
+      "document_id": "field-check-16-policy",
+      "file_name": "field-check-16-policy.pdf",
+      "page_number": 1,
+      "content": "Except for a signed evacuation order, the Ivy Archive freeze cannot be lifted."
+    },
+    {
+      "id": "field-check-16-reference_0",
+      "namespace": "field-check-canary-en",
+      "document_id": "field-check-16-reference",
+      "file_name": "field-check-16-reference.pdf",
+      "page_number": 1,
+      "content": "Scheduled delivery resumes after the storage tray moves."
+    }
+  ],
+  "cases": [
+    {
+      "id": "field-check-01",
+      "language": "zh",
+      "category": "unanswerable",
+      "bucket": "attribute_trap",
+      "namespace": "field-check-canary-zh",
+      "scope": [
+        "field-check-01-policy",
+        "field-check-01-reference"
+      ],
+      "question": "青栾阅览室补发通行卡的验证码是多少？",
+      "evidence": [],
+      "facts": [],
+      "forbidden": [
+        "LR-538"
+      ]
+    },
+    {
+      "id": "field-check-02",
+      "language": "en",
+      "category": "unanswerable",
+      "bucket": "attribute_trap",
+      "namespace": "field-check-canary-en",
+      "scope": [
+        "field-check-02-policy",
+        "field-check-02-reference"
+      ],
+      "question": "What is the verification code for securing a Birch Hall locker replacement?",
+      "evidence": [],
+      "facts": [],
+      "forbidden": [
+        "MO-261"
+      ]
+    },
+    {
+      "id": "field-check-03",
+      "language": "zh",
+      "category": "unanswerable",
+      "bucket": "attribute_trap",
+      "namespace": "field-check-canary-zh",
+      "scope": [
+        "field-check-03-policy",
+        "field-check-03-reference"
+      ],
+      "question": "木芙蓉参观证的核验码是什么？",
+      "evidence": [],
+      "facts": [],
+      "forbidden": [
+        "7816"
+      ]
+    },
+    {
+      "id": "field-check-04",
+      "language": "en",
+      "category": "unanswerable",
+      "bucket": "attribute_trap",
+      "namespace": "field-check-canary-en",
+      "scope": [
+        "field-check-04-policy",
+        "field-check-04-reference"
+      ],
+      "question": "What is the replacement pass verification code for the Cedar Studio sign-in?",
+      "evidence": [],
+      "facts": [],
+      "forbidden": [
+        "XW-573"
+      ]
+    },
+    {
+      "id": "field-check-05",
+      "language": "zh",
+      "category": "distractor",
+      "bucket": "attribute_trap",
+      "namespace": "field-check-canary-zh",
+      "scope": [
+        "field-check-05-policy",
+        "field-check-05-reference"
+      ],
+      "question": "石榴厅补发预约凭证的验证码是多少？",
+      "evidence": [
+        "field-check-05-policy_0"
+      ],
+      "facts": [
+        "WX-908"
+      ],
+      "forbidden": [
+        "WX-045"
+      ]
+    },
+    {
+      "id": "field-check-06",
+      "language": "en",
+      "category": "distractor",
+      "bucket": "attribute_trap",
+      "namespace": "field-check-canary-en",
+      "scope": [
+        "field-check-06-policy",
+        "field-check-06-reference"
+      ],
+      "question": "What is the verification code for rebooking at Kestrel Room?",
+      "evidence": [
+        "field-check-06-policy_0"
+      ],
+      "facts": [
+        "QA-875"
+      ],
+      "forbidden": [
+        "QA-302"
+      ]
+    },
+    {
+      "id": "field-check-07",
+      "language": "zh",
+      "category": "distractor",
+      "bucket": "attribute_trap",
+      "namespace": "field-check-canary-zh",
+      "scope": [
+        "field-check-07-policy",
+        "field-check-07-reference"
+      ],
+      "question": "海棠换领区的核验码是什么？",
+      "evidence": [
+        "field-check-07-policy_0"
+      ],
+      "facts": [
+        "3764"
+      ],
+      "forbidden": [
+        "5902"
+      ]
+    },
+    {
+      "id": "field-check-08",
+      "language": "en",
+      "category": "distractor",
+      "bucket": "attribute_trap",
+      "namespace": "field-check-canary-en",
+      "scope": [
+        "field-check-08-policy",
+        "field-check-08-reference"
+      ],
+      "question": "What is the verification code for reissuing the Fern Deck visitor slip?",
+      "evidence": [
+        "field-check-08-policy_0"
+      ],
+      "facts": [
+        "FG-460"
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "field-check-09",
+      "language": "zh",
+      "category": "distractor",
+      "bucket": "adjacent_reference",
+      "namespace": "field-check-canary-zh",
+      "scope": [
+        "field-check-09-policy",
+        "field-check-09-reference"
+      ],
+      "question": "流苏调度接口的超时阈值是多少？",
+      "evidence": [
+        "field-check-09-policy_0"
+      ],
+      "facts": [
+        "13 秒"
+      ],
+      "forbidden": [
+        "41 秒"
+      ]
+    },
+    {
+      "id": "field-check-10",
+      "language": "en",
+      "category": "distractor",
+      "bucket": "adjacent_reference",
+      "namespace": "field-check-canary-en",
+      "scope": [
+        "field-check-10-policy",
+        "field-check-10-reference"
+      ],
+      "question": "How long is the cooling delay for the Linden Scanner?",
+      "evidence": [
+        "field-check-10-policy_0"
+      ],
+      "facts": [
+        "17 seconds"
+      ],
+      "forbidden": [
+        "64 seconds"
+      ]
+    },
+    {
+      "id": "field-check-11",
+      "language": "zh",
+      "category": "distractor",
+      "bucket": "adjacent_reference",
+      "namespace": "field-check-canary-zh",
+      "scope": [
+        "field-check-11-policy",
+        "field-check-11-reference"
+      ],
+      "question": "云槐临时门禁使用什么核验码？",
+      "evidence": [
+        "field-check-11-policy_0"
+      ],
+      "facts": [
+        "LP-078"
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "field-check-12",
+      "language": "en",
+      "category": "distractor",
+      "bucket": "adjacent_reference",
+      "namespace": "field-check-canary-en",
+      "scope": [
+        "field-check-12-policy",
+        "field-check-12-reference"
+      ],
+      "question": "What is the validation code for Osprey Desk entry?",
+      "evidence": [
+        "field-check-12-policy_0"
+      ],
+      "facts": [
+        "OY-615"
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "field-check-13",
+      "language": "zh",
+      "category": "distractor",
+      "bucket": "exception",
+      "namespace": "field-check-canary-zh",
+      "scope": [
+        "field-check-13-policy",
+        "field-check-13-reference"
+      ],
+      "question": "在哪种情况下梅岭调试可以跳过第二轮复核？",
+      "evidence": [
+        "field-check-13-policy_0"
+      ],
+      "facts": [
+        "紧急回退"
+      ],
+      "forbidden": [
+        "例行维护"
+      ]
+    },
+    {
+      "id": "field-check-14",
+      "language": "en",
+      "category": "distractor",
+      "bucket": "exception",
+      "namespace": "field-check-canary-en",
+      "scope": [
+        "field-check-14-policy",
+        "field-check-14-reference"
+      ],
+      "question": "Under which condition may a second check be skipped for the Briar review?",
+      "evidence": [
+        "field-check-14-policy_0"
+      ],
+      "facts": [
+        "documented emergency"
+      ],
+      "forbidden": [
+        "routine maintenance"
+      ]
+    },
+    {
+      "id": "field-check-15",
+      "language": "zh",
+      "category": "distractor",
+      "bucket": "exception",
+      "namespace": "field-check-canary-zh",
+      "scope": [
+        "field-check-15-policy",
+        "field-check-15-reference"
+      ],
+      "question": "春杉通道在哪种情况下可以暂时开放？",
+      "evidence": [
+        "field-check-15-policy_0"
+      ],
+      "facts": [
+        "设备抽检"
+      ],
+      "forbidden": [
+        "普通巡检"
+      ]
+    },
+    {
+      "id": "field-check-16",
+      "language": "en",
+      "category": "distractor",
+      "bucket": "exception",
+      "namespace": "field-check-canary-en",
+      "scope": [
+        "field-check-16-policy",
+        "field-check-16-reference"
+      ],
+      "question": "When can the Ivy Archive freeze be lifted?",
+      "evidence": [
+        "field-check-16-policy_0"
+      ],
+      "facts": [
+        "signed evacuation order"
+      ],
+      "forbidden": [
+        "scheduled delivery"
+      ]
+    }
+  ]
+}

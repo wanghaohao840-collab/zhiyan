@@ -125,12 +125,11 @@ def lexical_overlap_score(query: str, content: str) -> float:
     return len(query_tokens & lexical_tokens(content)) / len(query_tokens)
 
 
-def _content_similarity(left: str, right: str) -> float:
-    left_tokens = lexical_tokens(left)
-    right_tokens = lexical_tokens(right)
-    if not left_tokens or not right_tokens:
+def _token_similarity(left: set[str], right: set[str]) -> float:
+    if not left or not right:
         return 0.0
-    return len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
+    intersection = len(left & right)
+    return intersection / (len(left) + len(right) - intersection)
 
 
 def hybrid_rank_results(
@@ -227,32 +226,32 @@ def mmr_select(
         return list(results)
 
     tradeoff = min(1.0, max(0.0, float(lambda_mult)))
-    remaining = list(results)
+    remaining = list(range(len(results)))
+    tokens = [lexical_tokens(item.get("content", "")) for item in results]
+    max_similarity = [0.0] * len(results)
+    latest_tokens: set[str] = set()
     selected: list[dict] = []
     while remaining and len(selected) < limit:
         best_index = 0
         best_value = float("-inf")
-        for index, candidate in enumerate(remaining):
+        for index, result_index in enumerate(remaining):
+            candidate = results[result_index]
             relevance = max(0.0, min(1.0, float(candidate.get("score", 0.0))))
             redundancy = max(
-                (
-                    _content_similarity(
-                        candidate.get("content", ""),
-                        chosen.get("content", ""),
-                    )
-                    for chosen in selected
-                ),
-                default=0.0,
+                max_similarity[result_index], _token_similarity(tokens[result_index], latest_tokens),
             )
+            max_similarity[result_index] = redundancy
             value = tradeoff * relevance - (1.0 - tradeoff) * redundancy
             tie_breaker = str(candidate.get("id", ""))
-            best_tie_breaker = str(remaining[best_index].get("id", ""))
+            best_tie_breaker = str(results[remaining[best_index]].get("id", ""))
             if value > best_value or (
                 value == best_value and tie_breaker < best_tie_breaker
             ):
                 best_value = value
                 best_index = index
-        selected.append(remaining.pop(best_index))
+        chosen = remaining.pop(best_index)
+        selected.append(results[chosen])
+        latest_tokens = tokens[chosen]
     return selected
 
 

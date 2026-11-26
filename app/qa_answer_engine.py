@@ -58,6 +58,7 @@ class RagQaAnswerEngine:
         evidence_max_tokens: int | str | None = None,
         retrieval_mode: str = "vector",
         use_rerank: bool = False,
+        evidence_check_fields: bool = False,
     ) -> None:
         self.enable_summary_workflow = enable_summary_workflow
         if retrieval_mode not in RETRIEVAL_MODES:
@@ -80,6 +81,7 @@ class RagQaAnswerEngine:
         self.evidence_max_tokens = evidence_max_tokens
         self.verify_evidence = verify_evidence
         self.evidence_strategy = evidence_strategy
+        self.evidence_check_fields = evidence_check_fields
 
     def answer(
         self,
@@ -102,6 +104,8 @@ class RagQaAnswerEngine:
         }
         if self.verify_evidence and resolve_qa_mode(request.question, request.mode) == "joint":
             kwargs["verify_evidence"] = True
+            if self.evidence_check_fields:
+                kwargs["evidence_check_fields"] = True
             if self.evidence_max_tokens is not None:
                 kwargs["evidence_max_tokens"] = self.evidence_max_tokens
             if self.evidence_strategy != "two_pass":

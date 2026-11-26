@@ -356,6 +356,10 @@ class RAGTool(Tool):
                     "type": "boolean",
                     "description": "verify explicit document evidence for joint answers",
                 },
+                "evidence_check_fields": {
+                    "type": "boolean",
+                    "description": "check verification code labels during verified joint QA",
+                },
                 "evidence_strategy": {
                     "type": "string",
                     "enum": list(EVIDENCE_STRATEGIES),
@@ -1532,6 +1536,7 @@ class RAGTool(Tool):
         evidence_max_tokens: int | None = None,
         stage_callback: Any = None,
         token_callback: Any = None,
+        evidence_check_fields: bool = False,
         **kwargs,
     ) -> str:
         """Answer with joint, comparison, or summary behavior."""
@@ -1643,6 +1648,7 @@ class RAGTool(Tool):
             return self._ask_verified_evidence(
                 query, conversation_context, results, evidence_strategy, evidence_max_tokens,
                 stage_callback=stage_callback,
+                check_fields=evidence_check_fields,
             )
 
         if not results:
@@ -1740,7 +1746,7 @@ class RAGTool(Tool):
         )
 
     def _ask_verified_evidence(
-        self, query, conversation_context, results, strategy, max_tokens, *, stage_callback=None,
+        self, query, conversation_context, results, strategy, max_tokens, *, stage_callback=None, check_fields=False,
     ) -> str:
         adaptive = strategy == "adaptive"
         strategy = resolve_evidence_strategy(strategy, query)
@@ -1750,6 +1756,8 @@ class RAGTool(Tool):
         history = self._qa_history_section(conversation_context)
         reserve = max(ANSWER_OUTPUT_TOKEN_RESERVE, max_tokens or 0)
         trace = {"evidence_strategy": strategy}
+        if check_fields:
+            trace["evidence_field_check"] = True
         try:
             fixed_prompt = evidence_prompt(query, history, "", strategy=strategy)
             if adaptive:
@@ -1776,7 +1784,7 @@ class RAGTool(Tool):
             verified = grounded_answer(
                 generate, query, history, context, visible,
                 strategy=strategy, compact_empty_retry=adaptive,
-                stage_callback=stage_callback,
+                check_fields=check_fields, stage_callback=stage_callback,
             )
         except ContextCapacityError:
             self._last_action_data = {**trace, "evidence_status": "capacity"}
@@ -1789,6 +1797,8 @@ class RAGTool(Tool):
             {**item, "content": verified.quotes[item["citation_id"]]}
             for item in visible if item["citation_id"] in verified.quotes
         ]
+        if verified.warnings:
+            trace["grounding_warnings"] = list(verified.warnings)
         self._last_action_data = {**trace, "evidence_status": "verified" if cited else "insufficient"}
         return self._format_answer(verified.text, cited, truncated=truncated)
 

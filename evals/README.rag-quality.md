@@ -86,3 +86,78 @@
 ~~~
 
 可加 --bucket long_context 和 --max-tokens 1024 抽查长上下文的低预算表现。
+
+
+### 验证码绑定和例外条件
+
+启用应用证据校验后，可以额外设置 \`RAG_QA_EVIDENCE_CHECK_FIELDS=1\`。规则处理同一可见片段中同时出现明确的入口标识字段，以及单独给出或明确未公开的验证码字段时的错绑。引用仍保留模型逐字选择的原文。检测到错绑时共用证据校验的一次重试限额。例外条件的可能遗漏只在工具的诊断数据中标记。
+
+证据字段检查还核对引用中的明确版本日期。单日有效性问题、引用中只有同一个代号、原文明确给出其有效期，且日期确实越界时，会按证据校验错误处理。从某天起的开放问法只记录版本可能不适用的提醒。发布时间、修订时间和范围内的边界日均按原方式处理。
+
+~~~powershell
+.\venv\Scripts\python.exe -m evals.rag_quality_holdout --grounding-fields --embedding-env-file deploy/.env --chat-env-file .env --output-dir output/rag-grounding-fields-canary
+~~~
+
+两组用同一个模型和自适应策略运行 16 道合成验收题，比较答对率、干净拒答、引用、重试和延迟。字段校验的确定性效果用模拟生成结果的离线回放验证。
+
+
+### 相似片段拥挤测试
+
+每题从四份选中文档里检索 24 段内容，另有一份同命名空间的未选文档检查范围隔离。题集包含相近记录、版本冲突、易混字段、跨语言释义和跨文档联合证据。生成规则与指纹随代码保存，脚本会写出完整 JSON 供复查。20 道开发题与 30 道验收题分别使用独立题目、文档、正文和命名空间。
+
+~~~powershell
+.\venv\Scripts\python.exe -m evals.rag_quality_crowding --split dev --smoke-limit 4 --pool-k 20 --embedding-env-file deploy/.env --output-dir output/rag-crowding-smoke
+.\venv\Scripts\python.exe -m evals.rag_quality_crowding --split holdout --pool-k 20 --embedding-env-file deploy/.env --output-dir output/rag-crowding-holdout
+~~~
+
+基线、混合、混合加重排共享一次性预取的查询向量。向量与混合调用同一个检索入口，使用相同候选池上限和向量阈值，混合的词面通道仍扫描选中文档。混合和重排使用相同的候选列表，最后均取前五。报告区分候选池里缺少关键证据、关键证据已进候选池但掉出前五。计时将向量网络请求与本地检索分开，线上向量配置或请求失败时输出失败环节并退出。
+
+给开发集命令加 --expanded-pool-k 24，可以在共享查询向量的前提下对照扩大候选池、用多样性重排减少近重复片段，以及两者合用。每组最终仍返回五条。报告会单列扩大候选池和多样性重排的耗时。
+
+固定排序的问答回放使用已有冻结集的真实向量排名，各题型取固定中英文题。两组把各自前五条原文送入相同的问答适配器和聊天模型。结果保留独立的原检索耗时和回放问答耗时。
+
+~~~powershell
+.\venv\Scripts\python.exe -m evals.rag_quality_crowding_qa --retrieval-dir output/rag-crowding-holdout-expand-mmr --chat-env-file .env --output-dir output/rag-crowding-qa-replay
+~~~
+
+
+### 跨规模拥挤测试
+
+`--dataset scale` 在同一个检索评测入口加入 24、60、100 段三档合成资料。每个主题在同一组选中文档下有多种问法，涵盖同文档互补证据、语义近似的错误记录、跨语言证据、常规问法和答案仅在未选文档的题。排名命中率只统计有答案题。结果按规模和题型分组，保留候选池召回比例和被排除的原因。
+
+~~~powershell
+.\venv\Scripts\python.exe -m evals.rag_quality_crowding --dataset scale --split holdout --pool-k 20 --expanded-pool-k 24 --embedding-env-file deploy/.env --output-dir output/rag-crowding-scale-holdout
+~~~
+
+
+### 有证据仍拒答的定位
+
+从跨规模开发集的已保存排名构造四种候选顺序和缺证据对照。每组只发一次模型请求。报告同时记录原始 JSON、最终答复、校验错误和引文回查，区分模型主动拒答和校验拒绝。模型提示中只包含问题和传入的候选原文。
+
+~~~powershell
+.\venv\Scripts\python.exe -m evals.rag_present_evidence_diag --retrieval-dir output/rag-crowding-scale-dev --chat-env-file .env --output-dir output/rag-present-evidence-diag
+~~~
+
+将 --retrieval-dir 及其参数替换为 --supplemental 可运行独立补充样本，覆盖版本分界、已确认与待确认的状态、同实体字段以及跨段关联。移除必要证据后的原始错误回答与校验拦截仍保留在逐题报告里。
+
+
+### JSON 和内存 Qdrant 对照
+
+使用常规 24 题和跨规模冻结 30 题，将同一批向量分别写入两个临时后端。四种检索策略都核对前五排名、所选文档和回查到的页码。评测在另一命名空间加入相同文档 ID、相同正文和不同页码的记录，验证不会混入。提供聊天环境文件会抽取六题，通过应用问答验证答复和引文。
+
+~~~powershell
+.\venv\Scripts\python.exe -m evals.rag_qdrant_parity --embedding-env-file deploy/.env --chat-env-file .env --output-dir output/rag-qdrant-parity-live
+~~~
+
+使用 --offline-vectors 可单独跑本地确定性向量对照。结果适用于内存 Qdrant，远程索引、性能和持久化需要各自实测。
+
+Windows Docker Desktop 上加 --loopback-server 可使用项目已有的 Qdrant 镜像启动一次性服务。脚本核对本地 Docker 上下文、回环端口、服务版本和空集合，退出时只清理本次任务标记的容器。报告记录数据点数和已建近似索引的向量数。
+
+
+### Qdrant 近似搜索对照
+
+使用一次性本地 Qdrant 服务器，在固定合成向量上对照精确和近似搜索。报告分别显示与精确前十的重合率、回环请求耗时和服务实际搜索路径。租户过滤、文档过滤及未建索引的小集合分别统计。实验向量为固定种子生成，和 BGE-M3 的检索质量评测分别解读。
+
+~~~powershell
+.\venv\Scripts\python.exe -m evals.rag_qdrant_hnsw_benchmark --output-dir output/rag-qdrant-hnsw
+~~~

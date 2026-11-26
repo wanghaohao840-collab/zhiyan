@@ -113,6 +113,8 @@ def write_report(directory, metadata, tracks):
         data["grounding_release_gate"] = grounding_release_gate(tracks["grounding_release"])
     if "grounding_adaptive" in tracks:
         data["grounding_adaptive_gate"] = grounding_adaptive_gate(tracks["grounding_adaptive"])
+    if "grounding_fields" in tracks:
+        data["grounding_field_checks"] = summarize_field_checks(tracks["grounding_fields"])
     (directory / "results.json").write_text(
         json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8",
     )
@@ -137,6 +139,8 @@ def write_report(directory, metadata, tracks):
         "grounding_latency": "单次与双次模型调用的证据校验对照",
         "grounding_release": "应用问答适配器上线前对照",
         "grounding_adaptive": "按问项选择证据校验策略的应用对照",
+        "grounding_fields": "字段绑定校验与例外条件提醒对照",
+        "grounding_crowding_replay": "使用固定的拥挤检索排序对照问答",
     })
     for track, summary in summaries.items():
         lines.extend([
@@ -179,7 +183,10 @@ def write_report(directory, metadata, tracks):
                     f"| {name} | {_percent(row['citation_coverage'])} | {row['emitted_citations']} | "
                     f"{_percent(row['citation_validity'])} | {_percent(row['citation_support'])} |"
                 )
-        if track in {"holdout_grounding", "grounding_latency", "grounding_release", "grounding_adaptive"}:
+        if track in {
+            "holdout_grounding", "grounding_latency", "grounding_release", "grounding_adaptive",
+            "grounding_fields", "grounding_crowding_replay",
+        }:
             lines.extend([
                 "", "| 组别 | 缺证据题错误作答 | 可答题误拒 | 黄金事实引用覆盖 | 同句引用指向标注证据 |",
                 "|---|---:|---:|---:|---:|",
@@ -215,6 +222,16 @@ def write_report(directory, metadata, tracks):
             ])
             if gate["reasons"]:
                 lines.extend(f"- {reason}" for reason in gate["reasons"])
+    if "grounding_field_checks" in data:
+        lines.extend([
+            "", "| 组别 | 字面通过但错答 | 例外条件提醒 | 版本日期提醒 | 发生协议重试的题数 |",
+            "|---|---:|---:|---:|---:|",
+        ])
+        for name, stats in data["grounding_field_checks"].items():
+            lines.append(
+                f"| {name} | {stats['verified_wrong']} | {stats['exception_warnings']} | {stats['validity_warnings']} | {stats['retried']} |"
+            )
+        lines.append("两组均使用自适应证据校验及相同输出上限。例外条件提醒只用于诊断。")
     lines.extend([
         "", "## 口径", "",
         "- 检索前 k 命中率只统计可回答题。Recall@5 取各题黄金片段召回比例的平均值，"
@@ -226,7 +243,7 @@ def write_report(directory, metadata, tracks):
         "- 各组最终都取五条。向量阈值为 0.12，混合词面通道可以额外召回弱匹配片段。",
         "- 逐题证据、正文、引用、分数与耗时见同目录 results.json。",
     ])
-    if {"grounding_latency", "grounding_release", "grounding_adaptive"} & tracks.keys():
+    if {"grounding_latency", "grounding_release", "grounding_adaptive", "grounding_fields"} & tracks.keys():
         lines.append(
             "- 两组交错执行，问答并发为 2。每题一次真实检索，模型耗时为该题所有生成调用的总时间。"
         )
@@ -236,12 +253,40 @@ def write_report(directory, metadata, tracks):
         lines.append(
             "- 引用提示词对照固定检索结果。无阈值向量组只做检索。"
         )
+    if "grounding_crowding_replay" in tracks:
+        lines.append(
+            "- 每种题型各取固定的中英文题。从两组真实 BGE-M3 检索报告读取已保存的前五排名，"
+            "两组使用相同的真实聊天模型及证据校验。问答耗时从注入候选起计，"
+            "原检索耗时见 results.json 中的 original_retrieval_ms。"
+        )
     if "holdout_grounding" in tracks:
         lines.append(
             "- 问答对照固定混合检索与重排。校验组增加原文选择及逐条引用检查。"
             "同句引用支撑按人工标注的事实和对应原文片段计算。接口与格式错误单列。"
         )
     (directory / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def summarize_field_checks(rows):
+    groups = defaultdict(list)
+    for row in rows:
+        groups[row["variant"]].append(row)
+    return {
+        variant: {
+            "verified_wrong": sum(
+                row["evidence_status"] == "verified" and not (row["answer_scores"] or {}).get("accuracy")
+                for row in group
+            ),
+            "exception_warnings": sum(
+                "exception_may_be_omitted" in row["grounding_warnings"] for row in group
+            ),
+            "validity_warnings": sum(
+                "cited_version_may_be_outdated" in row["grounding_warnings"] for row in group
+            ),
+            "retried": sum(bool(row["protocol_retries"]) for row in group),
+        }
+        for variant, group in groups.items()
+    }
 
 
 def grounding_latency_gate(rows):

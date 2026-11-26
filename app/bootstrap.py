@@ -136,6 +136,7 @@ class ApplicationServices:
             evidence_max_tokens=os.getenv("RAG_QA_EVIDENCE_MAX_TOKENS", "").strip(),
             retrieval_mode=os.getenv("RAG_QA_RETRIEVAL_MODE", "vector").strip().lower(),
             use_rerank=os.getenv("RAG_QA_RERANK", "").strip() == "1",
+            evidence_check_fields=os.getenv("RAG_QA_EVIDENCE_CHECK_FIELDS", "").strip() == "1",
         )
         summary_engine = answer_engine
         if (
