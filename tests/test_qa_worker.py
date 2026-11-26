@@ -459,6 +459,17 @@ def test_real_summary_worker_projects_sources_and_persists_progress(
             },
         }
     )
+    valid_ref = tool._graph_citation_id("doc-0|doc-1", "canonical_entity", "common")
+    unknown_ref = "G-0123456789"
+    generate = tool.llm.generate
+
+    def generate_with_citations(prompt):
+        answer = generate(prompt)
+        if "请给出联合总结：" in prompt:
+            return f"{answer} [{valid_ref}] [{unknown_ref}]"
+        return answer
+
+    monkeypatch.setattr(tool.llm, "generate", generate_with_citations)
     heartbeat = jobs.heartbeat
     progress = []
 
@@ -475,7 +486,9 @@ def test_real_summary_worker_projects_sources_and_persists_progress(
     job = jobs.get(OWNER, queued.job.id)
     message = qa.get_message(OWNER, queued.pending.assistant_message.id)
     assert job.status == message.status == "completed"
-    assert "PRIVATE_ANSWER" in message.content
+    assert f"PRIVATE_ANSWER_资料不存在其他差异 [{valid_ref}] [未核实引用]" in message.content
+    assert unknown_ref not in message.content
+    assert all(source.citation_id != unknown_ref for source in message.sources)
     rag_sources = [source for source in message.sources if source.source_type == "rag"]
     assert [(source.document_id, source.page_number) for source in rag_sources] == [
         ("doc-0", 3),
@@ -483,9 +496,7 @@ def test_real_summary_worker_projects_sources_and_persists_progress(
     ]
     graph_source, = [source for source in message.sources if source.source_type == "graph"]
     assert graph_source.document_id == "doc-0"
-    assert graph_source.citation_id == tool._graph_citation_id(
-        "doc-0|doc-1", "canonical_entity", "common"
-    )
+    assert graph_source.citation_id == valid_ref
     assert graph_source.excerpt == "shared term"
     assert [stage for _, stage in progress] == [
         "mapping", "mapping", "mapping", "mapping", "reducing", "completed",

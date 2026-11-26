@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from time import perf_counter
 from typing import Any, Literal, TypedDict
@@ -8,6 +9,8 @@ from uuid import UUID, uuid4
 
 
 logger = logging.getLogger(__name__)
+_CITATION_MARKER = re.compile(r"\[(S-[0-9a-fA-F]{12}|G-[0-9a-fA-F]{10})\]")
+_UNVERIFIED_CITATION = "[未核实引用]"
 
 
 class SummaryCancelled(RuntimeError):
@@ -30,9 +33,28 @@ _OUTPUT_MESSAGES = {
 class IncompleteSummaryOutput(RuntimeError):
     """A completion ended without a usable document summary."""
 
-    def __init__(self, category: SummaryOutputIssue) -> None:
+    def __init__(self, category: SummaryOutputIssue, *, invalid_citations: int = 0) -> None:
         super().__init__(_OUTPUT_MESSAGES[category])
         self.category = category
+        self.invalid_citations = invalid_citations
+
+
+def verify_summary_citations(text: str, allowed_ids: set[str]) -> tuple[str, int]:
+    """Mark unknown system citations in model output and require usable prose."""
+    invalid_count = 0
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal invalid_count
+        if match[1] in allowed_ids:
+            return match[0]
+        invalid_count += 1
+        return _UNVERIFIED_CITATION
+
+    verified = _CITATION_MARKER.sub(replace, text)
+    body = _CITATION_MARKER.sub("", verified).replace(_UNVERIFIED_CITATION, "")
+    if body != verified and not any(character.isalnum() for character in body):
+        raise IncompleteSummaryOutput("empty_output", invalid_citations=invalid_count)
+    return verified, invalid_count
 
 
 class SummaryState(TypedDict, total=False):
@@ -46,6 +68,7 @@ class SummaryState(TypedDict, total=False):
     retryable: bool
     incomplete_output: bool
     output_issues: dict[str, int]
+    invalid_citations: int
     error_category: Literal["context_capacity"]
     error: str
     answer: str
@@ -87,6 +110,7 @@ def run_summary_workflow(
             started = perf_counter()
             status, reason = "error", "stage_error"
             update: SummaryState = {}
+            rejected_citations = 0
             try:
                 update = stage(state)
                 if "error" not in update:
@@ -96,6 +120,7 @@ def run_summary_workflow(
                 return update
             except IncompleteSummaryOutput as error:
                 reason = error.category if error.category in _OUTPUT_MESSAGES else "abnormal_finish"
+                rejected_citations = error.invalid_citations
                 raise
             except SummaryCancelled:
                 status, reason = "cancelled", "cancelled"
@@ -119,10 +144,12 @@ def run_summary_workflow(
                     for key in _OUTPUT_MESSAGES
                     if key in update.get("output_issues", {})
                 }
+                invalid_citations = update.get("invalid_citations", state.get("invalid_citations", 0))
+                invalid_citations += rejected_citations
                 logger.info(
                     "qa_summary stage=%s status=%s duration_ms=%s run_id=%s "
                     "job_id=%s attempt=%s engine=%s reason=%s output_issues=%s "
-                    "documents=%s mapped=%s failed=%s cache_hits=%s truncated=%s",
+                    "documents=%s mapped=%s failed=%s cache_hits=%s truncated=%s invalid_citations=%s",
                     name,
                     status,
                     elapsed_ms,
@@ -137,6 +164,7 @@ def run_summary_workflow(
                     failed,
                     cache_hits,
                     update.get("truncated", False),
+                    invalid_citations,
                     extra={
                         "qa_summary_stage": name,
                         "qa_summary_status": status,
@@ -146,6 +174,7 @@ def run_summary_workflow(
                         "qa_summary_engine": engine,
                         "qa_summary_reason": reason,
                         "qa_summary_output_issues": issues,
+                        "qa_summary_invalid_citations": invalid_citations,
                     },
                 )
 

@@ -65,6 +65,7 @@ from hello_agents.tools.builtin.rag_summary_workflow import (
     SummaryProgressAborted,
     SummaryState,
     run_summary_workflow,
+    verify_summary_citations,
 )
 
 
@@ -2598,6 +2599,8 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 model=summary_model,
             )
             check_cancelled()
+            source_refs = [source["citation_id"] for source in sources + graph_sources]
+            summary, invalid_citations = verify_summary_citations(summary, set(source_refs))
             first_metadata = sources[0].get("metadata", {}) or {}
             mapped_result = {
                 "document_id": doc_id,
@@ -2608,10 +2611,8 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 ),
                 "status": "ok",
                 "summary": summary,
-                "source_refs": (
-                    [source["citation_id"] for source in sources]
-                    + [source["citation_id"] for source in graph_sources]
-                ),
+                "source_refs": source_refs,
+                "invalid_citations": invalid_citations,
                 "sources": sources,
                 "graph_sources": graph_sources,
                 "truncated": truncated,
@@ -2626,6 +2627,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
             failures = {}
             retryable = False
             output_issues: Counter[str] = Counter()
+            invalid_citations = 0
             remaining = iter(document_ids)
             worker_count = min(SUMMARY_MAX_WORKERS, total_documents)
             executor = ThreadPoolExecutor(max_workers=worker_count)
@@ -2649,12 +2651,15 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                     for future in done:
                         doc_id = pending.pop(future)
                         try:
-                            completed[doc_id] = future.result()
+                            item = future.result()
+                            completed[doc_id] = item
+                            invalid_citations += item.get("invalid_citations", 0)
                         except (SummaryCancelled, SummaryProgressAborted):
                             raise
                         except IncompleteSummaryOutput as error:
                             failures[doc_id] = str(error)
                             output_issues[error.category] += 1
+                            invalid_citations += error.invalid_citations
                         except ContextCapacityError:
                             failures[doc_id] = "单篇摘要超出当前模型容量"
                         except Exception as error:
@@ -2675,6 +2680,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 "retryable": retryable,
                 "incomplete_output": bool(output_issues),
                 "output_issues": dict(output_issues),
+                "invalid_citations": invalid_citations,
             }
 
         def collect(state: SummaryState) -> SummaryState:
@@ -2787,10 +2793,14 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                     "联合总结生成失败",
                     retryable=self._summary_error_is_retryable(error),
                 ) from None
+            allowed_ids = {ref for item in mapped for ref in item["source_refs"]}
+            allowed_ids.update(source["citation_id"] for source in shared_graph_sources)
+            answer, invalid_citations = verify_summary_citations(answer, allowed_ids)
             emit_progress("completed", total_documents)
             return {
                 "answer": answer,
                 "shared_graph_sources": shared_graph_sources,
+                "invalid_citations": state["invalid_citations"] + invalid_citations,
                 "truncated": reduce_truncated or any(item["truncated"] for item in mapped),
             }
 
@@ -2832,6 +2842,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
             "summary_documents": len(mapped),
             "summary_cache_hits": cache_hits,
             "summary_cache_misses": len(mapped) - cache_hits,
+            "summary_invalid_citations": state["invalid_citations"],
             "graph_mode": graph_mode,
             "graph_documents": [item["document_id"] for item in mapped],
             "graph_context_count": len(all_graph_sources),

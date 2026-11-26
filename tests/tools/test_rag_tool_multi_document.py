@@ -646,6 +646,76 @@ class RAGToolMultiDocumentTests(unittest.TestCase):
         self.assertIn("GraphRAG", output)
         self.assertEqual(tool.llm.prompts, [])
 
+    def test_summary_verifies_model_citations_before_caching_and_publishing(self):
+        for use_langgraph in (False, True):
+            with self.subTest(langgraph=use_langgraph):
+                tool = self.make_tool()
+                tool.graph_service = FakeGraphContextService()
+                query = "alpha"
+                pipeline = tool._pipelines["test"]
+                doc1, doc2 = (
+                    tool._citation_id(pipeline.search(query, document_id=doc, limit=1)[0])
+                    for doc in ("doc-1", "doc-2")
+                )
+                shared = tool._graph_citation_id("doc-1|doc-2", "canonical_entity", "canonical-alpha")
+                invalid_map = "S-0123456789ab"
+                invalid_reduce = "G-0123456789"
+                generate = tool.llm.generate
+
+                def answer(prompt, **kwargs):
+                    generate(prompt, **kwargs)
+                    if prompt.startswith("请仅根据以下资料总结文档 doc-1。"):
+                        return f"逐篇正文 [{doc1}] [{doc2}] [{invalid_map}] [1] [S-123]"
+                    if "请给出联合总结：" in prompt:
+                        return f"汇总正文 [{doc1}] [{doc2}] [{shared}] [{invalid_reduce}] [2]"
+                    return "普通正文"
+
+                tool.llm.generate = answer
+                with self.assertLogs("hello_agents.tools.builtin.rag_summary_workflow", "INFO") as logs:
+                    first, cached = (
+                        tool.execute_result(
+                            "ask", query=query, document_ids=["doc-1", "doc-2"],
+                            mode="summary", use_summary_workflow=use_langgraph,
+                        )
+                        for _ in range(2)
+                    )
+
+                self.assertTrue(first.success)
+                self.assertIn(f"汇总正文 [{doc1}] [{doc2}] [{shared}] [未核实引用] [2]", first.message)
+                self.assertNotIn(invalid_reduce, first.message)
+                self.assertEqual(first.message, cached.message)
+                self.assertEqual(cached.data["summary_cache_hits"], 2)
+                self.assertIn(f"逐篇正文 [{doc1}] [未核实引用] [未核实引用] [1] [S-123]", tool.llm.prompts[-1])
+                self.assertNotIn(invalid_map, tool.llm.prompts[-1])
+                self.assertEqual(first.data["summary_invalid_citations"], 3)
+                self.assertIn("invalid_citations=3", logs.output[-1])
+                self.assertNotIn(invalid_map, "\n".join(logs.output))
+                self.assertNotIn(invalid_reduce, "\n".join(logs.output))
+
+    def test_summary_rejects_model_output_with_only_citation_markers(self):
+        for use_langgraph in (False, True):
+            for rejected_stage in ("map", "reduce"):
+                with self.subTest(langgraph=use_langgraph, stage=rejected_stage):
+                    tool = self.make_tool()
+                    generate = tool.llm.generate
+
+                    def answer(prompt, **kwargs):
+                        generate(prompt, **kwargs)
+                        stage = "reduce" if "请给出联合总结：" in prompt else "map"
+                        return "- [S-0123456789ab]。" if stage == rejected_stage else "实际摘要正文"
+
+                    tool.llm.generate = answer
+                    result = tool.execute_result(
+                        "ask", query="alpha", document_ids=["doc-1", "doc-2"],
+                        mode="summary", use_summary_workflow=use_langgraph,
+                    )
+
+                    self.assertFalse(result.success)
+                    self.assertEqual(result.error_code, "QA_SUMMARY_INCOMPLETE")
+                    self.assertFalse(result.retryable)
+                    self.assertNotIn("0123456789ab", result.message)
+                    self.assertEqual(len(tool._document_summary_cache), 0 if rejected_stage == "map" else 2)
+
     def test_summary_auto_shared_graph_failure_falls_back_to_vector_summaries(
         self,
     ):
