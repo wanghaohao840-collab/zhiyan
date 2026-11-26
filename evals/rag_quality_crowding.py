@@ -19,7 +19,7 @@ from evals.rag_quality_report import _latency
 from evals.rag_quality_scoring import has_fact
 from hello_agents.memory.rag.embedding_client import SiliconFlowEmbedding
 from hello_agents.memory.rag.embedding_profile import EmbeddingFailure, EmbeddingSettings
-from hello_agents.memory.rag.result_utils import relevance_rerank_results
+from hello_agents.memory.rag.result_utils import mmr_select, relevance_rerank_results
 
 
 FROZEN_HASHES = {
@@ -118,7 +118,7 @@ def score_retrieval(case, variant, pool, top, elapsed_ms):
     }
 
 
-def compare_case(pipeline, case, pool_k, *, rerank=relevance_rerank_results):
+def compare_case(pipeline, case, pool_k, *, rerank=relevance_rerank_results, expanded_pool_k=None):
     options = {
         "query": case.question, "document_ids": list(case.scope), "limit": pool_k,
         "min_score": 0.12, "use_mmr": False, "use_rerank": False,
@@ -132,13 +132,32 @@ def compare_case(pipeline, case, pool_k, *, rerank=relevance_rerank_results):
     hybrid_ms = (perf_counter() - started) * 1000
 
     started = perf_counter()
-    reranked = rerank(case.question, hybrid, TOP_K)[:TOP_K]
-    reranked_ms = (perf_counter() - started) * 1000
-    return [
+    reranked = rerank(case.question, hybrid, TOP_K)
+    reranked_ms = hybrid_ms + (perf_counter() - started) * 1000
+    rows = [
         score_retrieval(case, "vector", vector, vector[:TOP_K], vector_ms),
         score_retrieval(case, "hybrid", hybrid, hybrid[:TOP_K], hybrid_ms),
-        score_retrieval(case, "rerank", hybrid, reranked, hybrid_ms + reranked_ms),
+        score_retrieval(case, "rerank", hybrid, reranked[:TOP_K], reranked_ms),
     ]
+    if expanded_pool_k is None:
+        return rows
+
+    started = perf_counter()
+    diversified = mmr_select(reranked, TOP_K, lambda_mult=0.55)
+    diversity_ms = reranked_ms + (perf_counter() - started) * 1000
+    rows.append(score_retrieval(case, "rerank_mmr", hybrid, diversified, diversity_ms))
+
+    started = perf_counter()
+    expanded = pipeline.search(retrieval_mode="hybrid", **{**options, "limit": expanded_pool_k})
+    expanded_ranked = rerank(case.question, expanded, expanded_pool_k)
+    expanded_ms = (perf_counter() - started) * 1000
+    rows.append(score_retrieval(case, "expanded_rerank", expanded, expanded_ranked[:TOP_K], expanded_ms))
+
+    started = perf_counter()
+    wide_diversified = mmr_select(expanded_ranked, TOP_K, lambda_mult=0.55)
+    wide_diversity_ms = expanded_ms + (perf_counter() - started) * 1000
+    rows.append(score_retrieval(case, "expanded_rerank_mmr", expanded, wide_diversified, wide_diversity_ms))
+    return rows
 
 
 def summarize(rows):
@@ -179,6 +198,8 @@ def write_output(output, run, stages, rows):
         f"状态 {run['status']}，分组 {run['split']}，候选池 {run['pool_k']}，最终返回 {TOP_K} 条。",
         f"合成题集 SHA256 {run['dataset_sha256']}。",
     ]
+    if run.get("expanded_pool_k") is not None:
+        lines.append(f"扩池实验使用 {run['expanded_pool_k']} 条候选。多样性重排降低相似片段的优先级。")
     if not summary:
         lines.extend(["", f"失败环节 {run['failure_stage']}，错误 {run['reason']}。"])
     for bucket, variants in summary.items():
@@ -208,10 +229,13 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--split", choices=("dev", "holdout"), required=True)
     parser.add_argument("--pool-k", type=int, choices=range(TOP_K, 31), default=20, metavar="5-30")
+    parser.add_argument("--expanded-pool-k", type=int, choices=range(TOP_K + 1, 31), metavar="6-30")
     parser.add_argument("--smoke-limit", type=int, choices=range(1, 6), metavar="1-5")
     parser.add_argument("--embedding-env-file", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args(argv)
+    if args.expanded_pool_k is not None and args.expanded_pool_k <= args.pool_k:
+        parser.error("--expanded-pool-k must be larger than --pool-k")
     output = args.output_dir
     output.mkdir(parents=True, exist_ok=True)
     fixture = crowding_fixture_json(*make_crowding_dataset(args.split))
@@ -228,7 +252,7 @@ def main(argv=None):
     run = {
         "status": "available", "split": args.split, "dataset_sha256": digest, "pool_k": args.pool_k,
         "top_k": TOP_K, "question_count": len(cases), "smoke": args.smoke_limit is not None,
-        "fallback_used": False,
+        "fallback_used": False, "expanded_pool_k": args.expanded_pool_k,
     }
     embedder = None
     stage = "smoke"
@@ -259,7 +283,9 @@ def main(argv=None):
             for pipeline in pipelines.values():
                 pipeline.embedder = prepared
             for case in cases:
-                rows.extend(compare_case(pipelines[case.namespace], case, args.pool_k))
+                rows.extend(compare_case(
+                    pipelines[case.namespace], case, args.pool_k, expanded_pool_k=args.expanded_pool_k,
+                ))
     except EmbeddingFailure as exc:
         run.update(
             status="service_unavailable", failure_stage=stage, reason=provider_error(exc),

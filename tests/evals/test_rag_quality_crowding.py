@@ -54,20 +54,27 @@ def test_comparison_uses_same_pool_for_hybrid_and_rerank(tmp_path):
         rerank_calls.append((query, [item["id"] for item in pool], limit))
         return pool[::-1]
 
-    rows = compare_case(SimpleNamespace(search=track_search), case, 20, rerank=reverse_rank)
+    rows = compare_case(
+        SimpleNamespace(search=track_search), case, 20, rerank=reverse_rank, expanded_pool_k=24,
+    )
     shared_args = {
         "query": case.question, "document_ids": list(case.scope), "limit": 20, "min_score": 0.12,
         "use_mmr": False, "use_rerank": False,
     }
     assert calls == [
         {"retrieval_mode": "vector", **shared_args}, {"retrieval_mode": "hybrid", **shared_args},
+        {"retrieval_mode": "hybrid", **shared_args, "limit": 24},
     ]
-    vector, hybrid, rerank = rows
-    assert rerank_calls == [(case.question, hybrid["pool"], 5)]
+    vector, hybrid, rerank, diversified, expanded, wide_diversified = rows
+    assert rerank_calls == [(case.question, hybrid["pool"], 5), (case.question, expanded["pool"], 24)]
     assert rerank["pool"] == hybrid["pool"]
     assert rerank["top"] == hybrid["pool"][::-1][:5]
     assert all(not row["scope_leaks"] for row in rows)
     assert len(vector["top"]) <= 5
+    assert diversified["pool"] == hybrid["pool"]
+    assert wide_diversified["pool"] == expanded["pool"]
+    assert set(diversified["top"]).issubset(hybrid["pool"])
+    assert set(wide_diversified["top"]).issubset(expanded["pool"])
 
 
 def test_failure_attribution_distinguishes_pool_loss_rank_drop_and_scope_leak():
