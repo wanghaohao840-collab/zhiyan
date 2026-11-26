@@ -60,7 +60,7 @@ def _loopback_port(bindings):
 
 
 @contextmanager
-def loopback_qdrant(summary):
+def loopback_qdrant(summary, *, bounded_resources=False):
     if os.environ.get("DOCKER_HOST"):
         raise ValueError("An explicit DOCKER_HOST is unsupported by the local benchmark")
     context = _docker("context", "show")
@@ -80,8 +80,9 @@ def loopback_qdrant(summary):
     summary.update(mode="loopback_http", image_id=image_id, cleanup_verified=False)
     label_filter = f"label=codex.rag-parity={run_id}"
     try:
+        resource_args = ("--cpus", "2", "--memory", "1g") if bounded_resources else ()
         container = docker(
-            "run", "-d", "--rm", "--pull=never", "--name", container_name,
+            "run", "-d", "--rm", "--pull=never", "--name", container_name, *resource_args,
             "--label", f"codex.rag-parity={run_id}", "--publish", "127.0.0.1::6333",
             "--tmpfs", "/qdrant/storage", "-e", "QDRANT__SERVICE__API_KEY",
             image_id, env=auth_env,
