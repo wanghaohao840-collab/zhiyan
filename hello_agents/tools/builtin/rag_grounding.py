@@ -5,6 +5,8 @@ import json
 import re
 import unicodedata
 
+from hello_agents.tools.builtin.rag_validity import validity_date_issue
+
 
 class EvidenceProtocolError(ValueError):
     """The generator did not return a usable evidence or answer payload."""
@@ -231,7 +233,7 @@ def _check_claims(
     lines = []
     used = {}
     missing_answer = False
-    omitted_exception = False
+    warnings = set()
     for item in items:
         claim, ids = item.get("text"), item.get("ids")
         if (
@@ -254,13 +256,19 @@ def _check_claims(
         if field_sources is not None:
             if _wrong_verification_code_field(question, claim, [field_sources[id_] for id_ in ids]):
                 raise EvidenceProtocolError("Verification code belongs to a different field")
-            omitted_exception |= _omitted_exception(question, claim, evidence)
+            if _omitted_exception(question, claim, evidence):
+                warnings.add("exception_may_be_omitted")
+            if len(ids) == 1:
+                validity = validity_date_issue(question, claim, evidence, _CODE)
+                if validity == "outside":
+                    raise EvidenceProtocolError("Cited code is outside its stated validity period")
+                if validity == "warning":
+                    warnings.add("cited_version_may_be_outdated")
         lines.append(f"{claim} " + " ".join(f"[{id_}]" for id_ in ids))
         used.update((id_, quotes[id_]) for id_ in ids)
     if missing_answer or not lines:
         return VerifiedAnswer(_REFUSAL, {})
-    warnings = ("exception_may_be_omitted",) if omitted_exception else ()
-    return VerifiedAnswer("\n".join(lines), used, warnings)
+    return VerifiedAnswer("\n".join(lines), used, tuple(sorted(warnings)))
 
 
 def _check_combined(

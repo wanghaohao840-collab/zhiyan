@@ -224,12 +224,12 @@ def write_report(directory, metadata, tracks):
                 lines.extend(f"- {reason}" for reason in gate["reasons"])
     if "grounding_field_checks" in data:
         lines.extend([
-            "", "| 组别 | 字面通过但错答 | 含例外条件提醒的题数 | 发生协议重试的题数 |",
-            "|---|---:|---:|---:|",
+            "", "| 组别 | 字面通过但错答 | 例外条件提醒 | 版本日期提醒 | 发生协议重试的题数 |",
+            "|---|---:|---:|---:|---:|",
         ])
         for name, stats in data["grounding_field_checks"].items():
             lines.append(
-                f"| {name} | {stats['verified_wrong']} | {stats['exception_warnings']} | {stats['retried']} |"
+                f"| {name} | {stats['verified_wrong']} | {stats['exception_warnings']} | {stats['validity_warnings']} | {stats['retried']} |"
             )
         lines.append("两组均使用自适应证据校验及相同输出上限。例外条件提醒只用于诊断。")
     lines.extend([
@@ -279,6 +279,9 @@ def summarize_field_checks(rows):
             ),
             "exception_warnings": sum(
                 "exception_may_be_omitted" in row["grounding_warnings"] for row in group
+            ),
+            "validity_warnings": sum(
+                "cited_version_may_be_outdated" in row["grounding_warnings"] for row in group
             ),
             "retried": sum(bool(row["protocol_retries"]) for row in group),
         }

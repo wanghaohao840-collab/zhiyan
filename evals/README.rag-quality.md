@@ -92,6 +92,8 @@
 
 启用应用证据校验后，可以额外设置 \`RAG_QA_EVIDENCE_CHECK_FIELDS=1\`。规则处理同一可见片段中同时出现明确的入口标识字段，以及单独给出或明确未公开的验证码字段时的错绑。引用仍保留模型逐字选择的原文。检测到错绑时共用证据校验的一次重试限额。例外条件的可能遗漏只在工具的诊断数据中标记。
 
+证据字段检查还核对引用中的明确版本日期。单日有效性问题、引用中只有同一个代号、原文明确给出其有效期，且日期确实越界时，会按证据校验错误处理。从某天起的开放问法只记录版本可能不适用的提醒。发布时间、修订时间和范围内的边界日均按原方式处理。
+
 ~~~powershell
 .\venv\Scripts\python.exe -m evals.rag_quality_holdout --grounding-fields --embedding-env-file deploy/.env --chat-env-file .env --output-dir output/rag-grounding-fields-canary
 ~~~
