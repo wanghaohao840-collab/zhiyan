@@ -39,6 +39,7 @@ _QDRANT_COLLECTION_MAX_LENGTH = 255
 from hello_agents.memory.rag.result_utils import (
     dedupe_results_by_source,
     hybrid_rank_results,
+    relevance_rerank_results,
     mmr_select,
     normalize_document_scope,
     RETRIEVAL_MODES,
@@ -458,6 +459,7 @@ class SimpleRAGPipeline:
         if retrieval_mode not in RETRIEVAL_MODES:
             raise ValueError(f"unsupported retrieval_mode: {retrieval_mode}")
         use_mmr = kwargs.pop("use_mmr", retrieval_mode == "hybrid")
+        use_rerank = kwargs.pop("use_rerank", False)
         mmr_lambda = float(kwargs.pop("mmr_lambda", 0.75))
         vector_weight = float(kwargs.pop("vector_weight", 0.7))
 
@@ -512,6 +514,8 @@ class SimpleRAGPipeline:
             results = vector_results
 
         results = dedupe_results_by_source(results, max(limit * 3, limit))
+        if use_rerank:
+            results = relevance_rerank_results(query, results, limit)
         if use_mmr:
             results = mmr_select(results, limit=limit, lambda_mult=mmr_lambda)
         for result in results:

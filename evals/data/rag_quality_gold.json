@@ -1,0 +1,951 @@
+{
+  "schema_version": 1,
+  "chunks": [
+    {
+      "id": "atlas-cn_0",
+      "namespace": "cn-lab",
+      "document_id": "atlas-cn",
+      "file_name": "atlas-cn.pdf",
+      "page_number": 1,
+      "content": "Atlas A17 生产接口。华东区域的读请求限流为每分钟 360 次。达到上限后返回 HTTP 429。"
+    },
+    {
+      "id": "atlas-cn_1",
+      "namespace": "cn-lab",
+      "document_id": "atlas-cn",
+      "file_name": "atlas-cn.pdf",
+      "page_number": 2,
+      "content": "Atlas A17 灰度接口。华东区域的读请求限流为每分钟 300 次。仅限灰度账号。"
+    },
+    {
+      "id": "atlas-cn_2",
+      "namespace": "cn-lab",
+      "document_id": "atlas-cn",
+      "file_name": "atlas-cn.pdf",
+      "page_number": 3,
+      "content": "Atlas A17 生产接口。华北区域的读请求限流为每分钟 720 次。达到上限后返回 HTTP 429。"
+    },
+    {
+      "id": "atlas-cn_3",
+      "namespace": "cn-lab",
+      "document_id": "atlas-cn",
+      "file_name": "atlas-cn.pdf",
+      "page_number": 4,
+      "content": "Atlas A18 生产接口。华东读请求限流为每分钟 450 次。写请求需另行配置。"
+    },
+    {
+      "id": "quartz-cn_0",
+      "namespace": "cn-lab",
+      "document_id": "quartz-cn",
+      "file_name": "quartz-cn.pdf",
+      "page_number": 1,
+      "content": "Quartz QF-21 故障中断后，自动重试间隔为 14 秒。最多执行三轮重试。"
+    },
+    {
+      "id": "quartz-cn_1",
+      "namespace": "cn-lab",
+      "document_id": "quartz-cn",
+      "file_name": "quartz-cn.pdf",
+      "page_number": 2,
+      "content": "Quartz QF-22 故障中断后，自动重试间隔为 41 秒。试验环境同样适用。"
+    },
+    {
+      "id": "quartz-cn_2",
+      "namespace": "cn-lab",
+      "document_id": "quartz-cn",
+      "file_name": "quartz-cn.pdf",
+      "page_number": 3,
+      "content": "Quartz QF-21 健康检查周期为 28 秒。健康探测不经过任务重试队列。"
+    },
+    {
+      "id": "quartz-cn_3",
+      "namespace": "cn-lab",
+      "document_id": "quartz-cn",
+      "file_name": "quartz-cn.pdf",
+      "page_number": 4,
+      "content": "Quartz QF-23 会使用冷启动模式。启动完成标记是 QTZ_READY，记录在运行日志中。"
+    },
+    {
+      "id": "lotus-cn_0",
+      "namespace": "cn-lab",
+      "document_id": "lotus-cn",
+      "file_name": "lotus-cn.pdf",
+      "page_number": 1,
+      "content": "荷叶 L17 归档策略规定，已关闭工单保留 93 天，再进入回收区。"
+    },
+    {
+      "id": "lotus-cn_1",
+      "namespace": "cn-lab",
+      "document_id": "lotus-cn",
+      "file_name": "lotus-cn.pdf",
+      "page_number": 2,
+      "content": "荷叶 L17 回收区中的工单保留 39 天，随后自动清理。"
+    },
+    {
+      "id": "lotus-cn_2",
+      "namespace": "cn-lab",
+      "document_id": "lotus-cn",
+      "file_name": "lotus-cn.pdf",
+      "page_number": 3,
+      "content": "荷叶 L18 归档策略规定，已关闭工单保留 150 天，再进入回收区。"
+    },
+    {
+      "id": "lotus-cn_3",
+      "namespace": "cn-lab",
+      "document_id": "lotus-cn",
+      "file_name": "lotus-cn.pdf",
+      "page_number": 4,
+      "content": "荷叶 L18 工单导出文件用 UTF-8 编码。导出范围不含附件。"
+    },
+    {
+      "id": "moss-cn_0",
+      "namespace": "cn-lab",
+      "document_id": "moss-cn",
+      "file_name": "moss-cn.pdf",
+      "page_number": 1,
+      "content": "苔原 M9 传感器在低功耗档位每 17 秒采样一次。温度记录被写入本地日志。"
+    },
+    {
+      "id": "moss-cn_1",
+      "namespace": "cn-lab",
+      "document_id": "moss-cn",
+      "file_name": "moss-cn.pdf",
+      "page_number": 2,
+      "content": "苔原 M9 传感器在高精度档位每 71 秒采样一次。实验数据单独归档。"
+    },
+    {
+      "id": "moss-cn_2",
+      "namespace": "cn-lab",
+      "document_id": "moss-cn",
+      "file_name": "moss-cn.pdf",
+      "page_number": 3,
+      "content": "苔原 M8 传感器在低功耗档位每 54 秒采样一次。它仅用于适配旧基站。"
+    },
+    {
+      "id": "moss-cn_3",
+      "namespace": "cn-lab",
+      "document_id": "moss-cn",
+      "file_name": "moss-cn.pdf",
+      "page_number": 4,
+      "content": "苔原 M9 的维护校准表编号为 MOSS-CAL-52。这张表用于现场验收。"
+    },
+    {
+      "id": "cedar-en_0",
+      "namespace": "en-lab",
+      "document_id": "cedar-en",
+      "file_name": "cedar-en.pdf",
+      "page_number": 1,
+      "content": "The Cedar C7 EU public API retains completed upload manifests for 63 days. The timer starts when the upload completes."
+    },
+    {
+      "id": "cedar-en_1",
+      "namespace": "en-lab",
+      "document_id": "cedar-en",
+      "file_name": "cedar-en.pdf",
+      "page_number": 2,
+      "content": "The Cedar C7 EU sandbox API retains completed upload manifests for 36 days, starting when the upload completes."
+    },
+    {
+      "id": "cedar-en_2",
+      "namespace": "en-lab",
+      "document_id": "cedar-en",
+      "file_name": "cedar-en.pdf",
+      "page_number": 3,
+      "content": "The Cedar C7 Japan public API retains completed upload manifests for 95 days. This setting does not cover the EU."
+    },
+    {
+      "id": "cedar-en_3",
+      "namespace": "en-lab",
+      "document_id": "cedar-en",
+      "file_name": "cedar-en.pdf",
+      "page_number": 4,
+      "content": "The Cedar C8 EU public API retains completed upload manifests for 81 days. This applies only to C8."
+    },
+    {
+      "id": "fjord-en_0",
+      "namespace": "en-lab",
+      "document_id": "fjord-en",
+      "file_name": "fjord-en.pdf",
+      "page_number": 1,
+      "content": "Fjord R4 staging caches failed DNS lookups for 24 seconds. Successful lookups use the positive cache."
+    },
+    {
+      "id": "fjord-en_1",
+      "namespace": "en-lab",
+      "document_id": "fjord-en",
+      "file_name": "fjord-en.pdf",
+      "page_number": 2,
+      "content": "Fjord R4 production caches failed DNS lookups for 42 seconds. Successful lookups use the positive cache."
+    },
+    {
+      "id": "fjord-en_2",
+      "namespace": "en-lab",
+      "document_id": "fjord-en",
+      "file_name": "fjord-en.pdf",
+      "page_number": 3,
+      "content": "Fjord R4 production caches successful DNS lookups for 70 seconds. Failed lookups use the negative cache."
+    },
+    {
+      "id": "fjord-en_3",
+      "namespace": "en-lab",
+      "document_id": "fjord-en",
+      "file_name": "fjord-en.pdf",
+      "page_number": 4,
+      "content": "Fjord R5 uses the audit event FJ_ROUTE_OK to indicate a validated route. The collector stores it in the central event log."
+    },
+    {
+      "id": "ember-en_0",
+      "namespace": "en-lab",
+      "document_id": "ember-en",
+      "file_name": "ember-en.pdf",
+      "page_number": 1,
+      "content": "Ember F2 sends the first invoice reminder 11 days after the due date. Manual reminders are tracked separately."
+    },
+    {
+      "id": "ember-en_1",
+      "namespace": "en-lab",
+      "document_id": "ember-en",
+      "file_name": "ember-en.pdf",
+      "page_number": 2,
+      "content": "Ember F2 sends the second invoice reminder 19 days after the due date. The date is counted from the original deadline."
+    },
+    {
+      "id": "ember-en_2",
+      "namespace": "en-lab",
+      "document_id": "ember-en",
+      "file_name": "ember-en.pdf",
+      "page_number": 3,
+      "content": "Ember F3 sends the first invoice reminder 29 days after the due date. This is independent of older versions."
+    },
+    {
+      "id": "ember-en_3",
+      "namespace": "en-lab",
+      "document_id": "ember-en",
+      "file_name": "ember-en.pdf",
+      "page_number": 4,
+      "content": "Use the INVOICE_HOLD flag to pause automatic reminders in Ember F3. The flag is stored on the invoice record."
+    },
+    {
+      "id": "birch-en_0",
+      "namespace": "en-lab",
+      "document_id": "birch-en",
+      "file_name": "birch-en.pdf",
+      "page_number": 1,
+      "content": "The Birch B8 ocean deployment requires an auxiliary battery rated for at least 26 watt-hours. This is an acceptance check."
+    },
+    {
+      "id": "birch-en_1",
+      "namespace": "en-lab",
+      "document_id": "birch-en",
+      "file_name": "birch-en.pdf",
+      "page_number": 2,
+      "content": "The Birch B8 mountain deployment requires an auxiliary battery rated for at least 62 watt-hours. This is an acceptance check."
+    },
+    {
+      "id": "birch-en_2",
+      "namespace": "en-lab",
+      "document_id": "birch-en",
+      "file_name": "birch-en.pdf",
+      "page_number": 3,
+      "content": "The Birch B9 ocean deployment requires an auxiliary battery rated for at least 46 watt-hours. This is an acceptance check."
+    },
+    {
+      "id": "birch-en_3",
+      "namespace": "en-lab",
+      "document_id": "birch-en",
+      "file_name": "birch-en.pdf",
+      "page_number": 4,
+      "content": "Birch B8 commissioning records use the form BRCH-31. Operators file the signed version in the acceptance folder."
+    }
+  ],
+  "cases": [
+    {
+      "id": "atlas-cn_0-qa",
+      "language": "zh",
+      "category": "distractor",
+      "namespace": "cn-lab",
+      "scope": [
+        "atlas-cn",
+        "quartz-cn"
+      ],
+      "question": "Atlas A17 华东生产接口的读请求限流是多少？",
+      "evidence": [
+        "atlas-cn_0"
+      ],
+      "facts": [
+        "360"
+      ],
+      "forbidden": [
+        "300",
+        "720"
+      ]
+    },
+    {
+      "id": "atlas-cn_1-qa",
+      "language": "zh",
+      "category": "distractor",
+      "namespace": "cn-lab",
+      "scope": [
+        "atlas-cn",
+        "quartz-cn"
+      ],
+      "question": "Atlas A17 灰度接口在华东一分钟能接多少读请求？",
+      "evidence": [
+        "atlas-cn_1"
+      ],
+      "facts": [
+        "300"
+      ],
+      "forbidden": [
+        "360",
+        "720"
+      ]
+    },
+    {
+      "id": "atlas-cn_2-qa",
+      "language": "zh",
+      "category": "distractor",
+      "namespace": "cn-lab",
+      "scope": [
+        "atlas-cn",
+        "quartz-cn"
+      ],
+      "question": "华北 Atlas A17 读请求每分钟允许多少次？",
+      "evidence": [
+        "atlas-cn_2"
+      ],
+      "facts": [
+        "720"
+      ],
+      "forbidden": [
+        "300",
+        "360"
+      ]
+    },
+    {
+      "id": "quartz-cn_0-qa",
+      "language": "zh",
+      "category": "distractor",
+      "namespace": "cn-lab",
+      "scope": [
+        "quartz-cn",
+        "atlas-cn"
+      ],
+      "question": "Quartz QF-21 出错后多久再试一次？",
+      "evidence": [
+        "quartz-cn_0"
+      ],
+      "facts": [
+        "14"
+      ],
+      "forbidden": [
+        "41",
+        "28"
+      ]
+    },
+    {
+      "id": "quartz-cn_1-qa",
+      "language": "zh",
+      "category": "distractor",
+      "namespace": "cn-lab",
+      "scope": [
+        "quartz-cn",
+        "atlas-cn"
+      ],
+      "question": "Quartz QF-22 的故障重试间隔是多少秒？",
+      "evidence": [
+        "quartz-cn_1"
+      ],
+      "facts": [
+        "41"
+      ],
+      "forbidden": [
+        "14",
+        "28"
+      ]
+    },
+    {
+      "id": "quartz-cn_2-qa",
+      "language": "zh",
+      "category": "distractor",
+      "namespace": "cn-lab",
+      "scope": [
+        "quartz-cn",
+        "atlas-cn"
+      ],
+      "question": "Quartz QF-21 多久做一次健康检查？",
+      "evidence": [
+        "quartz-cn_2"
+      ],
+      "facts": [
+        "28"
+      ],
+      "forbidden": [
+        "14",
+        "41"
+      ]
+    },
+    {
+      "id": "quartz-cn_3-qa",
+      "language": "zh",
+      "category": "answerable",
+      "namespace": "cn-lab",
+      "scope": [
+        "quartz-cn",
+        "atlas-cn"
+      ],
+      "question": "哪个日志标记代表 Quartz QF-23 已完成启动？",
+      "evidence": [
+        "quartz-cn_3"
+      ],
+      "facts": [
+        "QTZ_READY"
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "lotus-cn_0-qa",
+      "language": "zh",
+      "category": "distractor",
+      "namespace": "cn-lab",
+      "scope": [
+        "lotus-cn",
+        "atlas-cn"
+      ],
+      "question": "荷叶 L17 已关闭的工单过多少天进入回收区？",
+      "evidence": [
+        "lotus-cn_0"
+      ],
+      "facts": [
+        "93"
+      ],
+      "forbidden": [
+        "39",
+        "150"
+      ]
+    },
+    {
+      "id": "lotus-cn_1-qa",
+      "language": "zh",
+      "category": "distractor",
+      "namespace": "cn-lab",
+      "scope": [
+        "lotus-cn",
+        "atlas-cn"
+      ],
+      "question": "工单被移入荷叶 L17 回收区后，还能留几天？",
+      "evidence": [
+        "lotus-cn_1"
+      ],
+      "facts": [
+        "39"
+      ],
+      "forbidden": [
+        "93",
+        "150"
+      ]
+    },
+    {
+      "id": "lotus-cn_2-qa",
+      "language": "zh",
+      "category": "distractor",
+      "namespace": "cn-lab",
+      "scope": [
+        "lotus-cn",
+        "atlas-cn"
+      ],
+      "question": "荷叶 L18 已关闭的工单保留多久？",
+      "evidence": [
+        "lotus-cn_2"
+      ],
+      "facts": [
+        "150"
+      ],
+      "forbidden": [
+        "93",
+        "39"
+      ]
+    },
+    {
+      "id": "moss-cn_0-qa",
+      "language": "zh",
+      "category": "distractor",
+      "namespace": "cn-lab",
+      "scope": [
+        "moss-cn",
+        "atlas-cn"
+      ],
+      "question": "苔原 M9 节能模式下的采样周期是多少秒？",
+      "evidence": [
+        "moss-cn_0"
+      ],
+      "facts": [
+        "17"
+      ],
+      "forbidden": [
+        "71",
+        "54"
+      ]
+    },
+    {
+      "id": "moss-cn_1-qa",
+      "language": "zh",
+      "category": "distractor",
+      "namespace": "cn-lab",
+      "scope": [
+        "moss-cn",
+        "atlas-cn"
+      ],
+      "question": "苔原 M9 高精度档位两次采样间隔多长？",
+      "evidence": [
+        "moss-cn_1"
+      ],
+      "facts": [
+        "71"
+      ],
+      "forbidden": [
+        "17",
+        "54"
+      ]
+    },
+    {
+      "id": "moss-cn_2-qa",
+      "language": "zh",
+      "category": "distractor",
+      "namespace": "cn-lab",
+      "scope": [
+        "moss-cn",
+        "atlas-cn"
+      ],
+      "question": "苔原 M8 低功耗档位几秒取一次样？",
+      "evidence": [
+        "moss-cn_2"
+      ],
+      "facts": [
+        "54"
+      ],
+      "forbidden": [
+        "17",
+        "71"
+      ]
+    },
+    {
+      "id": "moss-cn_3-qa",
+      "language": "zh",
+      "category": "answerable",
+      "namespace": "cn-lab",
+      "scope": [
+        "moss-cn",
+        "atlas-cn"
+      ],
+      "question": "苔原 M9 的现场维护校准表是哪一张？",
+      "evidence": [
+        "moss-cn_3"
+      ],
+      "facts": [
+        "MOSS-CAL-52"
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "cedar-en_0-qa",
+      "language": "en",
+      "category": "distractor",
+      "namespace": "en-lab",
+      "scope": [
+        "cedar-en",
+        "fjord-en"
+      ],
+      "question": "How many days does the Cedar C7 EU public API keep completed upload manifests?",
+      "evidence": [
+        "cedar-en_0"
+      ],
+      "facts": [
+        "63"
+      ],
+      "forbidden": [
+        "36",
+        "95"
+      ]
+    },
+    {
+      "id": "cedar-en_1-qa",
+      "language": "en",
+      "category": "distractor",
+      "namespace": "en-lab",
+      "scope": [
+        "cedar-en",
+        "fjord-en"
+      ],
+      "question": "How long does the Cedar C7 EU sandbox keep manifests for finished uploads?",
+      "evidence": [
+        "cedar-en_1"
+      ],
+      "facts": [
+        "36"
+      ],
+      "forbidden": [
+        "63",
+        "95"
+      ]
+    },
+    {
+      "id": "cedar-en_2-qa",
+      "language": "en",
+      "category": "distractor",
+      "namespace": "en-lab",
+      "scope": [
+        "cedar-en",
+        "fjord-en"
+      ],
+      "question": "When do completed upload manifests expire in the Cedar C7 Japan public API?",
+      "evidence": [
+        "cedar-en_2"
+      ],
+      "facts": [
+        "95"
+      ],
+      "forbidden": [
+        "63",
+        "36"
+      ]
+    },
+    {
+      "id": "fjord-en_0-qa",
+      "language": "en",
+      "category": "distractor",
+      "namespace": "en-lab",
+      "scope": [
+        "fjord-en",
+        "cedar-en"
+      ],
+      "question": "What is the negative DNS cache duration for Fjord R4 staging?",
+      "evidence": [
+        "fjord-en_0"
+      ],
+      "facts": [
+        "24"
+      ],
+      "forbidden": [
+        "42",
+        "70"
+      ]
+    },
+    {
+      "id": "fjord-en_1-qa",
+      "language": "en",
+      "category": "distractor",
+      "namespace": "en-lab",
+      "scope": [
+        "fjord-en",
+        "cedar-en"
+      ],
+      "question": "How long are failed DNS lookups cached in Fjord R4 production?",
+      "evidence": [
+        "fjord-en_1"
+      ],
+      "facts": [
+        "42"
+      ],
+      "forbidden": [
+        "24",
+        "70"
+      ]
+    },
+    {
+      "id": "fjord-en_2-qa",
+      "language": "en",
+      "category": "distractor",
+      "namespace": "en-lab",
+      "scope": [
+        "fjord-en",
+        "cedar-en"
+      ],
+      "question": "For Fjord R4 production, what is the caching time for successful DNS queries?",
+      "evidence": [
+        "fjord-en_2"
+      ],
+      "facts": [
+        "70"
+      ],
+      "forbidden": [
+        "42",
+        "24"
+      ]
+    },
+    {
+      "id": "fjord-en_3-qa",
+      "language": "en",
+      "category": "answerable",
+      "namespace": "en-lab",
+      "scope": [
+        "fjord-en",
+        "cedar-en"
+      ],
+      "question": "Which audit event marks successful route validation in Fjord R5?",
+      "evidence": [
+        "fjord-en_3"
+      ],
+      "facts": [
+        "FJ_ROUTE_OK"
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "ember-en_0-qa",
+      "language": "en",
+      "category": "distractor",
+      "namespace": "en-lab",
+      "scope": [
+        "ember-en",
+        "cedar-en"
+      ],
+      "question": "How many days after an invoice is due does Ember F2 send its first reminder?",
+      "evidence": [
+        "ember-en_0"
+      ],
+      "facts": [
+        "11"
+      ],
+      "forbidden": [
+        "19",
+        "29"
+      ]
+    },
+    {
+      "id": "ember-en_1-qa",
+      "language": "en",
+      "category": "distractor",
+      "namespace": "en-lab",
+      "scope": [
+        "ember-en",
+        "cedar-en"
+      ],
+      "question": "How long after the original deadline is the second Ember F2 invoice reminder sent?",
+      "evidence": [
+        "ember-en_1"
+      ],
+      "facts": [
+        "19"
+      ],
+      "forbidden": [
+        "11",
+        "29"
+      ]
+    },
+    {
+      "id": "ember-en_2-qa",
+      "language": "en",
+      "category": "distractor",
+      "namespace": "en-lab",
+      "scope": [
+        "ember-en",
+        "cedar-en"
+      ],
+      "question": "What is the waiting period for the first invoice reminder in Ember F3?",
+      "evidence": [
+        "ember-en_2"
+      ],
+      "facts": [
+        "29"
+      ],
+      "forbidden": [
+        "11",
+        "19"
+      ]
+    },
+    {
+      "id": "birch-en_0-qa",
+      "language": "en",
+      "category": "distractor",
+      "namespace": "en-lab",
+      "scope": [
+        "birch-en",
+        "cedar-en"
+      ],
+      "question": "What minimum backup battery capacity is required for the Birch B8 ocean deployment?",
+      "evidence": [
+        "birch-en_0"
+      ],
+      "facts": [
+        "26"
+      ],
+      "forbidden": [
+        "62",
+        "46"
+      ]
+    },
+    {
+      "id": "birch-en_1-qa",
+      "language": "en",
+      "category": "distractor",
+      "namespace": "en-lab",
+      "scope": [
+        "birch-en",
+        "cedar-en"
+      ],
+      "question": "What auxiliary battery rating is required in the Birch B8 mountain deployment?",
+      "evidence": [
+        "birch-en_1"
+      ],
+      "facts": [
+        "62"
+      ],
+      "forbidden": [
+        "26",
+        "46"
+      ]
+    },
+    {
+      "id": "birch-en_2-qa",
+      "language": "en",
+      "category": "distractor",
+      "namespace": "en-lab",
+      "scope": [
+        "birch-en",
+        "cedar-en"
+      ],
+      "question": "How many watt-hours are required at minimum for a Birch B9 ocean battery?",
+      "evidence": [
+        "birch-en_2"
+      ],
+      "facts": [
+        "46"
+      ],
+      "forbidden": [
+        "26",
+        "62"
+      ]
+    },
+    {
+      "id": "birch-en_3-qa",
+      "language": "en",
+      "category": "answerable",
+      "namespace": "en-lab",
+      "scope": [
+        "birch-en",
+        "cedar-en"
+      ],
+      "question": "Which form should operators use for Birch B8 commissioning?",
+      "evidence": [
+        "birch-en_3"
+      ],
+      "facts": [
+        "BRCH-31"
+      ],
+      "forbidden": []
+    },
+    {
+      "id": "missing-1",
+      "language": "zh",
+      "category": "unanswerable",
+      "namespace": "cn-lab",
+      "scope": [
+        "atlas-cn"
+      ],
+      "question": "Atlas A17 华东生产接口每分钟最多允许多少写请求？",
+      "evidence": [],
+      "facts": [],
+      "forbidden": []
+    },
+    {
+      "id": "missing-2",
+      "language": "zh",
+      "category": "unanswerable",
+      "namespace": "cn-lab",
+      "scope": [
+        "lotus-cn"
+      ],
+      "question": "荷叶 L18 工单导出附件的最大尺寸是多少？",
+      "evidence": [],
+      "facts": [],
+      "forbidden": []
+    },
+    {
+      "id": "missing-3",
+      "language": "en",
+      "category": "unanswerable",
+      "namespace": "en-lab",
+      "scope": [
+        "cedar-en"
+      ],
+      "question": "What is the Cedar C8 EU API maximum upload payload size?",
+      "evidence": [],
+      "facts": [],
+      "forbidden": []
+    },
+    {
+      "id": "missing-4",
+      "language": "en",
+      "category": "unanswerable",
+      "namespace": "en-lab",
+      "scope": [
+        "fjord-en"
+      ],
+      "question": "What is the IPv6 DNS cache duration for Fjord R5?",
+      "evidence": [],
+      "facts": [],
+      "forbidden": []
+    },
+    {
+      "id": "missing-5",
+      "language": "zh",
+      "category": "scope_isolated",
+      "namespace": "cn-lab",
+      "scope": [
+        "quartz-cn"
+      ],
+      "question": "荷叶 L18 工单导出使用什么编码？",
+      "evidence": [],
+      "facts": [],
+      "forbidden": [
+        "UTF-8"
+      ]
+    },
+    {
+      "id": "missing-6",
+      "language": "zh",
+      "category": "scope_isolated",
+      "namespace": "cn-lab",
+      "scope": [
+        "moss-cn"
+      ],
+      "question": "Quartz QF-22 故障重试多少秒？",
+      "evidence": [],
+      "facts": [],
+      "forbidden": [
+        "41"
+      ]
+    },
+    {
+      "id": "missing-7",
+      "language": "en",
+      "category": "scope_isolated",
+      "namespace": "en-lab",
+      "scope": [
+        "ember-en"
+      ],
+      "question": "Which form is used for commissioning Birch B8?",
+      "evidence": [],
+      "facts": [],
+      "forbidden": [
+        "BRCH-31"
+      ]
+    },
+    {
+      "id": "missing-8",
+      "language": "en",
+      "category": "scope_isolated",
+      "namespace": "en-lab",
+      "scope": [
+        "birch-en"
+      ],
+      "question": "How long does Cedar C7 EU sandbox keep upload manifests?",
+      "evidence": [],
+      "facts": [],
+      "forbidden": [
+        "36"
+      ]
+    }
+  ]
+}

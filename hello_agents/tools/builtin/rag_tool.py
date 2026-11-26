@@ -38,6 +38,14 @@ from hello_agents.memory.rag.result_utils import (
     resolve_qa_mode,
 )
 from hello_agents.memory.graph.contracts import graph_response
+from hello_agents.tools.builtin.rag_grounding import (
+    EVIDENCE_RETRY_SUFFIX,
+    EVIDENCE_STRATEGIES,
+    EvidenceProtocolError,
+    evidence_prompt,
+    grounded_answer,
+    resolve_evidence_strategy,
+)
 from hello_agents.tools.builtin.rag_context import (
     ANSWER_OUTPUT_TOKEN_RESERVE,
     COMPARE_BASE_CHUNKS_PER_DOC,
@@ -338,6 +346,19 @@ class RAGTool(Tool):
                     "type": "string",
                     "enum": ["vector", "hybrid"],
                     "description": "hybrid retrieval mode",
+                },
+                "verify_evidence": {
+                    "type": "boolean",
+                    "description": "verify explicit document evidence for joint answers",
+                },
+                "evidence_strategy": {
+                    "type": "string",
+                    "enum": list(EVIDENCE_STRATEGIES),
+                    "description": "generation strategy when verify_evidence is enabled",
+                },
+                "use_rerank": {
+                    "type": "boolean",
+                    "description": "enable bounded relevance reranking before MMR",
                 },
                 "use_mmr": {
                     "type": "boolean",
@@ -1396,7 +1417,7 @@ class RAGTool(Tool):
         pipeline = self._get_pipeline(rag_namespace)
         retrieval_kwargs = {
             key: kwargs[key]
-            for key in ("retrieval_mode", "use_mmr", "mmr_lambda", "vector_weight")
+            for key in ("retrieval_mode", "use_mmr", "mmr_lambda", "vector_weight", "use_rerank")
             if key in kwargs
         }
         results = pipeline.search(
@@ -1497,6 +1518,9 @@ class RAGTool(Tool):
         graph_mode: str = "auto",
         graph_node_limit: int = 8,
         graph_relation_limit: int = 16,
+        verify_evidence: bool = False,
+        evidence_strategy: str = "two_pass",
+        evidence_max_tokens: int | None = None,
         **kwargs,
     ) -> str:
         """Answer with joint, comparison, or summary behavior."""
@@ -1515,12 +1539,18 @@ class RAGTool(Tool):
         conversation_context = str(kwargs.get("conversation_context") or "").strip()
         retrieval_kwargs = {
             key: kwargs[key]
-            for key in ("retrieval_mode", "use_mmr", "mmr_lambda", "vector_weight")
+            for key in ("retrieval_mode", "use_mmr", "mmr_lambda", "vector_weight", "use_rerank")
             if key in kwargs
         }
         graph_mode = str(graph_mode or "auto").strip().lower()
         if graph_mode not in {"off", "auto", "required"}:
             return "鉂?graph_mode must be off, auto, or required"
+
+        if verify_evidence and evidence_strategy not in EVIDENCE_STRATEGIES:
+            return "❌ 不支持的证据校验策略"
+
+        if verify_evidence and (selected_mode != "joint" or not scope or graph_mode == "required"):
+            return "❌ 证据校验需要选择文档，且只支持普通问答与文档来源"
 
         if selected_mode == "compare":
             if scope is None or len(scope) < 2:
@@ -1568,6 +1598,20 @@ class RAGTool(Tool):
                 document_id=document_id if document_ids is None else None,
                 document_ids=document_ids,
                 **retrieval_kwargs,
+            )
+
+        if verify_evidence:
+            namespace = rag_namespace or self.rag_namespace
+            for item in results:
+                metadata = item.get("metadata") or {}
+                if metadata.get("document_id") not in scope or metadata.get("rag_namespace") != namespace:
+                    return "❌ 问答证据超出所选文档"
+            if evidence_max_tokens is not None and (
+                type(evidence_max_tokens) is not int or not 1 <= evidence_max_tokens <= 8192
+            ):
+                return "❌ 不支持的证据校验输出上限"
+            return self._ask_verified_evidence(
+                query, conversation_context, results, evidence_strategy, evidence_max_tokens,
             )
 
         if not results:
@@ -1658,6 +1702,55 @@ class RAGTool(Tool):
             truncated=truncated,
             graph_sources=graph_sources,
         )
+
+    def _ask_verified_evidence(self, query, conversation_context, results, strategy, max_tokens) -> str:
+        adaptive = strategy == "adaptive"
+        strategy = resolve_evidence_strategy(strategy, query)
+        if not results:
+            self._last_action_data = {"evidence_status": "insufficient", "evidence_strategy": strategy}
+            return self._format_answer("资料中没有提到足够的信息，无法回答这个问题。", [])
+        history = self._qa_history_section(conversation_context)
+        reserve = max(ANSWER_OUTPUT_TOKEN_RESERVE, max_tokens or 0)
+        trace = {"evidence_strategy": strategy}
+        try:
+            fixed_prompt = evidence_prompt(query, history, "", strategy=strategy)
+            if adaptive:
+                fixed_prompt += EVIDENCE_RETRY_SUFFIX
+            budget = self._context_budget(fixed_prompt, output_reserve=reserve)
+            if adaptive:
+                # The full-prompt preflight also requires a positive remaining budget.
+                budget -= 1
+            context, visible, truncated = self._build_context(
+                results, token_budget=budget, return_details=True, retain_candidates=adaptive,
+            )
+            trace.update(
+                evidence_context_visible=len(visible),
+                evidence_context_dropped=len(results) - len(visible),
+                evidence_context_cut=truncated,
+                evidence_visible_chunks=[item["id"] for item in visible if item.get("id")],
+            )
+
+            def generate(prompt):
+                self._context_budget(prompt, output_reserve=reserve)
+                return self._generate(prompt, max_tokens=max_tokens)
+
+            verified = grounded_answer(
+                generate, query, history, context, visible,
+                strategy=strategy, compact_empty_retry=adaptive,
+            )
+        except ContextCapacityError:
+            self._last_action_data = {**trace, "evidence_status": "capacity"}
+            return self._capacity_error()
+        except EvidenceProtocolError as exc:
+            self._last_action_data = {**trace, "evidence_status": "invalid", "evidence_error": str(exc)}
+            return "❌ 问答证据校验失败"
+
+        cited = [
+            {**item, "content": verified.quotes[item["citation_id"]]}
+            for item in visible if item["citation_id"] in verified.quotes
+        ]
+        self._last_action_data = {**trace, "evidence_status": "verified" if cited else "insufficient"}
+        return self._format_answer(verified.text, cited, truncated=truncated)
 
     @staticmethod
     def _qa_history_section(conversation_context: str) -> str:
@@ -2036,6 +2129,7 @@ class RAGTool(Tool):
         results: List[Dict[str, Any]],
         token_budget: Optional[int] = None,
         return_details: bool = False,
+        retain_candidates: bool = False,
     ):
         """Build a bounded context without mutating cached/search result objects."""
 
@@ -2044,12 +2138,15 @@ class RAGTool(Tool):
             results,
             token_budget=budget,
             llm=self.llm,
-            format_source=self._format_source,
+            format_source=self._format_source, retain_candidates=retain_candidates,
         )
         result = (fitted.context, fitted.results, fitted.truncated)
         return result if return_details else fitted.context
 
-    def _generate(self, prompt: str, *, strict: bool = False) -> str:
+    def _generate(
+        self, prompt: str, *, strict: bool = False, max_tokens: int | None = None
+    ) -> str:
+        kwargs = {"max_tokens": max_tokens} if max_tokens is not None else {}
         capacity_markers = (
             "context length",
             "context window",
@@ -2062,9 +2159,9 @@ class RAGTool(Tool):
         )
         try:
             if strict and isinstance(self.llm, HelloAgentsLLM):
-                answer = self.llm.generate(prompt, strict=True)
+                answer = self.llm.generate(prompt, strict=True, **kwargs)
             else:
-                answer = self.llm.generate(prompt)
+                answer = self.llm.generate(prompt, **kwargs)
         except Exception as error:
             if getattr(error, "status_code", None) == 400 and any(
                 marker in str(error).lower() for marker in capacity_markers

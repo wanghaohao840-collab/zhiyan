@@ -62,8 +62,12 @@ def main(argv=None, *, client_factory=SiliconFlowEmbedding) -> int:
         print(json.dumps(report, ensure_ascii=False))
         return 0
     except EmbeddingFailure as exc:
-        print(json.dumps({"status": "failed", "code": exc.code,
-                          "http_status": exc.status_code, "retryable": exc.retryable}))
+        failure = {"status": "failed", "code": exc.code,
+                   "http_status": exc.status_code, "retryable": exc.retryable}
+        if exc.status_code == 402:
+            failure["reason"] = "provider_billing"
+            failure["action"] = "check_account_balance_or_key"
+        print(json.dumps(failure))
         return 1
     except Exception:
         # The CLI boundary cannot emit a traceback containing request/file secrets.

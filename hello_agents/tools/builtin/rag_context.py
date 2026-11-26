@@ -99,6 +99,7 @@ def fit_context(
     llm: Any,
     format_source: Callable[[Dict[str, Any], bool], str],
     min_truncated_chars: int = MIN_TRUNCATED_CHARS,
+    retain_candidates: bool = False,
 ) -> ContextFit:
     """Fit copied results into a budget without producing tiny fragments."""
 
@@ -118,7 +119,7 @@ def fit_context(
     def render_all(items: List[Dict[str, Any]]) -> str:
         return "\n\n".join(render(item) for item in items)
 
-    while len(included) > 1 and estimate_tokens(llm, render_all(included)) > token_budget:
+    while not retain_candidates and len(included) > 1 and estimate_tokens(llm, render_all(included)) > token_budget:
         removable = [
             (index, item)
             for index, item in enumerate(included)

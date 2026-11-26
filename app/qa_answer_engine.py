@@ -5,6 +5,7 @@ from pathlib import PurePath
 from typing import Any, Literal, Mapping, Protocol
 
 from app.qa_models import QaMode, QaSourceDraft
+from hello_agents.tools.builtin.rag_grounding import EVIDENCE_STRATEGIES
 
 
 @dataclass(frozen=True)
@@ -46,8 +47,31 @@ class QaAnswerEngine(Protocol):
 
 
 class RagQaAnswerEngine:
-    def __init__(self, *, enable_summary_workflow: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        enable_summary_workflow: bool = False,
+        verify_evidence: bool = False,
+        evidence_strategy: str = "two_pass",
+        evidence_max_tokens: int | str | None = None,
+    ) -> None:
         self.enable_summary_workflow = enable_summary_workflow
+        if verify_evidence and evidence_strategy not in EVIDENCE_STRATEGIES:
+            raise ValueError("RAG_QA_EVIDENCE_STRATEGY must be two_pass, single_pass or adaptive")
+        if verify_evidence and evidence_max_tokens not in (None, ""):
+            if type(evidence_max_tokens) not in (int, str):
+                raise ValueError("RAG_QA_EVIDENCE_MAX_TOKENS must be an integer between 1 and 8192")
+            try:
+                evidence_max_tokens = int(evidence_max_tokens)
+            except ValueError:
+                raise ValueError("RAG_QA_EVIDENCE_MAX_TOKENS must be an integer between 1 and 8192") from None
+            if not 1 <= evidence_max_tokens <= 8192:
+                raise ValueError("RAG_QA_EVIDENCE_MAX_TOKENS must be an integer between 1 and 8192")
+        else:
+            evidence_max_tokens = None
+        self.evidence_max_tokens = evidence_max_tokens
+        self.verify_evidence = verify_evidence
+        self.evidence_strategy = evidence_strategy
 
     def answer(
         self,
@@ -66,6 +90,12 @@ class RagQaAnswerEngine:
             "min_score": 0.12,
             "structured_output": request.structured_output,
         }
+        if self.verify_evidence and request.mode == "joint":
+            kwargs["verify_evidence"] = True
+            if self.evidence_max_tokens is not None:
+                kwargs["evidence_max_tokens"] = self.evidence_max_tokens
+            if self.evidence_strategy != "two_pass":
+                kwargs["evidence_strategy"] = self.evidence_strategy
         if progress_callback is not None:
             kwargs["progress_callback"] = progress_callback
         if cancel_event is not None:
