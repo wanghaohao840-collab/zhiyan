@@ -140,6 +140,7 @@ def write_report(directory, metadata, tracks):
         "grounding_release": "应用问答适配器上线前对照",
         "grounding_adaptive": "按问项选择证据校验策略的应用对照",
         "grounding_fields": "字段绑定校验与例外条件提醒对照",
+        "grounding_crowding_replay": "使用固定的拥挤检索排序对照问答",
     })
     for track, summary in summaries.items():
         lines.extend([
@@ -182,7 +183,10 @@ def write_report(directory, metadata, tracks):
                     f"| {name} | {_percent(row['citation_coverage'])} | {row['emitted_citations']} | "
                     f"{_percent(row['citation_validity'])} | {_percent(row['citation_support'])} |"
                 )
-        if track in {"holdout_grounding", "grounding_latency", "grounding_release", "grounding_adaptive", "grounding_fields"}:
+        if track in {
+            "holdout_grounding", "grounding_latency", "grounding_release", "grounding_adaptive",
+            "grounding_fields", "grounding_crowding_replay",
+        }:
             lines.extend([
                 "", "| 组别 | 缺证据题错误作答 | 可答题误拒 | 黄金事实引用覆盖 | 同句引用指向标注证据 |",
                 "|---|---:|---:|---:|---:|",
@@ -248,6 +252,12 @@ def write_report(directory, metadata, tracks):
     elif "offline" in tracks:
         lines.append(
             "- 引用提示词对照固定检索结果。无阈值向量组只做检索。"
+        )
+    if "grounding_crowding_replay" in tracks:
+        lines.append(
+            "- 每种题型各取固定的中英文题。从两组真实 BGE-M3 检索报告读取已保存的前五排名，"
+            "两组使用相同的真实聊天模型及证据校验。问答耗时从注入候选起计，"
+            "原检索耗时见 results.json 中的 original_retrieval_ms。"
         )
     if "holdout_grounding" in tracks:
         lines.append(
