@@ -47,11 +47,15 @@ def has_fact(text: str, fact: str) -> bool:
     normalized_fact = _normal(fact)
     numeric_left = r"(?<![0-9][.,])" if normalized_fact.isascii() and normalized_fact.isdecimal() else ""
     numeric_right = r"(?![.,][0-9])" if numeric_left else ""
+    # Chinese quantifiers can be printed with or without a space after the number.
+    spacing = r"(?<=[0-9])\s+(?=[\u3400-\u9fff])"
+    normalized_fact = re.sub(spacing, "", normalized_fact)
+    text = re.sub(spacing, "", _normal(text))
     pattern = (
         numeric_left + r"(?<![a-z0-9_])" + re.escape(normalized_fact)
         + r"(?![a-z0-9_])" + numeric_right
     )
-    return bool(re.search(pattern, _normal(text)))
+    return bool(re.search(pattern, text))
 
 
 def _citations(text):

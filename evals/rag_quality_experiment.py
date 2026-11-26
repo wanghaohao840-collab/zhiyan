@@ -33,6 +33,7 @@ class Variant:
     verify_evidence: bool = False
     evidence_strategy: str = "two_pass"
     evidence_max_tokens: int | None = None
+    evidence_check_fields: bool = False
     use_application_engine: bool = False
 
     def search_options(self):
@@ -226,6 +227,8 @@ def evaluate_case(pipeline, case, variant, *, generate=None, repeats=1):
         sources=sources,
         evidence_status=result.data.get("evidence_status"),
         evidence_error=result.data.get("evidence_error"),
+        grounding_warnings=result.data.get("grounding_warnings", []),
+        evidence_field_check=result.data.get("evidence_field_check", False),
         evidence_strategy_used=result.data.get("evidence_strategy"),
         output_caps=generator.output_caps, completions=generator.completions,
         protocol_retries=generator.protocol_retries,
@@ -264,7 +267,8 @@ def _measure_qa(pipeline, case, variant, options, generate):
     else:
         result = tool.execute_result(
             "ask", mode="joint", graph_mode="off", verify_evidence=variant.verify_evidence,
-            evidence_strategy=variant.evidence_strategy, **options,
+            evidence_strategy=variant.evidence_strategy, evidence_check_fields=variant.evidence_check_fields,
+            **options,
         )
     return generator, result, (perf_counter() - started) * 1000, qa_retrieval_ms, hits
 
@@ -276,7 +280,7 @@ def _application_qa(tool, case, variant):
 
     engine = RagQaAnswerEngine(
         verify_evidence=variant.verify_evidence, evidence_strategy=variant.evidence_strategy,
-        evidence_max_tokens=variant.evidence_max_tokens,
+        evidence_max_tokens=variant.evidence_max_tokens, evidence_check_fields=variant.evidence_check_fields,
     )
     try:
         result = engine.answer(

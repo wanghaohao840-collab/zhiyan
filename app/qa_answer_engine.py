@@ -50,6 +50,7 @@ class RagQaAnswerEngine:
     def __init__(
         self, *, verify_evidence: bool = False, evidence_strategy: str = "two_pass",
         evidence_max_tokens: int | str | None = None,
+        evidence_check_fields: bool = False,
     ) -> None:
         if verify_evidence and evidence_strategy not in EVIDENCE_STRATEGIES:
             raise ValueError("RAG_QA_EVIDENCE_STRATEGY must be two_pass, single_pass or adaptive")
@@ -67,6 +68,7 @@ class RagQaAnswerEngine:
         self.evidence_max_tokens = evidence_max_tokens
         self.verify_evidence = verify_evidence
         self.evidence_strategy = evidence_strategy
+        self.evidence_check_fields = evidence_check_fields
 
     def answer(
         self,
@@ -87,6 +89,8 @@ class RagQaAnswerEngine:
         }
         if self.verify_evidence and request.mode == "joint":
             kwargs["verify_evidence"] = True
+            if self.evidence_check_fields:
+                kwargs["evidence_check_fields"] = True
             if self.evidence_max_tokens is not None:
                 kwargs["evidence_max_tokens"] = self.evidence_max_tokens
             if self.evidence_strategy != "two_pass":

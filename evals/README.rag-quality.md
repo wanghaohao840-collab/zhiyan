@@ -86,3 +86,14 @@
 ~~~
 
 可加 --bucket long_context 和 --max-tokens 1024 抽查长上下文的低预算表现。
+
+
+### 验证码绑定和例外条件
+
+启用应用证据校验后，可以额外设置 \`RAG_QA_EVIDENCE_CHECK_FIELDS=1\`。规则处理同一可见片段中同时出现明确的入口标识字段，以及单独给出或明确未公开的验证码字段时的错绑。引用仍保留模型逐字选择的原文。检测到错绑时共用证据校验的一次重试限额。例外条件的可能遗漏只在工具的诊断数据中标记。
+
+~~~powershell
+.\venv\Scripts\python.exe -m evals.rag_quality_holdout --grounding-fields --embedding-env-file deploy/.env --chat-env-file .env --output-dir output/rag-grounding-fields-canary
+~~~
+
+两组用同一个模型和自适应策略运行 16 道合成验收题，比较答对率、干净拒答、引用、重试和延迟。字段校验的确定性效果用模拟生成结果的离线回放验证。

@@ -14,6 +14,7 @@ class EvidenceProtocolError(ValueError):
 class VerifiedAnswer:
     text: str
     quotes: dict[str, str]
+    warnings: tuple[str, ...] = ()
 
 
 _REFUSAL = "资料中没有提到足够的信息，无法回答这个问题。"
@@ -21,6 +22,24 @@ _NUMBER = re.compile(r"(?<![\d.,])[+-]?\d+(?:[.:,]\d+)*")
 _CODE = re.compile(
     r"\b(?:[A-Z][A-Z0-9]*(?:[-_][A-Z0-9]+)+|[A-Z]+\d+[A-Z\d]*|\d+[A-Z]+)\b",
     re.ASCII,
+)
+_VERIFICATION_CODE = r"(?:验证码|核验码|\b(?:verification|validation) code\b)"
+_ENTRANCE_SIGN = r"(?:入口标识|门牌编号|\b(?:entrance (?:sign|label)|signage label)\b)"
+_VERIFICATION_FIELD = re.compile(_VERIFICATION_CODE, re.IGNORECASE)
+_SIGN_FIELD = re.compile(_ENTRANCE_SIGN, re.IGNORECASE)
+_FIELD_CODE = re.compile(rf"(?a:{_CODE.pattern}|\b\d{{4,10}}\b)")
+_FIELD_VALUE = rf"\s*(?:[:=]|为|是|(?i:is)\b)\s*['\"“‘]?(?P<code>{_FIELD_CODE.pattern})"
+_VERIFICATION_VALUE = re.compile(rf"(?i:{_VERIFICATION_CODE}){_FIELD_VALUE}")
+_SIGN_VALUE = re.compile(rf"(?i:{_ENTRANCE_SIGN}){_FIELD_VALUE}")
+_VERIFICATION_UNAVAILABLE = re.compile(
+    rf"{_VERIFICATION_CODE}\s*(?:请向[^。；;\n]{{1,30}}获取|不公开|未公布|"
+    r"(?:is\s+)?(?:not published|not disclosed|only available (?:from|in person)))",
+    re.IGNORECASE,
+)
+_EXCEPTION = re.compile(
+    r"除\s*([^。，,；;\n]{1,35}?)\s*(?:之)?外\s*[,，]"
+    r"|\bexcept for\s+([^.,;\n]{1,60}?)\s*,",
+    re.IGNORECASE,
 )
 _CITATION = re.compile(r"\[\s*[SG]-", re.IGNORECASE)
 _MISSING_ANSWER = re.compile(
@@ -154,6 +173,43 @@ def _literals_supported(claim: str, evidence: str) -> bool:
     )
 
 
+def _wrong_verification_code_field(question: str, claim: str, sources: list[str]) -> bool:
+    """Identify codes explicitly attached to a sign while the code field says otherwise."""
+    question = unicodedata.normalize("NFKC", question)
+    claim = unicodedata.normalize("NFKC", claim)
+    if not _VERIFICATION_FIELD.search(question) or _YES_NO_QUESTION.search(question):
+        return False
+    bindings = {match["code"] for match in _VERIFICATION_VALUE.finditer(claim)}
+    if _SIGN_FIELD.search(question) or _SIGN_FIELD.search(claim):
+        codes = bindings
+    else:
+        codes = set(_FIELD_CODE.findall(claim))
+    if not codes:
+        return False
+    conflicts = set()
+    other_mentions = set()
+    for text in sources:
+        text = unicodedata.normalize("NFKC", text)
+        sign_values = {match.span("code") for match in _SIGN_VALUE.finditer(text)}
+        verification_is_explicit = _VERIFICATION_VALUE.search(text) or _VERIFICATION_UNAVAILABLE.search(text)
+        for mention in _FIELD_CODE.finditer(text):
+            code = mention.group()
+            if code in codes:
+                if verification_is_explicit and mention.span() in sign_values:
+                    conflicts.add(code)
+                else:
+                    other_mentions.add(code)
+    return bool(conflicts - other_mentions)
+
+
+def _omitted_exception(question: str, claim: str, evidence: str) -> bool:
+    given = unicodedata.normalize("NFKC", question + "\n" + claim).casefold()
+    return any(
+        (match[1] or match[2]).strip().casefold() not in given
+        for match in _EXCEPTION.finditer(unicodedata.normalize("NFKC", evidence))
+    )
+
+
 def _check_quotes(items: list[dict], allowed: dict[str, str]) -> dict[str, str]:
     quotes = {}
     for item in items:
@@ -170,10 +226,12 @@ def _check_quotes(items: list[dict], allowed: dict[str, str]) -> dict[str, str]:
 
 def _check_claims(
     items: list[dict], quotes: dict[str, str], *, allow_absence_answer: bool, one_source: bool = False,
+    field_sources: dict[str, str] | None = None, question: str = "",
 ) -> VerifiedAnswer:
     lines = []
     used = {}
     missing_answer = False
+    omitted_exception = False
     for item in items:
         claim, ids = item.get("text"), item.get("ids")
         if (
@@ -190,28 +248,38 @@ def _check_claims(
             continue
         if one_source and len(ids) != 1:
             raise EvidenceProtocolError("Each claim needs exactly one directly supporting quote")
-        if not _literals_supported(claim, "\n".join(quotes[id_] for id_ in ids)):
+        evidence = "\n".join(quotes[id_] for id_ in ids)
+        if not _literals_supported(claim, evidence):
             raise EvidenceProtocolError("A claim changes a numeric fact, code or unit")
+        if field_sources is not None:
+            if _wrong_verification_code_field(question, claim, [field_sources[id_] for id_ in ids]):
+                raise EvidenceProtocolError("Verification code belongs to a different field")
+            omitted_exception |= _omitted_exception(question, claim, evidence)
         lines.append(f"{claim} " + " ".join(f"[{id_}]" for id_ in ids))
         used.update((id_, quotes[id_]) for id_ in ids)
     if missing_answer or not lines:
         return VerifiedAnswer(_REFUSAL, {})
-    return VerifiedAnswer("\n".join(lines), used)
+    warnings = ("exception_may_be_omitted",) if omitted_exception else ()
+    return VerifiedAnswer("\n".join(lines), used, warnings)
 
 
-def _check_combined(output: str, allowed: dict[str, str], *, allow_absence_answer: bool) -> VerifiedAnswer:
+def _check_combined(
+    output: str, allowed: dict[str, str], *, allow_absence_answer: bool,
+    check_fields: bool, question: str,
+) -> VerifiedAnswer:
     result = _read_lists(output, "quotes", "claims")
     if bool(result["quotes"]) != bool(result["claims"]):
         raise EvidenceProtocolError("Combined abstention must have no claims or quotes")
     return _check_claims(
         result["claims"], _check_quotes(result["quotes"], allowed),
         allow_absence_answer=allow_absence_answer, one_source=True,
+        field_sources=allowed if check_fields else None, question=question,
     )
 
 
 def grounded_answer(
     generate, question, history, context, visible_sources, *, strategy: str = "two_pass",
-    compact_empty_retry: bool = False,
+    compact_empty_retry: bool = False, check_fields: bool = False,
 ) -> VerifiedAnswer:
     strategy = resolve_evidence_strategy(strategy, question)
     allowed = {item["citation_id"]: item["content"] for item in visible_sources}
@@ -234,7 +302,10 @@ def grounded_answer(
     prompt = evidence_prompt(question, history, context, strategy=strategy)
     if strategy == "single_pass":
         return checked_response(
-            prompt, lambda output: _check_combined(output, allowed, allow_absence_answer=allow_absence_answer),
+            prompt, lambda output: _check_combined(
+                output, allowed, allow_absence_answer=allow_absence_answer,
+                check_fields=check_fields, question=question,
+            ),
         )
 
     compact_evidence = (
@@ -257,6 +328,7 @@ def grounded_answer(
         _claims_prompt(question, history, quotes),
         lambda output: _check_claims(
             _read_lists(output, "claims")["claims"], quotes, allow_absence_answer=allow_absence_answer,
+            field_sources=allowed if check_fields else None, question=question,
         ),
         compact_claims,
     )
