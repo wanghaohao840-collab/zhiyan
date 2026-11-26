@@ -284,6 +284,111 @@ def test_stream_engine_failure_keeps_provider_details_out_of_response(qa_parts, 
     assert saved["safe_error_code"] == "QA_ENGINE_UNAVAILABLE"
 
 
+def test_stream_queue_full_rejects_with_503_without_polluting_history(qa_parts):
+    conversation_id = create_conversation(qa_parts)["conversation_id"]
+    # 未启动 worker pool 时等价于队列不可接收，必须拒绝而不落库失败消息
+    rejected = qa_parts.client.post(
+        f"/api/v1/qa/conversations/{conversation_id}/messages?stream=true",
+        headers=csrf(qa_parts),
+        json={"question": "满载测试", "client_request_id": str(uuid4())},
+    )
+    assert rejected.status_code == 503
+    assert rejected.json()["error"]["code"] == "QA_ENGINE_BUSY"
+    assert rejected.json()["error"]["retryable"] is True
+    messages = qa_parts.client.get(
+        f"/api/v1/qa/conversations/{conversation_id}/messages"
+    ).json()["items"]
+    assert messages == []
+
+
+def test_retry_supports_streaming_202_and_live_sse(qa_parts, monkeypatch):
+    conversation_id = create_conversation(qa_parts)["conversation_id"]
+    original_answer = qa_parts.engine.answer
+
+    def fail_once(runtime, request, **kwargs):
+        raise QaEngineError("QA_ENGINE_UNAVAILABLE", True)
+
+    monkeypatch.setattr(qa_parts.engine, "answer", fail_once)
+    failed_resp = qa_parts.client.post(
+        f"/api/v1/qa/conversations/{conversation_id}/messages",
+        headers=csrf(qa_parts),
+        json={"question": "重试流式问题", "client_request_id": str(uuid4())},
+    )
+    assert failed_resp.status_code == 503
+    monkeypatch.setattr(qa_parts.engine, "answer", original_answer)
+    messages = qa_parts.client.get(
+        f"/api/v1/qa/conversations/{conversation_id}/messages"
+    ).json()["items"]
+    failed_id = next(item["message_id"] for item in messages if item["status"] == "failed")
+
+    def staged(runtime, request, *, stage_callback, token_callback):
+        stage_callback("retrieving", 2)
+        stage_callback("generating", None)
+        token_callback("可信")
+        return original_answer(runtime, request)
+
+    monkeypatch.setattr(qa_parts.engine, "answer_stream", staged, raising=False)
+    qa_parts.services.qa_worker_pool.start()
+    retried = qa_parts.client.post(
+        f"/api/v1/qa/messages/{failed_id}/retry?stream=true",
+        headers=csrf(qa_parts),
+        json={"client_request_id": str(uuid4())},
+    )
+    assert retried.status_code == 202
+    new_message_id = retried.json()["message_id"]
+    stream = qa_parts.client.get(
+        f"/api/v1/qa/conversations/{conversation_id}/messages/{new_message_id}/stream"
+    )
+    assert stream.status_code == 200
+    assert "event: done" in stream.text
+    assert '"retrieved_count": 2' in stream.text
+
+
+def test_stream_exits_immediately_when_client_disconnects(qa_parts, monkeypatch):
+    conversation_id = create_conversation(qa_parts)["conversation_id"]
+    started = Event()
+    release_model = Event()
+    answer = qa_parts.engine.answer
+
+    def slow(runtime, request, *, stage_callback, token_callback):
+        stage_callback("retrieving", 1)
+        started.set()
+        assert release_model.wait(5)
+        return answer(runtime, request)
+
+    monkeypatch.setattr(qa_parts.engine, "answer_stream", slow, raising=False)
+    qa_parts.services.qa_worker_pool.start()
+    try:
+        message_id = submit_streaming_question(qa_parts, conversation_id, str(uuid4()))
+        assert started.wait(5)
+
+        async def run_disconnected():
+            async def receive():
+                return {"type": "http.disconnect"}
+
+            request = Request(
+                {
+                    "type": "http",
+                    "app": qa_parts.client.app,
+                    "headers": [(b"cookie", f"{COOKIE}={qa_parts.owner_token}".encode())],
+                },
+                receive=receive,
+            )
+            response = await qa_routes.stream_message(
+                conversation_id,
+                message_id,
+                request,
+                qa_parts.services.session_registry.get_session(qa_parts.owner_token),
+                qa_parts.services.qa_service,
+            )
+            chunks = [chunk async for chunk in response.body_iterator]
+            assert chunks == []
+
+        asyncio.run(run_disconnected())
+    finally:
+        release_model.set()
+
+
 def test_capabilities_and_every_route_require_authentication(qa_parts) -> None:
     response = qa_parts.client.get("/api/v1/qa/capabilities")
     assert response.status_code == 401

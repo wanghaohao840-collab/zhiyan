@@ -154,7 +154,12 @@ export function useQaMutations() {
     retry: retryableOnce,
     onSuccess: (item) => refresh(item.conversation_id),
   });
-  const retry = useMutation({ mutationFn: (v: { messageId: string; conversationId: string; clientRequestId: string }) => api.retryQaMessage(request, v.messageId, v.clientRequestId), retry: retryableOnce, onSuccess: (item) => refresh(item.conversation_id) });
+  const retry = useMutation({
+    mutationFn: (v: { messageId: string; conversationId: string; clientRequestId: string; stream?: boolean }) =>
+      api.retryQaMessage(request, v.messageId, v.clientRequestId, v.stream),
+    retry: retryableOnce,
+    onSuccess: (item) => refresh(item.conversation_id),
+  });
   const summarize = useMutation({ mutationFn: (v: { conversationId: string; instruction: string; clientRequestId: string }) => api.startQaSummary(request, v.conversationId, v.instruction, v.clientRequestId), retry: retryableOnce, onSuccess: (job) => { client.setQueryData(qaJobKey(job.job_id), job); client.setQueryData(qaActiveSummaryKey(job.conversation_id), { job }); } });
   const cancel = useMutation({ mutationFn: (jobId: string) => api.cancelQaJob(request, jobId), onSuccess: (job) => client.setQueryData(qaJobKey(job.job_id), job) });
   const remove = useMutation({ mutationFn: (conversationId: string) => api.deleteQaConversation(request, conversationId), onSuccess: (item) => { client.setQueryData(qaDeletionKey(item.deletion_id), item); refresh(); void client.invalidateQueries({ queryKey: DOCUMENTS_QUERY_KEY }); } });

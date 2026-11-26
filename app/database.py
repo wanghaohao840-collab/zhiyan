@@ -77,6 +77,22 @@ create table if not exists graph_document_cleanup (
     primary key (user_id, document_id)
 );
 
+create table if not exists graph_build_jobs (
+    user_id text not null references users(id) on delete cascade,
+    document_id text not null,
+    document_name text not null,
+    status text not null check(status in ('queued', 'running', 'succeeded', 'failed')),
+    attempt_count integer not null default 0,
+    next_attempt_at text,
+    last_error text,
+    created_at text not null,
+    updated_at text not null,
+    primary key (user_id, document_id)
+);
+
+create index if not exists ix_graph_build_jobs_status
+on graph_build_jobs(status, next_attempt_at, updated_at);
+
 create table if not exists qa_conversations (
     id text primary key,
     user_id text not null references users(id) on delete cascade,

@@ -26,6 +26,13 @@ from app.runtime import UserRuntime
 class DeterministicQaAnswerEngine:
     """Deterministic QA adapter reachable only through this executable."""
 
+    def answer_stream(self, runtime, request, *, stage_callback, token_callback):
+        stage_callback("retrieving", 1)
+        answer = self.answer(runtime, request)
+        stage_callback("generating", None)
+        token_callback(answer.answer)
+        return answer
+
     def answer(
         self,
         runtime: object,

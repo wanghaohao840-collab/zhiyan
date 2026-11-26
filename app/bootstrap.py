@@ -12,7 +12,7 @@ from app.learning_repository import LearningRepository
 from app.learning_service import LearningService
 from app.document_library import DocumentLibraryService
 from app.document_search import DocumentSearchService
-from app.graph_service import GraphService
+from app.graph_service import GraphProjectionWorker, GraphService
 from app.import_repository import ImportTaskRepository
 from app.import_service import ImportTaskService
 from app.import_worker import ImportWorkerPool
@@ -77,6 +77,7 @@ class ApplicationServices:
     learning_repository: LearningRepository
     learning_service: LearningService
     graph_service: GraphService
+    graph_projection_worker: GraphProjectionWorker
     _started: bool = field(default=False, init=False, repr=False)
     _lifecycle_lock: RLock = field(default_factory=RLock, init=False, repr=False)
 
@@ -100,6 +101,11 @@ class ApplicationServices:
         legacy_migration = LegacyMigrationService(db_path, storage, PROJECT_ROOT)
         import_repository = ImportTaskRepository(db_path)
         graph_service = GraphService(db_path)
+        graph_projection_worker = GraphProjectionWorker(
+            db_path,
+            session_registry.runtime_registry,
+            graph_service,
+        )
         import_worker_pool = ImportWorkerPool(
             import_repository,
             session_registry.runtime_registry,
@@ -211,6 +217,7 @@ class ApplicationServices:
             learning_repository=learning_repository,
             learning_service=learning_service,
             graph_service=graph_service,
+            graph_projection_worker=graph_projection_worker,
             qa_job_repository=qa_job_repository,
             qa_deletion_repository=qa_deletion_repository,
             qa_legacy_migration=qa_legacy_migration,
@@ -245,6 +252,8 @@ class ApplicationServices:
                 started.append(self.qa_deletion_worker)
                 self.note_projection_worker.start()
                 started.append(self.note_projection_worker)
+                self.graph_projection_worker.start()
+                started.append(self.graph_projection_worker)
             except Exception:
                 for worker in reversed(started):
                     worker.stop()
@@ -254,9 +263,11 @@ class ApplicationServices:
     def stop(self) -> None:
         with self._lifecycle_lock:
             if not self._started:
+                self.graph_service.close()
                 return
             first_error: Exception | None = None
             for worker in (
+                self.graph_projection_worker,
                 self.note_projection_worker,
                 self.qa_deletion_worker,
                 self.qa_worker_pool,
@@ -267,6 +278,11 @@ class ApplicationServices:
                 except Exception as error:
                     if first_error is None:
                         first_error = error
+            try:
+                self.graph_service.close()
+            except Exception as error:
+                if first_error is None:
+                    first_error = error
             self._started = False
             if first_error is not None:
                 raise first_error

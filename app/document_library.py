@@ -26,6 +26,11 @@ class DocumentPreviewUnavailableError(RuntimeError):
     pass
 
 
+class DocumentContentUnsupportedError(ValueError):
+    """文档存在且归当前用户所有，但该格式不支持原文字节流预览（例如 DOCX）。"""
+    pass
+
+
 class DocumentDeleteFailedError(RuntimeError):
     def __init__(self) -> None:
         super().__init__("document deletion failed")
@@ -178,7 +183,7 @@ class DocumentLibraryService:
         with session.runtime.lock:
             item, record = self._preview_record(user_id, session.runtime, document_id)
             if item.file_suffix.lower() not in {".pdf", ".txt", ".md", ".markdown"}:
-                raise DocumentNotFoundError()
+                raise DocumentContentUnsupportedError()
             try:
                 source = self._safe_document_path(user_id, record["document_path"])
                 if not source.is_file():

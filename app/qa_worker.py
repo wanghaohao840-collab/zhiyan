@@ -113,7 +113,11 @@ class QaWorkerPool:
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._threads: list[threading.Thread] = []
-        self._questions: queue.Queue[Callable[[bool], None]] = queue.Queue(maxsize=16)
+        self._question_capacity = 16
+        self._questions: queue.Queue[Callable[[bool], None]] = queue.Queue(
+            maxsize=self._question_capacity
+        )
+        self._question_reserved = 0
         self._question_admission = threading.Lock()
         self._refresh_queue: queue.Queue[_Refresh] = queue.Queue()
         self._refresh_keys: set[tuple[str, str]] = set()
@@ -157,9 +161,41 @@ class QaWorkerPool:
     def notify(self) -> None:
         self._wake.set()
 
+    def reserve_question_slot(self) -> bool:
+        """在创建持久化 pending 轮次前原子预占队列槽位，满载或未启动时直接拒绝避免污染历史。"""
+        with self._question_admission:
+            if self._stop.is_set() or not any(thread.is_alive() for thread in self._threads):
+                return False
+            if self._questions.qsize() + self._question_reserved >= self._question_capacity:
+                return False
+            self._question_reserved += 1
+            return True
+
+    def release_question_slot(self) -> None:
+        """释放未提交的预占槽位。"""
+        with self._question_admission:
+            if self._question_reserved > 0:
+                self._question_reserved -= 1
+
+    def commit_reserved_question(self, question: Callable[[bool], None]) -> bool:
+        """将已预占槽位转化为实际入队任务。"""
+        with self._question_admission:
+            if self._question_reserved > 0:
+                self._question_reserved -= 1
+            if self._stop.is_set() or not any(thread.is_alive() for thread in self._threads):
+                return False
+            try:
+                self._questions.put_nowait(question)
+            except queue.Full:
+                return False
+        self.notify()
+        return True
+
     def schedule_question(self, question: Callable[[bool], None]) -> bool:
         with self._question_admission:
             if self._stop.is_set() or not any(thread.is_alive() for thread in self._threads):
+                return False
+            if self._questions.qsize() + self._question_reserved >= self._question_capacity:
                 return False
             try:
                 self._questions.put_nowait(question)

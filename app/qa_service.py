@@ -29,6 +29,7 @@ from assistants.document_selection import build_document_scope
 
 RETRYABLE_ERROR_CODES = frozenset(
     {
+        "QA_ENGINE_BUSY",
         "QA_ENGINE_UNAVAILABLE",
         "QA_RAG_CONNECTION",
         "QA_RAG_TRANSIENT",
@@ -226,40 +227,64 @@ class QaService:
         conversation = self._require_conversation(user_id, conversation_id)
         self._require_scope_available(session_token, conversation)
         normalized_mode = validate_mode(mode, conversation.documents)
-        try:
-            pending = self.repository.create_pending_turn(
-                user_id,
-                conversation_id,
-                question,
-                normalized_mode,
-                client_request_id,
-            )
-        except QaConflictError as error:
-            self.telemetry.record("qa_busy", conversation_id=conversation_id)
-            raise QaBusyError() from error
-        if pending.duplicate:
-            self.telemetry.record(
-                "qa_idempotent_hit",
-                conversation_id=conversation_id,
-                message_id=pending.assistant_message.id,
-            )
-            return self._require_message(user_id, pending.assistant_message.id)
+        reserved_slot = False
         if stream:
-            return self._schedule_question(user_id, conversation, pending, normalized_mode)
-        return self._execute_pending(
-            session.runtime,
-            user_id,
-            conversation,
-            pending,
-            pending.user_message.content,
-            normalized_mode,
-        )
+            reserve = getattr(self.worker_pool, "reserve_question_slot", None)
+            if self.worker_pool is None or not callable(reserve) or not reserve():
+                raise QaEngineUnavailableError(
+                    secrets.token_urlsafe(12),
+                    code="QA_ENGINE_BUSY",
+                    retryable=True,
+                )
+            reserved_slot = True
+        try:
+            try:
+                pending = self.repository.create_pending_turn(
+                    user_id,
+                    conversation_id,
+                    question,
+                    normalized_mode,
+                    client_request_id,
+                )
+            except QaConflictError as error:
+                self.telemetry.record("qa_busy", conversation_id=conversation_id)
+                raise QaBusyError() from error
+            if pending.duplicate:
+                self.telemetry.record(
+                    "qa_idempotent_hit",
+                    conversation_id=conversation_id,
+                    message_id=pending.assistant_message.id,
+                )
+                return self._require_message(user_id, pending.assistant_message.id)
+            if stream:
+                reserved_slot = False
+                return self._schedule_question(
+                    user_id,
+                    conversation,
+                    pending,
+                    pending.user_message.content,
+                    normalized_mode,
+                    reserved=True,
+                )
+            return self._execute_pending(
+                session.runtime,
+                user_id,
+                conversation,
+                pending,
+                pending.user_message.content,
+                normalized_mode,
+            )
+        finally:
+            if reserved_slot and self.worker_pool is not None:
+                self.worker_pool.release_question_slot()
 
     def retry(
         self,
         session_token: str,
         failed_assistant_message_id: str,
         client_request_id: str,
+        *,
+        stream: bool = False,
     ) -> QaMessage:
         session = self.session_registry.get_session(session_token)
         user_id = str(session.user_id)
@@ -284,36 +309,60 @@ class QaService:
         if paired_user is None:
             raise QaRetryNotAllowedError()
         mode = failed.mode or "auto"
+        reserved_slot = False
+        if stream:
+            reserve = getattr(self.worker_pool, "reserve_question_slot", None)
+            if self.worker_pool is None or not callable(reserve) or not reserve():
+                raise QaEngineUnavailableError(
+                    secrets.token_urlsafe(12),
+                    code="QA_ENGINE_BUSY",
+                    retryable=True,
+                )
+            reserved_slot = True
         try:
-            pending = self.repository.create_pending_retry(
-                user_id,
-                conversation.id,
-                failed.id,
-                client_request_id,
-            )
-        except QaConflictError as error:
-            self.telemetry.record("qa_busy", conversation_id=conversation.id)
-            raise QaBusyError() from error
-        if pending.duplicate:
+            try:
+                pending = self.repository.create_pending_retry(
+                    user_id,
+                    conversation.id,
+                    failed.id,
+                    client_request_id,
+                )
+            except QaConflictError as error:
+                self.telemetry.record("qa_busy", conversation_id=conversation.id)
+                raise QaBusyError() from error
+            if pending.duplicate:
+                self.telemetry.record(
+                    "qa_idempotent_hit",
+                    conversation_id=conversation.id,
+                    message_id=pending.assistant_message.id,
+                )
+                return self._require_message(user_id, pending.assistant_message.id)
             self.telemetry.record(
-                "qa_idempotent_hit",
+                "qa_retry",
                 conversation_id=conversation.id,
                 message_id=pending.assistant_message.id,
             )
-            return self._require_message(user_id, pending.assistant_message.id)
-        self.telemetry.record(
-            "qa_retry",
-            conversation_id=conversation.id,
-            message_id=pending.assistant_message.id,
-        )
-        return self._execute_pending(
-            session.runtime,
-            user_id,
-            conversation,
-            pending,
-            paired_user.content,
-            mode,
-        )
+            if stream:
+                reserved_slot = False
+                return self._schedule_question(
+                    user_id,
+                    conversation,
+                    pending,
+                    paired_user.content,
+                    mode,
+                    reserved=True,
+                )
+            return self._execute_pending(
+                session.runtime,
+                user_id,
+                conversation,
+                pending,
+                paired_user.content,
+                mode,
+            )
+        finally:
+            if reserved_slot and self.worker_pool is not None:
+                self.worker_pool.release_question_slot()
 
     def start_summary(
         self,
@@ -376,8 +425,14 @@ class QaService:
         return deletion
 
     def _schedule_question(
-        self, user_id: str, conversation: QaConversationAggregate,
-        pending: PendingTurn, mode: str,
+        self,
+        user_id: str,
+        conversation: QaConversationAggregate,
+        pending: PendingTurn,
+        question: str,
+        mode: str,
+        *,
+        reserved: bool = False,
     ) -> QaMessage:
         message = pending.assistant_message
         live = self.live_answers.start(message.id)
@@ -395,7 +450,7 @@ class QaService:
                     runtime = runtime_registry.acquire_background(user_id)
                     self._execute_pending(
                         runtime, user_id, conversation, pending,
-                        pending.user_message.content, mode, live=live,
+                        question, mode, live=live,
                     )
             except (QaEngineUnavailableError, QaNotFoundError):
                 pass
@@ -410,7 +465,13 @@ class QaService:
                 if runtime is not None:
                     runtime_registry.release_background(user_id)
 
-        if self.worker_pool is None or not self.worker_pool.schedule_question(execute):
+        enqueued = False
+        if self.worker_pool is not None:
+            if reserved and hasattr(self.worker_pool, "commit_reserved_question"):
+                enqueued = self.worker_pool.commit_reserved_question(execute)
+            else:
+                enqueued = self.worker_pool.schedule_question(execute)
+        if not enqueued:
             execute(False)
             return self._require_message(user_id, message.id)
         return message

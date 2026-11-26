@@ -17,7 +17,13 @@
 
 - [x] 通过显式开关和 Neo4j 连通性提供能力探测。子图使用用户命名空间并在返回前复查文档可见性，节点和关系各最多 200 个。
 - [x] 在 Neo4j 写入前持久化清理责任。即使关闭图谱开关，删除此前建图的文档也会重试清理。冷备和恢复校验 SQLite、Qdrant 和 Neo4j 的同批归档，恢复补偿失败时保持服务停止。
-- [ ] 生产启用前用真实 Neo4j 运行隔离、节点与关系级联测试，并完成包含图谱数据的冷备恢复演练。官方镜像下载遇到 EOF，本次只完成脚本、驱动替身和持久状态测试，生产 graph profile 保持关闭。
+- [x] 使用真实 `neo4j:5.26.28-community` 容器跑通 `tests/integration/test_neo4j_live.py`（隔离、多标签/类型安全 Cypher、节点与孤立 `CanonicalEntity` 级联删除）及真实 Neo4j 冷备恢复演练；同步完成 Linux `deploy/backup.sh` / `deploy/restore.sh` 停机与双归档校验；导入建图重构为 `GraphProjectionWorker` 异步可重试队列、`GraphService` 改为托管长连接池 + `/capabilities` 5s TTL 缓存。
+
+## 2026-11-26 复审收口记录
+
+- **P3-1**：归一化 `HelloAgentsLLM.stream_invoke(..., strict=True)` 的 `finish_reason`（忽略空字符串 `""`，允许 `"stop"` / `"length"`，实机通过 `deepseek-v4-pro` 流式冒烟 27 chunks）；SSE 接入 `request.is_disconnected()` 与 `QaLiveAnswer` 跨线程事件唤醒，并在 `completed` 分支补读竞态尾帧；队列满前原子预占位拒绝返 `503 QA_ENGINE_BUSY` 防污染历史；`POST /messages/{id}/retry` 接入 `?stream=true`；修复 `QaPage` 切会话重复建连旧消息与 `QaWorkspace` 阶段轨视觉基线兼容。
+- **P3-2**：非 PDF 原文流声明 `text/plain; charset=utf-8`；`DELETE /documents/{id}` 与预览对称支持标准 UUID 及 16–64 位十六进制旧格式文档 ID（继续拒绝任意非法字符串返回 422）；DOCX 等不支持字节流的格式对归属用户返回 `415 document_content_unsupported`（跨用户仍返回 `404`）；新增前端 Unicode code point 切片工具 `web/src/features/documents/preview.ts`。
+- **P3-3 & 分支收口**：合并 `codex/rag-retrieval-quality`（`78aeedf`）全量 10 个后续提交；重构 `GraphProjectionWorker` 解耦主导入；升级 `neo4j_store.py` Cypher 多标签与 `toString()` 防御；托管 Neo4j Driver 长连接池与 `ApplicationServices.stop()` 关闭；同步 Linux `backup.sh` / `restore.sh`；真实 Neo4j 5.26.28 容器 `2 passed` + 真实冷备恢复演练 `cnt=1`；`codex/zhiyan-summary-workflow` 保持为独立默认关闭的摘要试点分支。
 
 ## 2026-11-26 验证记录
 

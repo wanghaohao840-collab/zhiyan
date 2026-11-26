@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from typing import Any, Dict, Iterable, List, Optional
+
+logger = logging.getLogger(__name__)
 
 try:
     from dotenv import load_dotenv
@@ -253,10 +256,18 @@ class HelloAgentsLLM:
                         received_text = True
                         yield text
                     if getattr(chunk, "choices", None):
-                        reason = getattr(chunk.choices[0], "finish_reason", None)
-                        if reason is not None:
-                            if reason != "stop":
-                                raise RuntimeError("Model did not finish the answer")
+                        # NOTE: 遵循 LiteLLM / Vercel AI SDK 流式归一化规范：
+                        # 忽略 OpenAI 兼容网关在中间增量 chunk 中发送的空字符串 finish_reason，
+                        # 并保留因 max_tokens ("length") 结束时已流式产出的正文内容。
+                        raw_reason = getattr(chunk.choices[0], "finish_reason", None)
+                        reason = str(raw_reason).strip().lower() if raw_reason is not None else ""
+                        if reason:
+                            if reason not in {"stop", "length"}:
+                                raise RuntimeError(f"Model did not finish the answer: {reason}")
+                            if reason == "length":
+                                logger.warning(
+                                    "LLM strict stream reached length limit; preserving generated answer"
+                                )
                             finished = True
             finally:
                 close = getattr(stream, "close", None)

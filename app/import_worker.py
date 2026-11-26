@@ -178,14 +178,18 @@ class ImportTaskRunner:
             if current is None or current.stage != "committing":
                 if not self._try_begin_committing(task):
                     raise ImportCancelled()
-            if self.graph_service is not None:
-                try:
-                    self.graph_service.build_after_import(task, runtime)
-                except Exception:
-                    logger.warning("optional document graph build failed")
             self.repository.mark_succeeded(
                 task.user_id, task.task_id, now=self._now_iso()
             )
+            if self.graph_service is not None:
+                try:
+                    enqueue = getattr(self.graph_service, "enqueue_after_import", None)
+                    if callable(enqueue):
+                        enqueue(task)
+                    else:
+                        self.graph_service.build_after_import(task, runtime)
+                except Exception:
+                    logger.warning("optional document graph enqueue failed")
             try:
                 self._cleanup_staged_file(staged_path)
             except OSError:

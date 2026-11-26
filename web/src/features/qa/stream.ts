@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../../auth/AuthProvider";
 import { qaMessageStreamUrl } from "./api";
 import { qaMessagesKey } from "./queries";
@@ -36,13 +36,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-export function useQaAnswerStream(conversationId?: string, messageId?: string) {
+export function useQaAnswerStream(
+  conversationId?: string,
+  messageId?: string,
+  onTerminal?: (messageId: string) => void,
+) {
   const auth = useAuth();
   const session = auth.status === "authenticated" && !auth.isLogoutPending
     ? auth.csrfToken
     : undefined;
   const client = useQueryClient();
   const [answer, setAnswer] = useState<ScopedAnswer>();
+  const onTerminalRef = useRef(onTerminal);
+  onTerminalRef.current = onTerminal;
 
   useEffect(() => setAnswer(undefined), [conversationId, session]);
 
@@ -95,6 +101,7 @@ export function useQaAnswerStream(conversationId?: string, messageId?: string) {
         : { ...current, status: "disconnected", content: "", sources: [] });
       closed = true;
       source.close();
+      onTerminalRef.current?.(messageId);
       void client.invalidateQueries({ queryKey: qaMessagesKey(conversationId) });
     };
     source.addEventListener("done", () => finish(true));

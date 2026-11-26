@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from typing import Annotated
 from urllib.parse import quote
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path, Request, Response, status
 from fastapi.responses import StreamingResponse
@@ -23,6 +22,7 @@ from api.schemas.documents import (
 )
 from api.schemas.qa import QaDeletionResponse, deletion_response
 from app.document_library import (
+    DocumentContentUnsupportedError,
     DocumentDeleteFailedError,
     DocumentImportActiveError,
     DocumentLibraryService,
@@ -34,6 +34,10 @@ from app.session import UserSession
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 _PREVIEW_CACHE_CONTROL = "private, no-store"
+# NOTE: 允许标准 UUID 及历史 16–64 位十六进制文档编号，同时在路由层拒绝任意非法字符串
+_DOCUMENT_ID_PATTERN = (
+    r"^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{16,64})$"
+)
 
 
 def _preview_error(status_code: int, code: str, message: str, *, retryable: bool = False):
@@ -86,8 +90,9 @@ def get_chunk_preview(
     "/{document_id}/content",
     response_class=StreamingResponse,
     responses={
-        200: {"content": {"application/pdf": {}, "text/plain": {}}},
+        200: {"content": {"application/pdf": {}, "text/plain; charset=utf-8": {}}},
         206: {"description": "Partial content"},
+        415: {"description": "Original byte preview unsupported for this document format"},
         416: {"description": "Range not satisfiable"},
     },
 )
@@ -102,13 +107,23 @@ def get_document_content(
         content = service.get_original_content(token, document_id)
     except DocumentNotFoundError:
         return _preview_error(status.HTTP_404_NOT_FOUND, "document_not_found", "文档原文不存在")
+    except DocumentContentUnsupportedError:
+        return _preview_error(
+            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            "document_content_unsupported",
+            "该文档格式不支持原文字节流预览，请使用片段上下文预览",
+        )
 
     size = content.size_bytes
     headers = {
         "Accept-Ranges": "bytes",
         "Cache-Control": _PREVIEW_CACHE_CONTROL,
         "Content-Disposition": f"inline; filename*=UTF-8''{quote(content.name, safe='')}",
-        "Content-Type": "application/pdf" if content.file_suffix == ".pdf" else "text/plain",
+        "Content-Type": (
+            "application/pdf"
+            if content.file_suffix == ".pdf"
+            else "text/plain; charset=utf-8"
+        ),
         "X-Content-Type-Options": "nosniff",
     }
     start, end = 0, size
@@ -160,7 +175,7 @@ def _parse_byte_range(values: list[str], size: int) -> tuple[int, int]:
     status_code=status.HTTP_202_ACCEPTED,
 )
 def delete_document(
-    document_id: UUID,
+    document_id: Annotated[str, Path(pattern=_DOCUMENT_ID_PATTERN)],
     request: Request,
     _session: Annotated[UserSession, Depends(get_csrf_validated_session)],
     service: Annotated[
@@ -170,7 +185,7 @@ def delete_document(
 ):
     try:
         deletion = service.delete_document(
-            get_session_token(request), str(document_id)
+            get_session_token(request), document_id
         )
     except DocumentNotFoundError:
         return error_response(

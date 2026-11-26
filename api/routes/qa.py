@@ -52,7 +52,16 @@ from app.session import InvalidSessionError, UserSession
 
 router = APIRouter(prefix="/api/v1/qa", tags=["qa"])
 STREAM_HEARTBEAT_SECONDS = 15
-STREAM_POLL_SECONDS = 0.25
+# NOTE: 新事件通过 QaLiveAnswer.subscribe 毫秒级唤醒，此间隔仅作空闲期间复查删除栅栏与断连的上限
+STREAM_POLL_SECONDS = 2.0
+
+
+async def _client_disconnected(request: Request) -> bool:
+    """安全检查客户端是否断开连接（兼容未提供 ASGI receive 通道的合成单测 Request）。"""
+    try:
+        return await request.is_disconnected()
+    except RuntimeError:
+        return False
 
 
 def _disabled(request: Request) -> JSONResponse | None:
@@ -246,66 +255,105 @@ async def stream_message(
         return _not_found()
 
     async def events():
-        live = service.live_answers.get(message.id)
+        loop = asyncio.get_running_loop()
+        wake_event = asyncio.Event()
+        subscribed_live = None
         cursor = 0
-        streamed = []
+        streamed: list[str] = []
         last_sent = monotonic()
-        while True:
-            if live is None:
+        try:
+            while True:
+                if await _client_disconnected(request):
+                    return
                 live = service.live_answers.get(message.id)
-            batch, overflowed = live.read(cursor) if live is not None else ((), False)
-            # Read the deletion fence after taking the live snapshot. A frame
-            # recorded after the visibility check belongs to the next pass.
-            try:
-                current = await run_in_threadpool(service.get_stream_message, *lookup)
-            except (QaNotFoundError, InvalidSessionError):
-                yield _sse("error", {"safe_error_code": "QA_NOT_FOUND"})
-                return
-            except Exception:
-                yield _sse("error", {"safe_error_code": "QA_OPERATION_FAILED"})
-                return
+                if live is not None and live is not subscribed_live:
+                    if subscribed_live is not None:
+                        subscribed_live.unsubscribe(loop, wake_event)
+                    live.subscribe(loop, wake_event)
+                    subscribed_live = live
+                wake_event.clear()
+                batch, overflowed = live.read(cursor) if live is not None else ((), False)
+                # Read the deletion fence after taking the live snapshot. A frame
+                # recorded after the visibility check belongs to the next pass.
+                try:
+                    current = await run_in_threadpool(service.get_stream_message, *lookup)
+                except (QaNotFoundError, InvalidSessionError):
+                    yield _sse("error", {"safe_error_code": "QA_NOT_FOUND"})
+                    return
+                except Exception:
+                    yield _sse("error", {"safe_error_code": "QA_OPERATION_FAILED"})
+                    return
 
-            if current.status in {"failed", "cancelled"}:
-                code = current.safe_error_code or ""
-                if not SAFE_ERROR_CODE.fullmatch(code):
-                    code = (
-                        "QA_ANSWER_CANCELLED" if current.status == "cancelled"
-                        else "QA_ENGINE_UNAVAILABLE"
+                if current.status in {"failed", "cancelled"}:
+                    code = current.safe_error_code or ""
+                    if not SAFE_ERROR_CODE.fullmatch(code):
+                        code = (
+                            "QA_ANSWER_CANCELLED" if current.status == "cancelled"
+                            else "QA_ENGINE_UNAVAILABLE"
+                        )
+                    yield _sse(
+                        "error",
+                        {"safe_error_code": code},
                     )
-                yield _sse(
-                    "error",
-                    {"safe_error_code": code},
+                    return
+
+                if overflowed:
+                    yield _sse("error", {"safe_error_code": "QA_STREAM_LIMIT"})
+                    return
+                frames = []
+                for event, data in batch:
+                    if event == "token":
+                        streamed.append(data["delta"])
+                    frames.append(_sse(event, data))
+                cursor += len(batch)
+
+                if current.status == "completed":
+                    # NOTE: 删除栅栏已校验通过且消息已持久化完成；若生产者在本次
+                    # live.read() 与 get_stream_message() 之间极速完成，需补读剩余 stage/token 帧。
+                    final_live = service.live_answers.get(message.id)
+                    if final_live is not None:
+                        trailing, trailing_overflow = final_live.read(cursor)
+                        if trailing_overflow:
+                            yield _sse("error", {"safe_error_code": "QA_STREAM_LIMIT"})
+                            return
+                        for event, data in trailing:
+                            if event == "token":
+                                streamed.append(data["delta"])
+                            frames.append(_sse(event, data))
+                        cursor += len(trailing)
+                    prefix = "".join(streamed)
+                    if current.content.startswith(prefix) and (suffix := current.content[len(prefix):]):
+                        frames.append(_sse("token", {"delta": suffix}))
+                    sources = message_response(current).sources
+                    frames.append(_sse(
+                        "citations", [source.model_dump(mode="json") for source in sources]
+                    ))
+                    frames.append(_sse("done", {}))
+                    yield "".join(frames)
+                    return
+                if frames:
+                    yield "".join(frames)
+                    last_sent = monotonic()
+                    continue
+                if monotonic() - last_sent >= STREAM_HEARTBEAT_SECONDS:
+                    yield ": ping\n\n"
+                    last_sent = monotonic()
+                if await _client_disconnected(request):
+                    return
+                remaining_heartbeat = max(
+                    0.0, STREAM_HEARTBEAT_SECONDS - (monotonic() - last_sent)
                 )
-                return
-
-            if overflowed:
-                yield _sse("error", {"safe_error_code": "QA_STREAM_LIMIT"})
-                return
-            frames = []
-            for event, data in batch:
-                if event == "token":
-                    streamed.append(data["delta"])
-                frames.append(_sse(event, data))
-            cursor += len(batch)
-
-            if current.status == "completed":
-                prefix = "".join(streamed)
-                if current.content.startswith(prefix) and (suffix := current.content[len(prefix):]):
-                    frames.append(_sse("token", {"delta": suffix}))
-                sources = message_response(current).sources
-                frames.append(_sse(
-                    "citations", [source.model_dump(mode="json") for source in sources]
-                ))
-                frames.append(_sse("done", {}))
-                yield "".join(frames)
-                return
-            if frames:
-                yield "".join(frames)
-                last_sent = monotonic()
-            elif monotonic() - last_sent >= STREAM_HEARTBEAT_SECONDS:
-                yield ": ping\n\n"
-                last_sent = monotonic()
-            await asyncio.sleep(STREAM_POLL_SECONDS)
+                wait_seconds = min(STREAM_POLL_SECONDS, remaining_heartbeat)
+                if wait_seconds > 0:
+                    try:
+                        await asyncio.wait_for(wake_event.wait(), timeout=wait_seconds)
+                    except asyncio.TimeoutError:
+                        pass
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if subscribed_live is not None:
+                subscribed_live.unsubscribe(loop, wake_event)
 
     return StreamingResponse(
         events(),
@@ -396,6 +444,7 @@ def retry_message(
     request: Request,
     _session: Annotated[UserSession, Depends(get_csrf_validated_session)],
     service: Annotated[QaService, Depends(get_qa_service)],
+    stream: bool = False,
 ):
     if disabled := _disabled(request):
         return disabled
@@ -404,6 +453,7 @@ def retry_message(
             get_session_token(request),
             str(message_id),
             str(body.client_request_id),
+            stream=stream,
         )
         if message.status == "pending":
             response.status_code = status.HTTP_202_ACCEPTED

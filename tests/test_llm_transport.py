@@ -116,6 +116,31 @@ class HelloAgentsLLMTransportTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "ended before a complete answer"):
             list(llm.stream_invoke("hello", strict=True))
 
+    def test_strict_stream_handles_openai_compatible_empty_and_length_finish_reasons(self):
+        empty_mid_then_stop = [
+            SimpleNamespace(choices=[SimpleNamespace(
+                delta=SimpleNamespace(content="第一段"), finish_reason="",
+            )]),
+            SimpleNamespace(choices=[SimpleNamespace(
+                delta=SimpleNamespace(content="第二段"), finish_reason="stop",
+            )]),
+        ]
+        length_truncated = [
+            SimpleNamespace(choices=[SimpleNamespace(
+                delta=SimpleNamespace(content="达到上限的完整正文"), finish_reason="length",
+            )]),
+        ]
+        filtered = [
+            SimpleNamespace(choices=[SimpleNamespace(
+                delta=SimpleNamespace(content="被截断"), finish_reason="content_filter",
+            )]),
+        ]
+        llm = self.make_llm([iter(empty_mid_then_stop), iter(length_truncated), iter(filtered)])
+        self.assertEqual(list(llm.stream_invoke("hello", strict=True)), ["第一段", "第二段"])
+        self.assertEqual(list(llm.stream_invoke("hello", strict=True)), ["达到上限的完整正文"])
+        with self.assertRaisesRegex(RuntimeError, "content_filter"):
+            list(llm.stream_invoke("hello", strict=True))
+
 
 if __name__ == "__main__":
     unittest.main()

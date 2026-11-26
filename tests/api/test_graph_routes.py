@@ -181,3 +181,122 @@ def test_graph_cleanup_survives_publish_error_and_the_feature_being_disabled(tmp
     restarted.delete_document(user.id, DOC)
     assert loaded == [True, True]
     assert deletions == [(DOC, {"rag_namespace": namespace})]
+
+
+def test_graph_service_reuses_pooled_driver_caches_capabilities_and_recovers(monkeypatch):
+    monkeypatch.setenv("ZHIYAN_GRAPH_ENABLED", "1")
+    monkeypatch.setenv("NEO4J_URI", "neo4j://neo4j:7687")
+    created = []
+    closed = []
+    checks = []
+    fail_next = {"value": False}
+
+    class PooledStore:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            created.append(kwargs)
+
+        def check_database(self):
+            checks.append(True)
+            if fail_next["value"]:
+                fail_next["value"] = False
+                raise OSError("connection dropped")
+
+        def close(self):
+            closed.append(True)
+
+    service = GraphService(store_factory=PooledStore, capabilities_ttl_seconds=5.0)
+    # 多次调用能力探测命中 5s 短 TTL 缓存，仅建立 1 次 Driver 连接池、执行 1 次 check_database
+    assert service.capabilities() == (True, None)
+    assert service.capabilities() == (True, None)
+    assert len(created) == 1
+    assert len(checks) == 1
+
+    # 配置变更立即失效缓存并关闭旧池重建
+    monkeypatch.setenv("NEO4J_URI", "neo4j://neo4j-v2:7687")
+    assert service.capabilities() == (True, None)
+    assert len(created) == 2
+    assert len(closed) == 1
+
+    # 关闭开关立即失效缓存且优雅关闭连接池
+    service.close()
+    assert len(closed) == 2
+
+    # 连接失败自动销毁坏连接池，下次自动重建恢复
+    no_cache = GraphService(store_factory=PooledStore, capabilities_ttl_seconds=0.0)
+    assert no_cache.capabilities() == (True, None)
+    fail_next["value"] = True
+    assert no_cache.capabilities() == (False, "graph_unavailable")
+    assert no_cache.capabilities() == (True, None)
+    assert len(created) == 4
+    no_cache.close()
+
+
+def test_async_graph_projection_worker_decouples_import_and_respects_deletion_fence(
+    tmp_path, monkeypatch
+):
+    from threading import RLock
+    from app.graph_service import GraphProjectionWorker
+    from app.qa_deletion import QaDeletionRepository
+    from hello_agents.memory.graph.extractor import GraphExtractor
+
+    db = tmp_path / "async_graph.db"
+    initialize_database(db)
+    user = AuthService(db).register("async_owner", "correct horse battery")
+    namespace = f"pdf_{user.id}"
+    published = []
+    fenced_doc = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+
+    class FakeStore:
+        def replace_document_graph(self, document_id, build_id, payload, *, rag_namespace):
+            published.append((document_id, rag_namespace))
+
+        def close(self):
+            pass
+
+    history_docs = [
+        {"document_id": DOC, "document_name": "a.md"},
+        {"document_id": fenced_doc, "document_name": "b.md"},
+    ]
+    runtime = SimpleNamespace(
+        lock=RLock(),
+        history=SimpleNamespace(load=lambda: {"documents": list(history_docs)}),
+        rag_tool=SimpleNamespace(
+            rag_namespace=namespace,
+            _get_pipeline=lambda scope: SimpleNamespace(get_document_chunks=lambda doc_id: []),
+        ),
+    )
+    runtime_registry = SimpleNamespace(
+        acquire_background=lambda uid: runtime,
+        release_background=lambda uid: None,
+    )
+    monkeypatch.setattr(
+        GraphExtractor,
+        "extract",
+        lambda *args, **kwargs: SimpleNamespace(to_store_payload=lambda: {}),
+    )
+    monkeypatch.setenv("ZHIYAN_GRAPH_ENABLED", "1")
+    service = GraphService(db, store_factory=lambda **kwargs: FakeStore())
+    worker = GraphProjectionWorker(db, runtime_registry, service, poll_interval=0.05)
+
+    assert service.enqueue_after_import(
+        SimpleNamespace(user_id=user.id, document_id=DOC, original_name="a.md")
+    )
+    assert service.enqueue_after_import(
+        SimpleNamespace(user_id=user.id, document_id=fenced_doc, original_name="b.md")
+    )
+    # 模拟第二个文档在后台建图执行前被删除建栅栏
+    QaDeletionRepository(db).create_document_deletion(user.id, fenced_doc)
+
+    assert worker.run_once() is True
+    assert worker.run_once() is True
+    assert worker.run_once() is False
+    # 仅未删除文档发布到 Neo4j，被删除栅栏拦住的文档零发布且任务已清除
+    assert published == [(DOC, namespace)]
+    with connect(db) as conn:
+        rows = conn.execute(
+            "select document_id, status from graph_build_jobs where user_id = ?",
+            (user.id,),
+        ).fetchall()
+        assert [(row["document_id"], row["status"]) for row in rows] == [(DOC, "succeeded")]
+    service.close()

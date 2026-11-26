@@ -143,7 +143,7 @@ function QaStepTrack({ steps, ariaLabel }: { steps: ProgressStepItem[]; ariaLabe
   );
 }
 
-function buildMessageSteps(message: QaMessage, live: QaLiveAnswer): ProgressStepItem[] {
+function buildLiveMessageSteps(message: QaMessage, live: QaLiveAnswer): ProgressStepItem[] {
   const labels = {
     retrieving: live.retrievedCount === undefined
       ? "文档检索"
@@ -165,6 +165,32 @@ function buildMessageSteps(message: QaMessage, live: QaLiveAnswer): ProgressStep
     }
     return { label, state: "done" };
   });
+}
+
+function buildPersistedMessageSteps(message: QaMessage): ProgressStepItem[] {
+  if (message.status === "pending") {
+    return [
+      { label: "接收问题", state: "done" },
+      { label: "文档检索", state: "active" },
+      { label: "引用整理", state: "idle" },
+      { label: "生成回答", state: "idle" },
+    ];
+  }
+  if (message.status === "failed" || message.status === "cancelled") {
+    return [
+      { label: "接收问题", state: "done" },
+      { label: "文档检索", state: "error" },
+      { label: "引用整理", state: "idle" },
+      { label: "生成回答", state: "idle" },
+    ];
+  }
+  const hasSources = message.sources.length > 0;
+  return [
+    { label: "接收问题", state: "done" },
+    { label: "文档检索", state: "done" },
+    { label: hasSources ? `证据引用 (${message.sources.length})` : "证据核对", state: "done" },
+    { label: "生成回答", state: "done" },
+  ];
 }
 
 function buildSummarySteps(job: QaJob): ProgressStepItem[] {
@@ -282,14 +308,14 @@ export function MessageList({
                   <CheckCircle2 size={14} strokeWidth={1.6} aria-hidden="true" />
                   <span>
                     {message.sources.length
-                      ? `已完成回答 · 参考来源 ${message.sources.length} 条`
+                      ? `已完成文档检索与组织 · 参考来源 ${message.sources.length} 条`
                       : "已完成回答"}
                   </span>
                 </div>
               ) : null}
               {message.status === "pending" && !message.content ? (
                 <p className="qa-message__pending" role="status">
-                  正在处理问题…
+                  正在查找并组织答案…
                 </p>
               ) : message.role === "assistant" && message.content ? (
                 <div className="qa-message__body">
@@ -311,8 +337,17 @@ export function MessageList({
                     (message.status === "failed" ? "回答失败，原问题已保留。" : "")}
                 </p>
               )}
-              {liveAnswer?.messageId === message.message_id && liveAnswer.stages.length > 0 ? (
-                <QaStepTrack steps={buildMessageSteps(message, liveAnswer)} ariaLabel="回答处理阶段" />
+              {message.role === "assistant" ? (
+                <QaStepTrack
+                  steps={
+                    message.status === "pending" &&
+                    liveAnswer?.messageId === message.message_id &&
+                    liveAnswer.stages.length > 0
+                      ? buildLiveMessageSteps(message, liveAnswer)
+                      : buildPersistedMessageSteps(message)
+                  }
+                  ariaLabel="回答处理阶段"
+                />
               ) : null}
               {message.status === "failed" ? (
                 <div className="qa-message__failure" role="alert">

@@ -168,6 +168,62 @@ def test_legacy_document_id_can_preview_and_honors_the_fence(preview_host):
     assert client.get(content_url).status_code == 404
 
 
+def test_legacy_document_id_can_also_be_deleted_symmetrically(preview_host):
+    client, _, _, _, library = preview_host
+    legacy_id = "7a19b4a672d1b2c3"
+    history = library.session_registry.get_session("owner").runtime.history
+    record = history.load()["documents"][0]
+    history.load = lambda: {"documents": [{**record, "document_id": legacy_id}]}
+    client.cookies.set("zhiyan_session", "owner")
+
+    deleted = client.delete(
+        f"/api/v1/documents/{legacy_id}",
+        headers={"X-CSRF-Token": "owner-csrf"},
+    )
+    assert deleted.status_code == 202
+
+
+def test_text_markdown_content_declares_utf8_and_docx_returns_415_only_for_owner(preview_host):
+    client, _, path, _, library = preview_host
+    md_path = path.with_name("中文笔记.md")
+    md_path.write_bytes("# 知研中文标题\n正文内容".encode("utf-8"))
+    docx_path = path.with_name("报告.docx")
+    docx_path.write_bytes(b"PK\x03\x04fake-docx")
+    md_id = "11111111-1111-4111-8111-111111111111"
+    docx_id = "22222222-2222-4222-8222-222222222222"
+    records = [
+        {
+            "document_id": md_id,
+            "document_name": "中文笔记.md",
+            "file_suffix": ".md",
+            "document_path": str(md_path),
+        },
+        {
+            "document_id": docx_id,
+            "document_name": "报告.docx",
+            "file_suffix": ".docx",
+            "document_path": str(docx_path),
+        },
+    ]
+    for token in ("owner", "other"):
+        library.session_registry.get_session(token).runtime.history.load = lambda r=records: {"documents": r}
+
+    # 跨用户访问他人 DOCX 必须继续返回 404，不泄露文档存在与格式
+    client.cookies.set("zhiyan_session", "other")
+    assert client.get(f"/api/v1/documents/{docx_id}/content").status_code == 404
+
+    client.cookies.set("zhiyan_session", "owner")
+    md_resp = client.get(f"/api/v1/documents/{md_id}/content")
+    assert md_resp.status_code == 200
+    assert md_resp.headers["content-type"] == "text/plain; charset=utf-8"
+    assert md_resp.text == "# 知研中文标题\n正文内容"
+
+    docx_resp = client.get(f"/api/v1/documents/{docx_id}/content")
+    assert docx_resp.status_code == 415
+    assert docx_resp.json()["error"]["code"] == "document_content_unsupported"
+    assert docx_resp.headers["cache-control"] == "private, no-store"
+
+
 def test_durable_fence_hides_content_and_chunk_before_physical_removal(preview_host):
     client, backend, path, _, _ = preview_host
     client.cookies.set("zhiyan_session", "owner")

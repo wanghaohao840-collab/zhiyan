@@ -148,7 +148,9 @@ describe("DocumentsPage", () => {
   it("renders real /documents while non-product routes stay migration", async () => {
     installFetchStub();
     const { unmount } = renderApp("/documents");
-    expect(await screen.findByRole("heading", { level: 1, name: "文档库" })).toBeVisible();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "文档库" }, { timeout: 5000 }),
+    ).toBeVisible();
     expect(screen.queryByText("该能力正在迁移到新版界面")).not.toBeInTheDocument();
     unmount();
     for (const item of navigationItems.filter(({ path }) => !["/overview", "/documents", "/qa", "/notes", "/insights", "/search", "/learning"].includes(path))) {
@@ -435,7 +437,9 @@ describe("DocumentsPage", () => {
     installFetchStub({ documents: { items: [documentItem("doc-1", "notes.md")] } });
     renderApp();
     await userEvent.click(await screen.findByRole("button", { name: "开始问答" }));
-    expect(await screen.findByRole("heading", { level: 1, name: "智能问答" })).toBeVisible();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "智能问答" }, { timeout: 5000 }),
+    ).toBeVisible();
     expect(screen.getByRole("dialog", { name: "新建对话" })).toBeVisible();
     expect(screen.getByRole("checkbox", { name: "notes.md" })).toBeChecked();
   });

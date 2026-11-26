@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -217,5 +217,136 @@ describe("QaPage", () => {
       `/api/v1/qa/conversations/${conversation.conversation_id}`,
       expect.objectContaining({ method: "DELETE" }),
     );
+  });
+
+  it("does not reconnect EventSource to a completed message after switching conversations", async () => {
+    const second = {
+      ...conversation,
+      conversation_id: "22222222-2222-4222-8222-222222222222",
+      title: "第二个对话",
+    };
+    const openedUrls: string[] = [];
+    const instances: Array<{
+      url: string;
+      listeners: Map<string, Array<(event: Event) => void>>;
+      closed: boolean;
+    }> = [];
+
+    class FakeEventSource {
+      url: string;
+      listeners = new Map<string, Array<(event: Event) => void>>();
+      closed = false;
+      constructor(url: string) {
+        this.url = url;
+        openedUrls.push(url);
+        instances.push(this);
+      }
+      addEventListener(type: string, handler: (event: Event) => void) {
+        this.listeners.set(type, [...(this.listeners.get(type) ?? []), handler]);
+      }
+      close() {
+        this.closed = true;
+      }
+    }
+
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const createdId = "33333333-3333-4333-8333-333333333333";
+    let asked = false;
+    let completed = false;
+    fetchMock.mockImplementation((input, init) => {
+      const url = String(input);
+      if (url === "/api/v1/auth/session") return Promise.resolve(response({ username: "alice", csrf_token: "csrf-1" }));
+      if (url === "/api/v1/qa/capabilities") return Promise.resolve(response({ enabled: true }));
+      if (url === "/api/v1/notes/capabilities") return Promise.resolve(response({ enabled: true }));
+      if (url === "/api/v1/documents") return Promise.resolve(response({ items: [{ document_id: "doc-1", name: "研究.md", file_suffix: ".md", size_bytes: 1, loaded_at: "now", status: "ready" }] }));
+      if (url.startsWith("/api/v1/qa/conversations?")) return Promise.resolve(response({ items: [conversation, second], next_cursor: null }));
+      if (url.endsWith(`/conversations/${conversation.conversation_id}`)) return Promise.resolve(response(conversation));
+      if (url.endsWith(`/conversations/${second.conversation_id}`)) return Promise.resolve(response(second));
+      if (url.includes("/summary-jobs/active")) return Promise.resolve(response({ job: null }));
+      if (url.includes("/messages?stream=true") && init?.method === "POST") {
+        asked = true;
+        return Promise.resolve(response({
+          message_id: createdId,
+          conversation_id: conversation.conversation_id,
+          turn_id: "turn-stream",
+          role: "assistant",
+          mode: "auto",
+          status: "pending",
+          content: "",
+          sources: [],
+          source_state: "none",
+          retry_of_message_id: null,
+          safe_error_code: null,
+          trace_id: null,
+          created_at: "2026-11-26T00:00:00Z",
+          updated_at: "2026-11-26T00:00:00Z",
+          completed_at: null,
+        }, 202));
+      }
+      if (url.includes(`/conversations/${conversation.conversation_id}/messages`)) {
+        return Promise.resolve(response({
+          items: asked
+            ? [
+                {
+                  message_id: createdId,
+                  conversation_id: conversation.conversation_id,
+                  turn_id: "turn-stream",
+                  role: "assistant",
+                  mode: "auto",
+                  status: completed ? "completed" : "pending",
+                  content: completed ? "最终持久化回答" : "",
+                  sources: [],
+                  source_state: "none",
+                  retry_of_message_id: null,
+                  safe_error_code: null,
+                  trace_id: null,
+                  created_at: "2026-11-26T00:00:00Z",
+                  updated_at: "2026-11-26T00:00:02Z",
+                  completed_at: completed ? "2026-11-26T00:00:02Z" : null,
+                },
+              ]
+            : [],
+          next_cursor: null,
+        }));
+      }
+      if (url.includes(`/conversations/${second.conversation_id}/messages`)) {
+        return Promise.resolve(response({ items: [], next_cursor: null }));
+      }
+      return Promise.resolve(response({}, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={[`/qa?conversation=${conversation.conversation_id}`]}>
+          <AuthProvider>
+            <QaPage />
+          </AuthProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByRole("heading", { name: "智能问答" });
+    await userEvent.type(screen.getByLabelText("向这些文档提问"), "流式状态测试");
+    await userEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(openedUrls).toHaveLength(1));
+
+    // 模拟服务端流结束且数据库收敛为 completed
+    completed = true;
+    const doneHandlers = instances[0].listeners.get("done") ?? [];
+    act(() => {
+      for (const handler of doneHandlers) handler(new MessageEvent("done", { data: "{}" }));
+    });
+    await waitFor(() => expect(screen.getByText("最终持久化回答")).toBeVisible());
+
+    // 切到第二个对话，再切回第一个对话，绝不应重新打开 EventSource
+    await userEvent.click(screen.getByRole("button", { name: "对话" }));
+    await userEvent.click(within(screen.getByRole("dialog", { name: "选择对话" })).getByRole("button", { name: /第二个对话/ }));
+    await waitFor(() => expect(screen.queryByText("最终持久化回答")).not.toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: "对话" }));
+    await userEvent.click(within(screen.getByRole("dialog", { name: "选择对话" })).getByRole("button", { name: /研究对话/ }));
+    await waitFor(() => expect(screen.getByText("最终持久化回答")).toBeVisible());
+    expect(openedUrls).toHaveLength(1);
   });
 });

@@ -984,3 +984,19 @@ def test_graph_restore_rejects_qdrant_archive_from_a_different_set(tmp_path):
     assert "The Neo4j backup metadata does not match the selected archives" in result.stdout + result.stderr
     assert "deployment should not be touched" not in result.stdout + result.stderr
     assert (graph_data / "store.bin").read_bytes() == b"current graph"
+
+
+def test_linux_backup_and_restore_scripts_enforce_graph_cold_backup_contracts():
+    backup_sh = (ROOT / "deploy" / "backup.sh").read_text(encoding="utf-8")
+    restore_sh = (ROOT / "deploy" / "restore.sh").read_text(encoding="utf-8")
+
+    assert "--profile graph" in backup_sh
+    assert "Deployment services remain running after stop" in backup_sh
+    assert "neo4j_data=neo4j/data" in backup_sh
+    assert "The deployment graph must use the locally backed-up Neo4j service" in backup_sh
+
+    assert "--profile graph" in restore_sh
+    assert "The selected archive has no Neo4j data for this graph deployment" in restore_sh
+    assert "The Neo4j backup metadata does not match the selected archives" in restore_sh
+    assert "A graph restore requires a verified SQLite, Neo4j and Qdrant backup set" in restore_sh
+    assert "keeping deployment services stopped to prevent split state" in restore_sh

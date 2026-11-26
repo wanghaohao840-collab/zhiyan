@@ -553,22 +553,23 @@ class Neo4jGraphStore:
             CALL {
                 MATCH (n {rag_namespace: $rag_namespace})
                 WHERE n.document_id IN $document_ids AND n.graph_id IS NOT NULL
-                  AND labels(n)[0] IN $node_types
-                RETURN n, [n.document_id] AS document_ids, labels(n)[0] AS node_type,
-                       coalesce(n.name, n.title, n.graph_id) AS label,
-                       n.graph_id AS graph_id, n.document_id AS scope_id
+                WITH n, [lbl IN labels(n) WHERE lbl IN $node_types] AS matched_labels
+                WHERE size(matched_labels) > 0
+                RETURN n, [toString(n.document_id)] AS document_ids, matched_labels[0] AS node_type,
+                       toString(coalesce(n.name, n.title, n.graph_id)) AS label,
+                       toString(n.graph_id) AS graph_id, toString(n.document_id) AS scope_id
                 UNION ALL
                 MATCH (local {rag_namespace: $rag_namespace})-[r:REFERS_TO]->
                       (n:CanonicalEntity {rag_namespace: $rag_namespace})
                 WHERE local.document_id IN $document_ids
                   AND n.canonical_id IS NOT NULL
-                  AND labels(local)[0] = n.entity_type
+                  AND any(lbl IN labels(local) WHERE lbl = n.entity_type)
                   AND coalesce(r.rag_namespace, $rag_namespace) = $rag_namespace
                   AND coalesce(r.document_id, local.document_id) = local.document_id
-                WITH n, collect(DISTINCT local.document_id) AS document_ids,
-                     min(coalesce(local.name, local.title, local.graph_id)) AS label
+                WITH n, collect(DISTINCT toString(local.document_id)) AS document_ids,
+                     min(toString(coalesce(local.name, local.title, local.graph_id))) AS label
                 RETURN n, document_ids, 'CanonicalEntity' AS node_type,
-                       label, n.canonical_id AS graph_id, '' AS scope_id
+                       label, toString(n.canonical_id) AS graph_id, '' AS scope_id
             }
             WITH n, document_ids, node_type, label, graph_id, scope_id
             WHERE $search_term = '' OR toLower(label) CONTAINS $search_term
@@ -590,7 +591,7 @@ class Neo4jGraphStore:
               AND (
                   (type(r) IN $relation_types AND source.document_id = target.document_id)
                   OR (type(r) = 'REFERS_TO' AND target:CanonicalEntity
-                      AND labels(source)[0] = target.entity_type)
+                      AND any(lbl IN labels(source) WHERE lbl = target.entity_type))
               )
             RETURN elementId(source) AS source, elementId(target) AS target,
                    type(r) AS relation, coalesce(toFloatOrNull(r.weight),

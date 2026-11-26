@@ -580,6 +580,9 @@ def test_canvas_queries_use_authorized_docs_bounded_rows_and_in_scope_endpoints(
     assert edges_query.count("rag_namespace: $rag_namespace") == 2
     assert "r.rag_namespace" in edges_query
     assert "elementId(target) IN $element_ids" in edges_query
+    assert "labels(n)[0]" not in nodes_query
+    assert "toString(coalesce(" in nodes_query
+    assert "any(lbl IN labels(source)" in edges_query
     assert node_params["document_ids"] == ["owned"]
     assert node_params["search_term"] == "graph"
     assert node_params["rag_namespace"] == edge_params["rag_namespace"] == "pdf_owner"

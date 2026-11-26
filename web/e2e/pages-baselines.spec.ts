@@ -55,6 +55,20 @@ test("captures deterministic baselines for overview, search, insights and learni
   await page.goto(`${appUrl}/insights`);
   await expect(page.getByRole("heading", { level: 1, name: "学习洞察" })).toBeVisible();
   await expect(page.getByText("近 30 天活动")).toBeVisible();
+  // NOTE: 规范化随系统自然日滚动的 30 天 X 轴日刻度，确保跨自然日回归像素零漂移
+  await page.locator(".activity-chart .activity-day small").evaluateAll((nodes) => {
+    const fixedDays = [
+      "27", "28", "29", "30", "31",
+      "01", "02", "03", "04", "05",
+      "06", "07", "08", "09", "10",
+      "11", "12", "13", "14", "15",
+      "16", "17", "18", "19", "20",
+      "21", "22", "23", "24", "25",
+    ];
+    nodes.forEach((node, index) => {
+      if (index < fixedDays.length) node.textContent = fixedDays[index];
+    });
+  });
   await assertAccessibleAndNoOverflow(page, "insights");
   await expect(page).toHaveScreenshot("insights-default.png");
 

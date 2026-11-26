@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp, FileText } from "lucide-react";
-import { type CSSProperties, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { Button } from "../components/Button/Button";
@@ -49,15 +49,37 @@ export function QaPage() {
   const messages = useQaMessages(enabled ? selectedId : undefined);
   const documents = useDocumentsQuery();
   const mutations = useQaMutations();
-  const accepted = mutations.ask.data;
-  const pending = messages.items.find((item) =>
-    item.role === "assistant" && item.status === "pending" && item.mode !== "summary",
+  // NOTE: 仅跟踪显式进入流式的活跃消息，流结束或服务端消息收敛为终态后立即停用，
+  // 杜绝切走会话再返回时对已完成/已删历史消息重新建立 EventSource 连接。
+  const [streamingTarget, setStreamingTarget] = useState<{
+    conversationId: string;
+    messageId: string;
+  }>();
+  const handleStreamTerminal = useCallback((finishedId: string) => {
+    setStreamingTarget((current) =>
+      current?.messageId === finishedId ? undefined : current,
+    );
+  }, []);
+  const pending = messages.items.find(
+    (item) => item.role === "assistant" && item.status === "pending" && item.mode !== "summary",
   );
-  const acceptedId = accepted?.conversation_id === selectedId && accepted?.status === "pending"
-    ? accepted.message_id
+  const currentTarget =
+    streamingTarget && streamingTarget.conversationId === selectedId
+      ? streamingTarget
+      : undefined;
+  const targetMessage = currentTarget
+    ? messages.items.find((item) => item.message_id === currentTarget.messageId)
     : undefined;
+  const targetStillPending =
+    currentTarget !== undefined && (!targetMessage || targetMessage.status === "pending");
   const streamConversationId = enabled && !messages.isError ? selectedId : undefined;
-  const liveAnswer = useQaAnswerStream(streamConversationId, pending?.message_id ?? acceptedId);
+  const activeStreamMessageId =
+    pending?.message_id ?? (targetStillPending ? currentTarget.messageId : undefined);
+  const liveAnswer = useQaAnswerStream(
+    streamConversationId,
+    activeStreamMessageId,
+    handleStreamTerminal,
+  );
   const split = useResizableSplit({
     storageKey: "zhiyan.ui.qa.split",
     defaultLeft: 224,
@@ -321,11 +343,24 @@ export function QaPage() {
                   activeCitationId={activeCitationId}
                   onSources={showSources}
                   onRetry={(item) =>
-                    mutations.retry.mutate({
-                      messageId: item.message_id,
-                      conversationId: item.conversation_id,
-                      clientRequestId: newClientRequestId(),
-                    })
+                    mutations.retry.mutate(
+                      {
+                        messageId: item.message_id,
+                        conversationId: item.conversation_id,
+                        clientRequestId: newClientRequestId(),
+                        stream: typeof EventSource === "function",
+                      },
+                      {
+                        onSuccess: (created) => {
+                          if (created.status === "pending") {
+                            setStreamingTarget({
+                              conversationId: created.conversation_id,
+                              messageId: created.message_id,
+                            });
+                          }
+                        },
+                      },
+                    )
                   }
                   busy={busy}
                   hasOlder={Boolean(messages.hasNextPage)}
@@ -338,13 +373,25 @@ export function QaPage() {
                 busy={busy}
                 documentCount={boundDocs.length}
                 onSubmit={(question, mode) =>
-                  mutations.ask.mutate({
-                    conversationId: selectedId,
-                    question,
-                    mode,
-                    clientRequestId: newClientRequestId(),
-                    stream: typeof EventSource === "function",
-                  })
+                  mutations.ask.mutate(
+                    {
+                      conversationId: selectedId,
+                      question,
+                      mode,
+                      clientRequestId: newClientRequestId(),
+                      stream: typeof EventSource === "function",
+                    },
+                    {
+                      onSuccess: (created) => {
+                        if (created.status === "pending") {
+                          setStreamingTarget({
+                            conversationId: created.conversation_id,
+                            messageId: created.message_id,
+                          });
+                        }
+                      },
+                    },
+                  )
                 }
               />
             </>
