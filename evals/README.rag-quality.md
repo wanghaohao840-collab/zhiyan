@@ -150,3 +150,5 @@
 ~~~
 
 使用 --offline-vectors 可单独跑本地确定性向量对照。结果适用于内存 Qdrant，远程索引、性能和持久化需要各自实测。
+
+Windows Docker Desktop 上加 --loopback-server 可使用项目已有的 Qdrant 镜像启动一次性服务。脚本核对本地 Docker 上下文、回环端口、服务版本和空集合，退出时只清理本次任务标记的容器。报告记录数据点数和已建近似索引的向量数。

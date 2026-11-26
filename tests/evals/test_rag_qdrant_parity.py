@@ -1,9 +1,12 @@
 from dataclasses import replace
+import subprocess
 
+import pytest
 from qdrant_client import QdrantClient
 
+from evals import rag_qdrant_parity
 from evals.rag_qdrant_parity import (
-    build_qdrant, checked_chunk_ids, difference, prepared_vectors, ranked_hits, with_decoys,
+    _loopback_port, build_qdrant, checked_chunk_ids, difference, prepared_vectors, ranked_hits, with_decoys,
 )
 from evals.rag_quality_dataset import GoldCase, GoldChunk
 from evals.rag_quality_experiment import SimpleEmbedding, build_index
@@ -46,3 +49,58 @@ def test_parity_difference_requires_score_ties():
     assert difference([("a", 0.5), ("b", 0.5)], [("b", 0.5), ("a", 0.5)]) == "tie_order"
     assert difference([("a", 0.6), ("b", 0.5)], [("a", 0.6), ("c", 0.5)]) == "tie_at_cutoff"
     assert difference([("a", 0.6), ("b", 0.5)], [("b", 0.6), ("a", 0.5)]) == "unexplained"
+
+
+@pytest.mark.parametrize("bindings", [
+    {},
+    {"6333/tcp": [{"HostIp": "0.0.0.0", "HostPort": "60000"}]},
+    {"6333/tcp": [{"HostIp": "127.0.0.1", "HostPort": "6333"}, {"HostIp": "::", "HostPort": "6333"}]},
+    {"6333/tcp": [{"HostIp": "127.0.0.1", "HostPort": "0"}]},
+])
+def test_loopback_rejects_nonexclusive_local_ports(bindings):
+    with pytest.raises(ValueError):
+        _loopback_port(bindings)
+
+
+def test_loopback_uses_verified_port():
+    assert _loopback_port({"6333/tcp": [{"HostIp": "127.0.0.1", "HostPort": "60439"}]}) == 60439
+
+
+def test_loopback_start_timeout_cleans_up_owned_container(monkeypatch):
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    stops = []
+    captured_label = None
+
+    def docker(*args, env=None):
+        nonlocal captured_label
+        if args[:2] == ("context", "show"):
+            return "desktop-linux"
+        if args[:2] == ("context", "inspect"):
+            return "npipe:////./pipe/dockerDesktopLinuxEngine"
+        assert args[:2] == ("--context", "desktop-linux")
+        command = args[2:]
+        if command[:2] == ("image", "inspect"):
+            return "sha256:mock-image"
+        if command[0] == "run":
+            captured_label = command[command.index("--label") + 1]
+            assert "--pull=never" in command
+            assert env["QDRANT__SERVICE__API_KEY"] not in command
+            raise subprocess.TimeoutExpired("docker run", 45)
+        if command[:2] == ("ps", "-q"):
+            assert command[-1] == f"label={captured_label}"
+            return "only-owned-container"
+        if command[0] == "stop":
+            stops.append(command[-1])
+            return "only-owned-container"
+        if command[:2] == ("ps", "-aq"):
+            assert command[-1] == f"label={captured_label}"
+            return ""
+        pytest.fail(f"Unexpected test Docker operation {command[0]}")
+
+    monkeypatch.setattr(rag_qdrant_parity, "_docker", docker)
+    summary = {}
+    with pytest.raises(subprocess.TimeoutExpired):
+        with rag_qdrant_parity.loopback_qdrant(summary):
+            pytest.fail("A timed out container must not yield a client")
+    assert stops == ["only-owned-container"]
+    assert summary["cleanup_verified"]

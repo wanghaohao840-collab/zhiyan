@@ -2,16 +2,20 @@
 
 import argparse
 from collections import defaultdict
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
 from statistics import mean
+import subprocess
 from tempfile import TemporaryDirectory
-from time import perf_counter
+from time import monotonic, perf_counter, sleep
 from unittest.mock import patch
+from uuid import uuid4
 
+import httpx
 from qdrant_client import QdrantClient
 
 from evals.rag_quality_crowding import PreparedQueries
@@ -28,6 +32,8 @@ from hello_agents.memory.rag.embedding_profile import EmbeddingFailure, normaliz
 
 
 COLLECTION = "rag_parity_synthetic"
+LOOPBACK_IMAGE = "python_self_agent-qdrant:local"
+LOOPBACK_VERSION = "1.18.3"
 MODES = {
     "vector": ("vector", False, False),
     "hybrid": ("hybrid", False, False),
@@ -35,6 +41,92 @@ MODES = {
     "mmr": ("hybrid", True, True),
 }
 EPSILON = 1e-6
+
+
+def _docker(*args, env=None):
+    return subprocess.run(
+        ["docker", *args], env=env, capture_output=True, text=True, check=True, timeout=45,
+    ).stdout.strip()
+
+
+def _loopback_port(bindings):
+    sockets = bindings.get("6333/tcp") or []
+    if len(sockets) != 1 or sockets[0].get("HostIp") != "127.0.0.1":
+        raise ValueError("Qdrant port must be published exclusively on 127.0.0.1")
+    port = int(sockets[0]["HostPort"])
+    if not 1 <= port <= 65535:
+        raise ValueError("Invalid loopback port")
+    return port
+
+
+@contextmanager
+def loopback_qdrant(summary):
+    if os.environ.get("DOCKER_HOST"):
+        raise ValueError("An explicit DOCKER_HOST is unsupported by the local benchmark")
+    context = _docker("context", "show")
+    daemon = _docker("context", "inspect", context, "--format", "{{.Endpoints.docker.Host}}")
+    if daemon != "npipe:////./pipe/dockerDesktopLinuxEngine":
+        raise ValueError("The loopback benchmark requires the local Docker Desktop Linux engine")
+
+    def docker(*args, env=None):
+        return _docker("--context", context, *args, env=env)
+
+    image_id = docker("image", "inspect", LOOPBACK_IMAGE, "--format", "{{.Id}}")
+    run_id = uuid4().hex
+    token = uuid4().hex + uuid4().hex
+    auth_env = {**os.environ, "QDRANT__SERVICE__API_KEY": token}
+    container_name = f"codex-rag-parity-{run_id[:12]}"
+    collection = f"parity_synth_{run_id}"
+    summary.update(mode="loopback_http", image_id=image_id, cleanup_verified=False)
+    label_filter = f"label=codex.rag-parity={run_id}"
+    try:
+        container = docker(
+            "run", "-d", "--rm", "--pull=never", "--name", container_name,
+            "--label", f"codex.rag-parity={run_id}", "--publish", "127.0.0.1::6333",
+            "--tmpfs", "/qdrant/storage", "-e", "QDRANT__SERVICE__API_KEY",
+            image_id, env=auth_env,
+        )
+        marker = docker("inspect", container, "--format", '{{index .Config.Labels "codex.rag-parity"}}')
+        if marker != run_id:
+            raise ValueError("Docker parity container identity mismatch")
+        port = _loopback_port(json.loads(docker("inspect", container, "--format", "{{json .NetworkSettings.Ports}}")))
+        url = f"http://127.0.0.1:{port}"
+        with httpx.Client(timeout=2, trust_env=False, headers={"api-key": token}) as probe:
+            deadline = monotonic() + 30
+            while True:
+                try:
+                    response = probe.get(url + "/")
+                except httpx.TransportError:
+                    response = None
+                if response is not None and response.status_code == 200:
+                    break
+                if monotonic() >= deadline:
+                    raise TimeoutError("Local parity Qdrant did not respond in 30 seconds")
+                sleep(0.5)
+            version = response.json().get("version")
+            if version != LOOPBACK_VERSION:
+                raise ValueError(f"Unexpected local Qdrant version {version}")
+        summary["version"] = version
+        client = QdrantClient(
+            url=url, api_key=token, timeout=15, trust_env=False, check_compatibility=False,
+        )
+        try:
+            if client.get_collections().collections:
+                raise ValueError("Loopback Qdrant benchmark requires an empty instance")
+            yield client, collection
+            info = client.get_collection(collection)
+            summary["indexed_vectors_count"] = info.indexed_vectors_count
+            summary["points_count"] = info.points_count
+        finally:
+            client.close()
+    finally:
+        running = docker("ps", "-q", "--filter", label_filter).splitlines()
+        for owned in running:
+            docker("stop", "--time", "10", owned)
+        remaining = docker("ps", "-aq", "--filter", label_filter)
+        if remaining:
+            raise RuntimeError(f"Temporary benchmark container remains: {container_name}")
+        summary["cleanup_verified"] = True
 
 
 def prepared_vectors(chunks, cases, embedder):
@@ -69,14 +161,14 @@ def with_decoys(chunks, cases):
     return [*chunks, *(chunk for group in outside.values() for chunk in group)]
 
 
-def build_qdrant(chunks, client, embedder, queries):
+def build_qdrant(chunks, client, embedder, queries, *, collection=COLLECTION):
     by_namespace = defaultdict(lambda: defaultdict(list))
     for chunk in chunks:
         by_namespace[chunk.namespace][chunk.document_id].append(chunk)
     with patch.object(qdrant_pipeline, "get_dimension", return_value=embedder.dimension):
         pipelines = {
             namespace: qdrant_pipeline.QdrantRAGPipeline(
-                collection_name=COLLECTION, rag_namespace=namespace, qdrant_client=client,
+                collection_name=collection, rag_namespace=namespace, qdrant_client=client,
             )
             for namespace in by_namespace
         }
@@ -255,11 +347,13 @@ def write_report(output, metadata, retrieval, qa):
     (output / "results.json").write_text(
         json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8",
     )
+    qdrant_run = metadata.get("qdrant", {})
+    backend = "回环 Qdrant 服务" if qdrant_run.get("mode") == "loopback_http" else "内存 Qdrant"
     lines = [
-        "# JSON 与内存 Qdrant 的 RAG 检索对照", "",
+        f"# JSON 与{backend}的 RAG 检索对照", "",
         f"向量模式 {metadata['embedding']['status']}。",
         f"原文与页码核对 {metadata.get('verified_chunks_per_backend', 0)} 段 / 后端。",
-        "固定合成数据与预先共享的向量。内存 Qdrant 用于检查本地检索、范围过滤和来源定位。",
+        "固定合成数据与预先共享的向量。通过本地 Qdrant 检查检索、范围过滤和来源定位。",
         "",
         "| 题集 | 检索策略 | 题数 | 首条命中 | 前五证据齐全 | MRR@5 | P95（ms） | 顺序相同 / 分数相同换序 / 尾项同分 / 未解释 |",
         "|---|---|---:|---:|---:|---:|---:|---:|",
@@ -274,6 +368,13 @@ def write_report(output, metadata, retrieval, qa):
                 f"{local['mrr_at_5']:.3f} / {qdrant['mrr_at_5']:.3f} | "
                 f"{local['search_ms']['p95']:.2f} / {qdrant['search_ms']['p95']:.2f} | {diff} |"
             )
+    if qdrant_run.get("mode") == "loopback_http":
+        lines.extend([
+            "", f"一次性回环服务版本 {qdrant_run.get('version', '未取得')}，"
+            f"数据点 {qdrant_run.get('points_count', '未取得')}，"
+            f"已建近似索引的向量 {qdrant_run.get('indexed_vectors_count', '未取得')}。",
+            f"任务容器清理核对 {'通过' if qdrant_run.get('cleanup_verified') else '未完成'}。",
+        ])
     if metadata.get("failure"):
         lines.extend(["", f"未完成原因 {metadata['failure']}。"])
     if qa:
@@ -291,7 +392,9 @@ def write_report(output, metadata, retrieval, qa):
     lines.extend([
         "", "表内成对数值按 JSON / Qdrant 顺序显示。",
         "逐题排序、分数和来源定位见 results.json。检索耗时在向量准备之后计时。",
-        "验证范围为内存客户端，远程近似索引召回、持久化和网络耗时另需实测。",
+        "本地服务对照用于验证客户端与服务器接口。近似索引召回、持久化和生产网络耗时另需实测。"
+        if qdrant_run.get("mode") == "loopback_http"
+        else "验证范围为内存客户端，远程近似索引召回、持久化和网络耗时另需实测。",
     ])
     (output / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -302,6 +405,8 @@ def main(argv=None):
     vectors.add_argument("--embedding-env-file", type=Path)
     vectors.add_argument("--offline-vectors", action="store_true")
     parser.add_argument("--chat-env-file", type=Path)
+    parser.add_argument("--loopback-server", action="store_true",
+                        help=f"start an isolated {LOOPBACK_IMAGE} container and verify cleanup")
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args(argv)
     if args.offline_vectors and args.chat_env_file:
@@ -314,7 +419,7 @@ def main(argv=None):
         embedder, embedding = SimpleEmbedding(), {"status": "offline", "model": "SimpleEmbedding"}
     else:
         embedder, embedding = configure_embedding(args.embedding_env_file)
-    metadata = {"embedding": embedding, "scope_checked": False}
+    metadata = {"embedding": embedding, "scope_checked": False, "qdrant": {"mode": "memory"}}
     if embedder is None:
         write_report(args.output_dir, metadata, [], [])
         return 1
@@ -333,43 +438,56 @@ def main(argv=None):
     scoped_chunk_counts = defaultdict(int)
     for chunk in chunks:
         scoped_chunk_counts[chunk.namespace, chunk.document_id] += 1
-    with TemporaryDirectory(prefix="rag-qdrant-parity-") as directory, ExitStack() as stack:
-        client = QdrantClient(":memory:")
-        stack.callback(client.close)
-        json_backends = build_index(chunks, Path(directory), documents)
-        for pipeline in json_backends.values():
-            pipeline.embedder = queries
-        backends = {"json": json_backends, "qdrant": build_qdrant(chunks, client, documents, queries)}
-        maps = {name: checked_chunk_ids(pipelines, chunks) for name, pipelines in backends.items()}
-        metadata["verified_chunks_per_backend"] = len(chunks)
-        retrieval = []
-        for suite, suite_cases in (("regular24", regular), ("scale30", scale)):
-            print(f"Comparing {suite}", flush=True)
-            for case in suite_cases:
-                for mode in MODES:
-                    row = {
-                        "case": case.id, "suite": suite, "mode": mode, "gold": list(case.evidence),
-                        "scope_chunks": sum(scoped_chunk_counts[case.namespace, doc] for doc in case.scope),
-                    }
-                    for name, pipelines in backends.items():
-                        row[name], row[f"{name}_ms"] = ranked_hits(pipelines[case.namespace], maps[name], case, mode)
-                    row["difference"] = difference(row["json"], row["qdrant"])
-                    retrieval.append(row)
-        metadata["scope_checked"] = True
-        write_report(args.output_dir, metadata, retrieval, [])
-        if any(row["difference"] == "unexplained" for row in retrieval):
-            metadata["failure"] = "unexplained_ranking_difference"
-            write_report(args.output_dir, metadata, retrieval, [])
-            return 1
-        if args.chat_env_file:
-            chat, metadata["chat"] = configure_chat(args.chat_env_file, stack, max_tokens=4096)
-            if chat is None:
-                write_report(args.output_dir, metadata, retrieval, [])
-                return 1
-            qa = list(qa_trials(backends, maps, regular, chat))
-            write_report(args.output_dir, metadata, retrieval, qa)
-            if any(qa_failures(qa).values()):
-                return 1
+    retrieval, qa = [], []
+    try:
+        with TemporaryDirectory(prefix="rag-qdrant-parity-") as directory, ExitStack() as stack:
+            if args.loopback_server:
+                client, collection = stack.enter_context(loopback_qdrant(metadata["qdrant"]))
+            else:
+                client, collection = QdrantClient(":memory:"), COLLECTION
+                stack.callback(client.close)
+            json_backends = build_index(chunks, Path(directory), documents)
+            for pipeline in json_backends.values():
+                pipeline.embedder = queries
+            backends = {
+                "json": json_backends,
+                "qdrant": build_qdrant(chunks, client, documents, queries, collection=collection),
+            }
+            maps = {name: checked_chunk_ids(pipelines, chunks) for name, pipelines in backends.items()}
+            metadata["verified_chunks_per_backend"] = len(chunks)
+            for suite, suite_cases in (("regular24", regular), ("scale30", scale)):
+                print(f"Comparing {suite}", flush=True)
+                for case in suite_cases:
+                    for mode in MODES:
+                        row = {
+                            "case": case.id, "suite": suite, "mode": mode, "gold": list(case.evidence),
+                            "scope_chunks": sum(scoped_chunk_counts[case.namespace, doc] for doc in case.scope),
+                        }
+                        for name, pipelines in backends.items():
+                            row[name], row[f"{name}_ms"] = ranked_hits(
+                                pipelines[case.namespace], maps[name], case, mode,
+                            )
+                        row["difference"] = difference(row["json"], row["qdrant"])
+                        retrieval.append(row)
+            metadata["scope_checked"] = True
+            if any(row["difference"] == "unexplained" for row in retrieval):
+                metadata["failure"] = "unexplained_ranking_difference"
+            elif args.chat_env_file:
+                chat, metadata["chat"] = configure_chat(args.chat_env_file, stack, max_tokens=4096)
+                if chat is None:
+                    metadata["failure"] = "chat_unavailable"
+                else:
+                    print("Checking application answers and citations", flush=True)
+                    qa = list(qa_trials(backends, maps, regular, chat))
+                    if any(qa_failures(qa).values()):
+                        metadata["failure"] = "qa_parity_difference"
+    except (subprocess.SubprocessError, TimeoutError, ValueError, RuntimeError) as error:
+        metadata["failure"] = type(error).__name__
+        write_report(args.output_dir, metadata, retrieval, qa)
+        raise
+    write_report(args.output_dir, metadata, retrieval, qa)
+    if metadata.get("failure"):
+        return 1
     print(args.output_dir / "report.md")
     return 0
 
