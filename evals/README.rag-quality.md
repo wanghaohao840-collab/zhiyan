@@ -97,3 +97,15 @@
 ~~~
 
 两组用同一个模型和自适应策略运行 16 道合成验收题，比较答对率、干净拒答、引用、重试和延迟。字段校验的确定性效果用模拟生成结果的离线回放验证。
+
+
+### 相似片段拥挤测试
+
+每题从四份选中文档里检索 24 段内容，另有一份同命名空间的未选文档检查范围隔离。题集包含相近记录、版本冲突、易混字段、跨语言释义和跨文档联合证据。生成规则与指纹随代码保存，脚本会写出完整 JSON 供复查。20 道开发题与 30 道验收题分别使用独立题目、文档、正文和命名空间。
+
+~~~powershell
+.\venv\Scripts\python.exe -m evals.rag_quality_crowding --split dev --smoke-limit 4 --pool-k 20 --embedding-env-file deploy/.env --output-dir output/rag-crowding-smoke
+.\venv\Scripts\python.exe -m evals.rag_quality_crowding --split holdout --pool-k 20 --embedding-env-file deploy/.env --output-dir output/rag-crowding-holdout
+~~~
+
+基线、混合、混合加重排共享一次性预取的查询向量。向量与混合调用同一个检索入口，使用相同候选池上限和向量阈值，混合的词面通道仍扫描选中文档。混合和重排使用相同的候选列表，最后均取前五。报告区分候选池里缺少关键证据、关键证据已进候选池但掉出前五。计时将向量网络请求与本地检索分开，线上向量配置或请求失败时输出失败环节并退出。
