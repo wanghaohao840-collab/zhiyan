@@ -63,6 +63,7 @@ const SUMMARY_RETRYABLE_CODES = new Set([
   "RAG_CONNECTION_FAILED", "RAG_EMBEDDING_FAILED", "RAG_OPERATION_FAILED",
   "RAG_COLLECTION_FAILED",
 ]);
+const SUMMARY_CAPACITY_CODE = "QA_SUMMARY_CONTEXT_CAPACITY";
 
 function MessageFailure({ message, busy, alreadyRetried, onRetry }: {
   message: QaMessage;
@@ -72,6 +73,11 @@ function MessageFailure({ message, busy, alreadyRetried, onRetry }: {
 }) {
   const code = message.safe_error_code ?? "QA_OPERATION_FAILED";
   const isSummary = message.mode === "summary";
+  if (isSummary && code === SUMMARY_CAPACITY_CODE) {
+    return <div className="qa-message__failure" role="alert">
+      <span>所选文档超出摘要容量限制。请用更少或更短的文档新建对话，再生成摘要。</span>
+    </div>;
+  }
   const incomplete = isSummary && code === "QA_SUMMARY_INCOMPLETE";
   const canRetry = !isSummary || (!alreadyRetried && (
     SUMMARY_RETRYABLE_CODES.has(code) || (incomplete && !message.retry_of_message_id)
@@ -118,5 +124,8 @@ export function SourcePanel({ sources }: { sources: QaSource[] }) {
 export function SummaryStatus({ job, onCancel }: { job?: QaJob; onCancel: () => void }) {
   if (!job) return null;
   const active = job.status === "queued" || job.status === "running";
-  return <section className="qa-summary-status" aria-live="polite"><strong>学习摘要 · {active ? "生成中" : job.status === "completed" ? "已完成" : job.status === "cancelled" ? "已取消" : "失败"}</strong><span>{job.stage} · {job.progress}%{job.safe_error_code ? ` · ${job.safe_error_code}` : ""}</span>{active ? <><span className="qa-summary-status__skeleton" aria-hidden="true" /><Button hierarchy="ghost" onClick={onCancel}>取消生成</Button></> : null}</section>;
+  const statusDetail = job.safe_error_code === SUMMARY_CAPACITY_CODE
+    ? "文档超出摘要容量"
+    : `${job.stage} · ${job.progress}%${job.safe_error_code ? ` · ${job.safe_error_code}` : ""}`;
+  return <section className="qa-summary-status" aria-live="polite"><strong>学习摘要 · {active ? "生成中" : job.status === "completed" ? "已完成" : job.status === "cancelled" ? "已取消" : "失败"}</strong><span>{statusDetail}</span>{active ? <><span className="qa-summary-status__skeleton" aria-hidden="true" /><Button hierarchy="ghost" onClick={onCancel}>取消生成</Button></> : null}</section>;
 }

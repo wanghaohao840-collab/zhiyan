@@ -482,3 +482,32 @@ def test_manual_summary_retry_enqueues_same_instruction_without_running_inline(q
         f"/api/v1/qa/messages/{job['assistant_message_id']}/summary-retry",
         headers=csrf(parts), json={"client_request_id": str(uuid4())},
     ).status_code == 409
+
+
+def test_summary_capacity_failure_is_visible_and_does_not_offer_retry(qa_parts):
+    parts = qa_parts
+    convo = create_conversation(parts)["conversation_id"]
+    response = parts.client.post(
+        f"/api/v1/qa/conversations/{convo}/summary-jobs",
+        headers=csrf(parts), json={"client_request_id": str(uuid4())},
+    )
+    assert response.status_code == 202
+    job = response.json()
+    jobs = parts.services.qa_job_repository
+    claimed = jobs.claim_next("capacity-test", lease_seconds=60)
+    code = "QA_SUMMARY_CONTEXT_CAPACITY"
+    jobs.fail_or_retry(claimed.id, "capacity-test", code, None, retryable=False)
+
+    status = parts.client.get(f"/api/v1/qa/jobs/{job['job_id']}").json()
+    assert status["safe_error_code"] == code
+    failed_id = job["assistant_message_id"]
+    messages = parts.client.get(f"/api/v1/qa/conversations/{convo}/messages").json()["items"]
+    failed = next(message for message in messages if message["message_id"] == failed_id)
+    assert (failed["status"], failed["safe_error_code"], failed["sources"]) == ("failed", code, [])
+    retry = parts.client.post(
+        f"/api/v1/qa/messages/{failed_id}/summary-retry",
+        headers=csrf(parts), json={"client_request_id": str(uuid4())},
+    )
+    assert retry.status_code == 409
+    assert retry.json()["error"]["code"] == "QA_RETRY_NOT_ALLOWED"
+    assert parts.engine.calls == 0

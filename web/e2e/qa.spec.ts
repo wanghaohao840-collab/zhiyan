@@ -76,6 +76,27 @@ test("retries a failed summary from the browser and keeps the original instructi
   await expect(page.getByText("已发起重试，请查看后续摘要。")).toBeVisible();
 });
 
+test("explains summary capacity failure and opens a new document scope", async ({ appUrl, page }, testInfo) => {
+  test.slow();
+  const { conversationId, filename } = await createQaConversation(page, appUrl, uniqueUsername("qa_capacity"));
+  await page.route(`${appUrl}/api/v1/qa/conversations/${conversationId}/summary-jobs`, async (route) => {
+    await route.continue({ postData: JSON.stringify({ ...route.request().postDataJSON(), instruction: "[capacity]" }) });
+  });
+  await page.getByRole("button", { name: "生成摘要" }).click();
+  await expect(page.locator(".qa-summary-status")).toContainText("文档超出摘要容量");
+  await expect(page.getByRole("alert")).toContainText("请用更少或更短的文档新建对话，再生成摘要。");
+  await expect(page.getByRole("button", { name: "重试摘要" })).toHaveCount(0);
+  await expect(page.getByText("QA_SUMMARY_CONTEXT_CAPACITY")).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath("capacity.png") });
+
+  if (testInfo.project.name !== "desktop") {
+    await page.getByRole("button", { name: "对话", exact: true }).click();
+  }
+  await page.getByRole("button", { name: "新建对话" }).filter({ visible: true }).click();
+  const picker = page.getByRole("dialog", { name: "新建对话" });
+  await expect(picker.getByRole("checkbox", { name: filename })).toBeVisible();
+});
+
 test("real server preserves answer, isolates users, cancels summary and deletes durably", async ({ appUrl, browser, page }, testInfo) => {
   test.slow();
   const ownerName = uniqueUsername("qa_owner");

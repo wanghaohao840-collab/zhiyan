@@ -33,6 +33,9 @@ class DeterministicQaAnswerEngine:
         progress_callback: object | None = None,
         cancel_event: object | None = None,
     ) -> QaAnswerResult:
+        if request.mode == "summary" and "[capacity]" in request.question:
+            raise QaEngineError("QA_SUMMARY_CONTEXT_CAPACITY", retryable=False)
+
         if request.mode == "summary" and (
             "[incomplete-once]" in request.question and request.question not in self._failures
         ):

@@ -21,6 +21,10 @@ class SummaryProgressAborted(RuntimeError):
     """The progress consumer withdrew permission to continue the workflow."""
 
 
+class SummaryCapacityError(RuntimeError):
+    """The required evidence cannot fit into the summary input budget."""
+
+
 SummaryOutputIssue = Literal["output_truncated", "safety_blocked", "empty_output", "abnormal_finish"]
 _OUTPUT_MESSAGES = {
     "output_truncated": "模型输出达到额度上限",
@@ -64,6 +68,7 @@ class SummaryState(TypedDict, total=False):
     shared_graph_sources: list[dict[str, Any]]
     completed: dict[str, dict[str, Any]]
     failures: dict[str, str]
+    capacity_failures: int
     mapped: list[dict[str, Any]]
     retryable: bool
     incomplete_output: bool

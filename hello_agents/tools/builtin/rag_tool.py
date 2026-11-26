@@ -62,6 +62,7 @@ from hello_agents.tools.builtin.rag_compare import (
 from hello_agents.tools.builtin.rag_summary_workflow import (
     IncompleteSummaryOutput,
     SummaryCancelled,
+    SummaryCapacityError,
     SummaryProgressAborted,
     SummaryState,
     run_summary_workflow,
@@ -524,6 +525,8 @@ class RAGTool(Tool):
     ) -> tuple[str, bool]:
         if isinstance(failure, IncompleteSummaryOutput):
             return "QA_SUMMARY_INCOMPLETE", False
+        if isinstance(failure, SummaryCapacityError):
+            return "QA_SUMMARY_CONTEXT_CAPACITY", False
         if isinstance(failure, RAGConnectionError):
             return "rag_connection", True
         if isinstance(failure, RAGAuthenticationError):
@@ -2628,6 +2631,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
             retryable = False
             output_issues: Counter[str] = Counter()
             invalid_citations = 0
+            capacity_failures = 0
             remaining = iter(document_ids)
             worker_count = min(SUMMARY_MAX_WORKERS, total_documents)
             executor = ThreadPoolExecutor(max_workers=worker_count)
@@ -2662,6 +2666,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                             invalid_citations += error.invalid_citations
                         except ContextCapacityError:
                             failures[doc_id] = "单篇摘要超出当前模型容量"
+                            capacity_failures += 1
                         except Exception as error:
                             failures[doc_id] = "单篇摘要失败"
                             retryable |= self._summary_error_is_retryable(error)
@@ -2681,6 +2686,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 "incomplete_output": bool(output_issues),
                 "output_issues": dict(output_issues),
                 "invalid_citations": invalid_citations,
+                "capacity_failures": capacity_failures,
             }
 
         def collect(state: SummaryState) -> SummaryState:
@@ -2698,6 +2704,8 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                     )
 
             if not mapped:
+                if state["capacity_failures"] == total_documents:
+                    return {"error": self._capacity_error(), "error_category": "context_capacity"}
                 details = "\n".join(
                     f"- {doc_id}: {reason}" for doc_id, reason in ordered_failures.items()
                 )
@@ -2824,7 +2832,9 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
         if "error" in state:
             self._last_action_data = {"success": False}
             retryable = state.get("retryable", False)
-            if state.get("incomplete_output", False) and not retryable:
+            if state.get("error_category") == "context_capacity":
+                self._last_action_error = SummaryCapacityError("所选文档超出摘要容量限制")
+            elif state.get("incomplete_output", False) and not retryable:
                 self._last_action_error = IncompleteSummaryOutput("empty_output")
             else:
                 self._last_action_error = RAGOperationError("联合总结无法完成", retryable=retryable)

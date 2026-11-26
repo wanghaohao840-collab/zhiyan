@@ -74,6 +74,14 @@ describe("QA workspace components", () => {
     expect(screen.getByRole("button", { name: "重试回答" })).toBeDisabled();
   });
 
+  it("explains how to recover from a summary capacity failure", () => {
+    const capacity: QaMessage = { ...failed, mode: "summary", safe_error_code: "QA_SUMMARY_CONTEXT_CAPACITY" };
+    render(<MessageList messages={[capacity]} onSources={vi.fn()} onRetry={vi.fn()} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("请用更少或更短的文档新建对话，再生成摘要。");
+    expect(screen.queryByRole("button", { name: "重试摘要" })).not.toBeInTheDocument();
+    expect(screen.queryByText("QA_SUMMARY_CONTEXT_CAPACITY")).not.toBeInTheDocument();
+  });
+
   it("offers identifier-only answer and citation note actions only for completed answers", () => {
     const completed: QaMessage = {
       ...failed,

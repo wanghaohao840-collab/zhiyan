@@ -26,6 +26,7 @@ from app.qa_observability import InProcessQaTelemetry
 from app.qa_repository import QaRepository
 from app.qa_worker import QaWorkerPool
 from hello_agents.core.llm import HelloAgentsLLM
+from hello_agents.tools.builtin.rag_context import ContextCapacityError
 from hello_agents.tools.builtin.rag_tool import RAGTool
 
 
@@ -944,6 +945,61 @@ def test_summary_does_not_save_incomplete_model_output(
     logs = "\n".join(str(item.__dict__) + item.getMessage() for item in records)
     for value in ("TRUNCATED_OUTPUT_SENTINEL", "PRIVATE_", OWNER, "doc-0"):
         assert value not in logs
+
+
+@pytest.mark.parametrize("enable", [False, True])
+@pytest.mark.parametrize(("scenario", "status", "code", "model_calls"), [
+    ("reduce", "failed", "QA_SUMMARY_CONTEXT_CAPACITY", 2),
+    ("all_maps", "failed", "QA_SUMMARY_CONTEXT_CAPACITY", 0),
+    ("mixed_transient", "queued", "QA_RAG_TRANSIENT", 0),
+    ("mixed_unknown", "failed", "QA_ENGINE_FAILED", 0),
+    ("partial", "completed", None, 2),
+    ("config", "failed", "QA_ENGINE_FAILED", 0),
+])
+def test_summary_reports_only_confirmed_capacity_failures(
+    worker_parts, monkeypatch, caplog, enable, scenario, status, code, model_calls,
+):
+    qa, jobs, _ = worker_parts
+    pipeline = SummaryPipeline(
+        TimeoutError("PRIVATE_PROVIDER") if scenario == "mixed_transient" else RuntimeError("PRIVATE_ERROR"),
+        ids_with_errors=("doc-1",) if scenario.startswith("mixed_") else (),
+    )
+    pool, registry, queued = start_multi_summary(worker_parts, pipeline, enable=enable)
+    tool = registry.runtime.rag_tool
+
+    def budget(prompt, **kwargs):
+        if "单篇文档摘要：" in prompt:
+            return 30 if scenario == "reduce" else 4096
+        if scenario == "all_maps" or (
+            scenario in {"mixed_transient", "mixed_unknown", "partial"} and "doc-0" in prompt
+        ):
+            raise ContextCapacityError("PRIVATE_BUDGET_DETAIL")
+        return 4096
+
+    monkeypatch.setattr(tool, "_context_budget", budget)
+    if scenario == "config":
+        monkeypatch.setenv("SUMMARY_MAP_MAX_OUTPUT_TOKENS", "invalid")
+    claimed = jobs.claim_next("test-worker", lease_seconds=60)
+    with caplog.at_level("INFO", logger="hello_agents.tools.builtin.rag_summary_workflow"):
+        pool._run_job("test-worker", claimed)
+
+    job = jobs.get(OWNER, queued.job.id)
+    answer = qa.get_message(OWNER, queued.pending.assistant_message.id)
+    assert (job.status, job.safe_error_code, job.attempt_count) == (status, code, 1)
+    assert len(tool.llm.prompts) == model_calls
+    if status == "failed":
+        assert (answer.status, answer.safe_error_code) == (status, code)
+        assert not answer.content and not answer.sources
+    elif status == "completed":
+        assert "以下文档未纳入本次总结：doc-0" in answer.content
+        assert {source.document_id for source in answer.sources} == {"doc-1"}
+    capacity_stages = [
+        record.qa_summary_stage for record in caplog.records
+        if getattr(record, "qa_summary_reason", None) == "context_capacity"
+    ]
+    expected_stages = {"reduce": ["reduce"], "all_maps": ["collect"]}
+    assert capacity_stages == expected_stages.get(scenario, [])
+    assert "PRIVATE_BUDGET_DETAIL" not in caplog.text
 
 
 @pytest.mark.parametrize("reason", ["stop", None])
