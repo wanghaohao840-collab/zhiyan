@@ -1,17 +1,21 @@
 import json
+from itertools import combinations
+from statistics import median
 from hashlib import sha256
 from types import SimpleNamespace
 
 import httpx
 
 from evals.rag_quality_crowding import (
-    CountedTransport, FROZEN_HASHES, MeasuredEmbedding, compare_case, main, score_retrieval, summarize,
+    CountedTransport, FROZEN_HASHES, SCALE_HASHES, MeasuredEmbedding, compare_case, main, score_retrieval, summarize,
 )
 from evals.rag_quality_crowding_data import BUCKETS, crowding_fixture_json, make_crowding_dataset
+from evals.rag_quality_crowding_scale import make_scale_dataset
 from evals.rag_quality_dataset import load_gold_dataset
 from evals.rag_quality_experiment import SimpleEmbedding, build_index
 from hello_agents.memory.rag.embedding_client import SiliconFlowEmbedding
 from hello_agents.memory.rag.embedding_profile import EmbeddingSettings
+from hello_agents.memory.rag.result_utils import lexical_tokens
 
 
 def test_fixtures_are_frozen_and_scopes_are_separate(tmp_path):
@@ -134,3 +138,56 @@ def test_missing_remote_configuration_writes_diagnosis_without_fallback(tmp_path
     assert result["run"]["failure_stage"] == "smoke"
     assert not result["run"]["fallback_used"]
     assert result["cases"] == []
+
+
+def test_scale_fixtures_cover_sizes_same_document_and_negatives(tmp_path):
+    partitions = []
+    for split, expected_count in (("dev", 16), ("holdout", 30)):
+        path = tmp_path / f"{split}.json"
+        path.write_bytes(crowding_fixture_json(*make_scale_dataset(split)))
+        assert sha256(path.read_bytes()).hexdigest() == SCALE_HASHES[split]
+        chunks, cases = load_gold_dataset(path)
+        partitions.append((chunks, cases))
+        assert len(cases) == expected_count
+        assert {sum(chunk.document_id in case.scope for chunk in chunks) for case in cases} == {24, 60, 100}
+        by_id = {chunk.id: chunk for chunk in chunks}
+        for case in cases:
+            if case.bucket == "same_document":
+                assert len(case.evidence) == 2
+                assert len({by_id[id_].document_id for id_ in case.evidence}) == 1
+            if case.category == "scope_isolated":
+                assert not case.evidence
+                assert any(
+                    chunk.namespace == case.namespace and chunk.document_id not in case.scope
+                    and case.forbidden[-1] in chunk.content for chunk in chunks
+                )
+    old, new = partitions
+    for field in ("id", "namespace", "document_id", "content"):
+        assert {getattr(chunk, field) for chunk in old[0]}.isdisjoint(getattr(chunk, field) for chunk in new[0])
+    assert {case.question for case in old[1]}.isdisjoint(case.question for case in new[1])
+
+
+def test_scale_distractors_have_less_pairwise_lexical_overlap():
+    medians = []
+    for factory in (make_crowding_dataset, make_scale_dataset):
+        chunks, cases = factory("dev")
+        unique_scopes = {case.scope: case.forbidden for case in cases}
+        similarities = []
+        for scope, forbidden in unique_scopes.items():
+            decoys = [
+                lexical_tokens(chunk.content) for chunk in chunks
+                if chunk.document_id in scope and any(value in chunk.content for value in forbidden)
+            ]
+            similarities.extend(len(a & b) / len(a | b) for a, b in combinations(decoys, 2))
+        medians.append(median(similarities))
+    assert medians[1] < medians[0] / 2
+
+
+def test_negative_cases_do_not_count_as_retrieval_success():
+    _, cases = make_scale_dataset("dev")
+    case = next(case for case in cases if case.category == "scope_isolated")
+    row = score_retrieval(case, "vector", [], [], 0)
+    assert row["top_all"] is None and row["pool_all"] is None
+    totals = summarize([row])["overall"]["vector"]
+    assert totals["cases"] == 1 and totals["answerable"] == 0
+    assert totals["top_1"] is None and totals["pool_all"] is None

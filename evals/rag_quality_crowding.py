@@ -13,6 +13,7 @@ import httpx
 
 from deploy.embedding_probe import read_values
 from evals.rag_quality_crowding_data import crowding_fixture_json, make_crowding_dataset
+from evals.rag_quality_crowding_scale import make_scale_dataset
 from evals.rag_quality_dataset import load_gold_dataset
 from evals.rag_quality_experiment import build_index, provider_error
 from evals.rag_quality_report import _latency
@@ -25,6 +26,10 @@ from hello_agents.memory.rag.result_utils import mmr_select, relevance_rerank_re
 FROZEN_HASHES = {
     "dev": "97c55cbe736b7d3063da9b1fa45dfcabbf151039b33fe12e715252e6625a0b90",
     "holdout": "2243cdc398f3a24eb852575d5ab6a659309a8c5f0f4791375978d0f2b3caef78",
+}
+SCALE_HASHES = {
+    "dev": "f329091ca632be15545518259e551244a56ce26d51eebe1194175ff8b9cff60b",
+    "holdout": "61857ee15acc6a775df9f2daaac97130aac3dabe4f63a2933e25ee1bf9d2fb54",
 }
 TOP_K = 5
 
@@ -112,7 +117,8 @@ def score_retrieval(case, variant, pool, top, elapsed_ms):
     return {
         "case": case.id, "bucket": case.bucket, "language": case.language, "scope_size": len(case.scope),
         "variant": variant, "gold": list(case.evidence), "first_rank": first_rank,
-        "pool_all": all_in_pool, "top_all": all_in_top, "miss": miss,
+        "pool_all": all_in_pool if gold else None, "top_all": all_in_top if gold else None,
+        "miss": miss, "pool_recall": len(gold & {hit["id"] for hit in pool}) / len(gold) if gold else None,
         "top": list(ranks), "pool": [hit["id"] for hit in pool],
         "forbidden_top": intrusion, "scope_leaks": sorted(scope_leaks), "retrieval_ms": elapsed_ms,
     }
@@ -165,17 +171,26 @@ def summarize(rows):
     for row in rows:
         groups[("overall", row["variant"])].append(row)
         groups[(row["bucket"], row["variant"])].append(row)
+        if "scope_chunks" in row:
+            groups[(f"规模 {row['scope_chunks']} 段", row["variant"])].append(row)
     summary = defaultdict(dict)
     for (bucket, variant), group in groups.items():
         count = len(group)
+        positive = [row for row in group if row["gold"]]
+        divisor = len(positive)
         latencies = [row["retrieval_ms"] for row in group]
         summary[bucket][variant] = {
             "cases": count,
             "min_pool_size": min(len(row["pool"]) for row in group),
-            "top_1": sum(row["first_rank"] == 1 for row in group) / count,
-            "mrr_at_5": sum(1 / row["first_rank"] for row in group if row["first_rank"]) / count,
-            "pool_all": sum(row["pool_all"] for row in group) / count,
-            "top_all": sum(row["top_all"] for row in group) / count,
+            "answerable": divisor,
+            "top_1": sum(row["first_rank"] == 1 for row in positive) / divisor if divisor else None,
+            "mrr_at_5": (
+                sum(1 / row["first_rank"] for row in positive if row["first_rank"]) / divisor
+                if divisor else None
+            ),
+            "pool_all": sum(row["pool_all"] for row in positive) / divisor if divisor else None,
+            "pool_recall": sum(row["pool_recall"] for row in positive) / divisor if divisor else None,
+            "top_all": sum(row["top_all"] for row in positive) / divisor if divisor else None,
             "pool_miss": sum(row["miss"] == "pool_miss" for row in group),
             "rank_drop": sum(row["miss"] == "rank_drop" for row in group),
             "forbidden_intrusion": sum(bool(row["forbidden_top"]) for row in group),
@@ -195,7 +210,7 @@ def write_output(output, run, stages, rows):
     ) + "\n", encoding="utf-8")
     lines = [
         "# RAG 相似片段拥挤测试", "",
-        f"状态 {run['status']}，分组 {run['split']}，候选池 {run['pool_k']}，最终返回 {TOP_K} 条。",
+        f"状态 {run['status']}，题集 {run.get('dataset', 'crowding')}，分组 {run['split']}，候选池 {run['pool_k']}，最终返回 {TOP_K} 条。",
         f"合成题集 SHA256 {run['dataset_sha256']}。",
     ]
     if run.get("expanded_pool_k") is not None:
@@ -210,16 +225,20 @@ def write_output(output, run, stages, rows):
         ])
         for name, stats in variants.items():
             timing = stats["latency_ms"]
+            top_1, top_all, pool_all, mrr = [
+                format(stats[key], spec) if stats[key] is not None else "—"
+                for key, spec in (("top_1", ".1%"), ("top_all", ".1%"), ("pool_all", ".1%"), ("mrr_at_5", ".3f"))
+            ]
             lines.append(
-                f"| {name} | {stats['cases']} | {stats['top_1']:.1%} | {stats['top_all']:.1%} | "
-                f"{stats['pool_all']:.1%} | {stats['mrr_at_5']:.3f} | {stats['pool_miss']} | "
+                f"| {name} | {stats['cases']} | {top_1} | {top_all} | "
+                f"{pool_all} | {mrr} | {stats['pool_miss']} | "
                 f"{stats['rank_drop']} | {stats['forbidden_intrusion']} / {stats['forbidden_first']} | {stats['scope_leaks']} | "
                 f"{timing['p50']:.2f} / {timing['p95']:.2f} / {timing['max']:.2f} |"
             )
     lines.extend([
         "", "混合和重排共用同一候选池。重排耗时含取得该池的耗时。检索计时使用预取的同一批查询向量。",
         "向量接口按探针、建库、查询记录尝试次数和含重试耗时。网络时间不计入表内检索耗时。",
-        "前五含诱饵按已标注的错误值统计，允许与召回或排序失误同时发生。",
+        "排名和证据命中率只统计有答案题。前五含诱饵按已标注的错误值统计，允许与召回或排序失误同时发生。",
         "逐题候选、最终排名、耗时和外部调用记录见同目录 results.json。",
     ])
     (output / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -227,6 +246,7 @@ def write_output(output, run, stages, rows):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dataset", choices=("crowding", "scale"), default="crowding")
     parser.add_argument("--split", choices=("dev", "holdout"), required=True)
     parser.add_argument("--pool-k", type=int, choices=range(TOP_K, 31), default=20, metavar="5-30")
     parser.add_argument("--expanded-pool-k", type=int, choices=range(TOP_K + 1, 31), metavar="6-30")
@@ -238,20 +258,35 @@ def main(argv=None):
         parser.error("--expanded-pool-k must be larger than --pool-k")
     output = args.output_dir
     output.mkdir(parents=True, exist_ok=True)
-    fixture = crowding_fixture_json(*make_crowding_dataset(args.split))
+    factory, frozen_hashes = (
+        (make_scale_dataset, SCALE_HASHES) if args.dataset == "scale"
+        else (make_crowding_dataset, FROZEN_HASHES)
+    )
+    fixture = crowding_fixture_json(*factory(args.split))
     digest = sha256(fixture).hexdigest()
-    if digest != FROZEN_HASHES[args.split]:
+    if digest != frozen_hashes[args.split]:
         raise ValueError("Frozen crowding fixtures changed")
     dataset = output / "dataset.json"
     dataset.write_bytes(fixture)
     chunks, cases = load_gold_dataset(dataset)
     if args.smoke_limit:
+        all_scopes = {(case.namespace, doc) for case in cases for doc in case.scope}
         cases = cases[:args.smoke_limit]
-        docs = {doc for case in cases for doc in (*case.scope, f"{case.id}-unselected")}
-        chunks = [chunk for chunk in chunks if chunk.document_id in docs]
+        scopes = {(case.namespace, doc) for case in cases for doc in case.scope}
+        namespaces = {case.namespace for case in cases}
+        chunks = [
+            chunk for chunk in chunks if chunk.namespace in namespaces and (
+                (chunk.namespace, chunk.document_id) in scopes
+                or (chunk.namespace, chunk.document_id) not in all_scopes
+            )
+        ]
+    document_counts = defaultdict(int)
+    for chunk in chunks:
+        document_counts[chunk.namespace, chunk.document_id] += 1
     run = {
         "status": "available", "split": args.split, "dataset_sha256": digest, "pool_k": args.pool_k,
         "top_k": TOP_K, "question_count": len(cases), "smoke": args.smoke_limit is not None,
+        "dataset": args.dataset,
         "fallback_used": False, "expanded_pool_k": args.expanded_pool_k,
     }
     embedder = None
@@ -283,9 +318,11 @@ def main(argv=None):
             for pipeline in pipelines.values():
                 pipeline.embedder = prepared
             for case in cases:
-                rows.extend(compare_case(
+                scope_chunks = sum(document_counts[case.namespace, doc] for doc in case.scope)
+                compared = compare_case(
                     pipelines[case.namespace], case, args.pool_k, expanded_pool_k=args.expanded_pool_k,
-                ))
+                )
+                rows.extend({**row, "scope_chunks": scope_chunks} for row in compared)
     except EmbeddingFailure as exc:
         run.update(
             status="service_unavailable", failure_stage=stage, reason=provider_error(exc),
@@ -294,7 +331,9 @@ def main(argv=None):
         write_output(output, run, embedder.stages if embedder is not None else {}, [])
         return 1
     totals = summarize(rows)["overall"]["vector"]
-    run["benchmark_discriminates"] = totals["top_1"] < 0.9 and totals["top_all"] < 0.9
+    run["benchmark_discriminates"] = (
+        totals["answerable"] > 0 and totals["top_1"] < 0.9 and totals["top_all"] < 0.9
+    )
     write_output(output, run, embedder.stages, rows)
     print(output / "report.md", flush=True)
     return int(any(row["scope_leaks"] for row in rows))

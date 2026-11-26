@@ -117,3 +117,12 @@
 ~~~powershell
 .\venv\Scripts\python.exe -m evals.rag_quality_crowding_qa --retrieval-dir output/rag-crowding-holdout-expand-mmr --chat-env-file .env --output-dir output/rag-crowding-qa-replay
 ~~~
+
+
+### 跨规模拥挤测试
+
+`--dataset scale` 在同一个检索评测入口加入 24、60、100 段三档合成资料。每个主题在同一组选中文档下有多种问法，涵盖同文档互补证据、语义近似的错误记录、跨语言证据、常规问法和答案仅在未选文档的题。排名命中率只统计有答案题。结果按规模和题型分组，保留候选池召回比例和被排除的原因。
+
+~~~powershell
+.\venv\Scripts\python.exe -m evals.rag_quality_crowding --dataset scale --split holdout --pool-k 20 --expanded-pool-k 24 --embedding-env-file deploy/.env --output-dir output/rag-crowding-scale-holdout
+~~~
