@@ -222,11 +222,15 @@ class HelloAgentsLLM:
         system_prompt: str = "你是一个有帮助的AI助手。",
         temperature: float = 0.2,
         max_tokens: int = 1024,
+        *,
+        strict: bool = False,
         **kwargs,
     ) -> Iterable[str]:
         """Stream completion chunks; recover from transient transport errors."""
 
         if self.client is None:
+            if strict:
+                raise RuntimeError("LLM client is not configured")
             yield self.chat(prompt, system_prompt=system_prompt, **kwargs)
             return
 
@@ -237,6 +241,30 @@ class HelloAgentsLLM:
             "stream": True,
         }
         request_kwargs.update(kwargs)
+
+        if strict:
+            stream = self._create_completion(messages, **request_kwargs)
+            finished = False
+            received_text = False
+            try:
+                for chunk in stream:
+                    text = self._stream_chunk_text(chunk)
+                    if text:
+                        received_text = True
+                        yield text
+                    if getattr(chunk, "choices", None):
+                        reason = getattr(chunk.choices[0], "finish_reason", None)
+                        if reason is not None:
+                            if reason != "stop":
+                                raise RuntimeError("Model did not finish the answer")
+                            finished = True
+            finally:
+                close = getattr(stream, "close", None)
+                if callable(close):
+                    close()
+            if not finished or not received_text:
+                raise RuntimeError("Model stream ended before a complete answer")
+            return
 
         for attempt in range(self.max_retries + 1):
             emitted_any = False

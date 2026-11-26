@@ -46,6 +46,7 @@ class SearchChunkLocator:
     chunk_id: str
     chunk_index: int
     content_sha256: str
+    page_number: int | None = None
 
     def __post_init__(self) -> None:
         _require_uuid(self.document_id)
@@ -228,6 +229,7 @@ class DocumentSearchService:
                 document_id=normalized["document_id"], chunk_id=normalized["chunk_id"],
                 chunk_index=normalized["chunk_index"],
                 content_sha256=normalized["content_sha256"],
+                page_number=normalized["page_number"],
             )
             score = float(raw.get("score", 0.0))
             if not math.isfinite(score):

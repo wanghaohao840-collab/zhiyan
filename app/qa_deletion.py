@@ -645,6 +645,7 @@ class QaDeletionWorker:
         session_registry,
         *,
         legacy_migration=None,
+        graph_service=None,
         lease_seconds: int = 300,
         poll_interval: float = 0.5,
     ) -> None:
@@ -655,6 +656,7 @@ class QaDeletionWorker:
         self.document_library = document_library
         self.session_registry = session_registry
         self.legacy_migration = legacy_migration
+        self.graph_service = graph_service
         self.lease_seconds = lease_seconds
         self.poll_interval = poll_interval
         self._stop = threading.Event()
@@ -744,6 +746,8 @@ class QaDeletionWorker:
                 return True
 
             if deletion.stage == "memory_removed":
+                if self.graph_service is not None:
+                    self.graph_service.delete_document(deletion.user_id, deletion.target_id)
                 self.document_library.perform_document_delete(
                     deletion.user_id,
                     runtime,

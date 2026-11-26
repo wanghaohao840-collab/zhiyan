@@ -280,6 +280,7 @@ try {
     if (-not $actualHash.Equals($checksumMatch.Groups['hash'].Value, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'Backup checksum mismatch'
     }
+    $qdrantActualHash = $null
     if (-not [string]::IsNullOrWhiteSpace($qdrantArchivePath)) {
         $qdrantArchivePath = Assert-SafePath -Path $qdrantArchivePath -AllowedRoot $dailyDirectory
         $qdrantChecksumPath = Assert-SafePath -Path $qdrantChecksumPath -AllowedRoot $dailyDirectory
@@ -291,7 +292,8 @@ try {
             -not $qdrantMatch.Groups['name'].Value.Equals([IO.Path]::GetFileName($qdrantArchivePath), [StringComparison]::Ordinal)) {
             throw 'Qdrant checksum sidecar does not match the selected archive name'
         }
-        if (-not (Get-BackupSha256 -LiteralPath $qdrantArchivePath).Equals($qdrantMatch.Groups['hash'].Value, [StringComparison]::OrdinalIgnoreCase)) {
+        $qdrantActualHash = Get-BackupSha256 -LiteralPath $qdrantArchivePath
+        if (-not $qdrantActualHash.Equals($qdrantMatch.Groups['hash'].Value, [StringComparison]::OrdinalIgnoreCase)) {
             throw 'Qdrant backup checksum mismatch'
         }
     }
@@ -299,6 +301,10 @@ try {
     $stage = 'member-validation'
     $members = @(Invoke-DrillExternal -FilePath 'tar.exe' -ArgumentList @('-tzf', $archivePath))
     Assert-SafeArchiveMembers -MemberNames $members
+    $archiveHasGraphData = @($members | Where-Object { ([string]$_).Trim() -match '^(?:\.[\\/])?neo4j[\\/]data(?:[\\/]|$)' }).Count -gt 0
+    if ($archiveHasGraphData) {
+        Assert-GraphBackupPair -Archive $archivePath -ArchiveHash $actualHash -QdrantArchive $qdrantArchivePath -QdrantHash $qdrantActualHash
+    }
     $verboseEntries = @(Invoke-DrillExternal -FilePath 'tar.exe' -ArgumentList @('-tvzf', $archivePath))
     Assert-NoArchiveLinks -VerboseEntries $verboseEntries
     $preExtractionHash = Get-BackupSha256 -LiteralPath $archivePath
@@ -327,7 +333,8 @@ try {
     $stage = 'extraction'
     Invoke-DrillExternal -FilePath 'tar.exe' -ArgumentList @('-C', $drillDataRoot, '-xzf', $archivePath) | Out-Null
     Assert-BackupTreeSafe -Path $drillDataRoot -AllowedRoot $drillDirectory | Out-Null
-    $requiredDirectories = if ([string]::IsNullOrWhiteSpace($qdrantArchivePath)) { @('app', 'qdrant') } else { @('app') }
+    $requiredDirectories = @(if ([string]::IsNullOrWhiteSpace($qdrantArchivePath)) { 'app'; 'qdrant' } else { 'app' })
+    if ($archiveHasGraphData) { $requiredDirectories += 'neo4j/data' }
     foreach ($requiredDirectory in $requiredDirectories) {
         if (-not (Test-Path -LiteralPath (Join-Path $drillDataRoot $requiredDirectory) -PathType Container)) {
             throw "Archive is missing required directory: $requiredDirectory"

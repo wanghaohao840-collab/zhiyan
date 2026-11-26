@@ -218,12 +218,68 @@ function Remove-BackupSet {
     }
 }
 
+function Test-LocalGraphData {
+    param(
+        [Parameter(Mandatory)]$Config,
+        [switch]$GraphRunning,
+        [switch]$AllowMissing
+    )
+    $enabled = (Read-DeployEnvValue -EnvFile $Config.EnvFile -Name 'ZHIYAN_GRAPH_ENABLED') -in @('1', 'true', 'yes', 'on')
+    $graphDirectory = Join-Path $Config.DataRoot 'neo4j\data'
+    $present = Test-Path -LiteralPath $graphDirectory -PathType Container
+    if ($enabled) {
+        $uri = Read-DeployEnvValue -EnvFile $Config.EnvFile -Name 'NEO4J_URI'
+        if ($uri -notmatch '^(neo4j|bolt)://neo4j(:7687)?/?$') {
+            throw 'The deployment graph must use the locally backed-up Neo4j service'
+        }
+    }
+    if (($GraphRunning -or ($enabled -and -not $AllowMissing)) -and -not $present) {
+        throw 'The Neo4j data directory is missing from the deployment data root'
+    }
+    if (($present -or $enabled -or $GraphRunning) -and -not [string]::IsNullOrWhiteSpace($env:DEPLOY_DATA_ROOT)) {
+        $overlay = $env:DEPLOY_DATA_ROOT
+        if (-not [IO.Path]::IsPathRooted($overlay)) {
+            $overlay = Join-Path $Config.RepositoryRoot $overlay
+        }
+        $overlay = [IO.Path]::GetFullPath($overlay).TrimEnd('\', '/')
+        if (-not $overlay.Equals($Config.DataRoot.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'The Neo4j bind mount must use the same deployment data root as the cold backup'
+        }
+    }
+    return ($present -or $enabled -or $GraphRunning)
+}
+
+function Assert-GraphBackupPair {
+    param(
+        [Parameter(Mandatory)][string]$Archive,
+        [Parameter(Mandatory)][string]$ArchiveHash,
+        [string]$QdrantArchive,
+        [string]$QdrantHash
+    )
+    if ([string]::IsNullOrWhiteSpace($QdrantHash) -or
+        -not (Test-RegularNonReparseFile -LiteralPath "$Archive.meta")) {
+        throw 'A graph restore requires a verified SQLite, Neo4j and Qdrant backup set'
+    }
+    $metadata = Get-Content -LiteralPath "$Archive.meta" -Raw | ConvertFrom-Json
+    $required = @('neo4j_data', 'archive', 'sha256', 'qdrant_archive', 'qdrant_sha256')
+    if ($null -eq $metadata -or @($required | Where-Object { $null -eq $metadata.PSObject.Properties[$_] }).Count -ne 0 -or
+        $metadata.neo4j_data -cne 'neo4j/data' -or
+        $metadata.archive -cne [IO.Path]::GetFileName($Archive) -or
+        $metadata.sha256 -ne $ArchiveHash -or
+        $metadata.qdrant_archive -cne [IO.Path]::GetFileName($QdrantArchive) -or
+        $metadata.qdrant_sha256 -ne $QdrantHash) {
+        throw 'The Neo4j backup metadata does not match the selected archives'
+    }
+}
+
 Export-ModuleMember -Function @(
     'Assert-BackupPathAncestorsSafe',
     'Assert-BackupTreeSafe',
+    'Assert-GraphBackupPair',
     'Get-BackupSha256',
     'Get-CompleteBackupSets',
     'Get-IsoWeekInfo',
     'Get-RetentionPlan',
-    'Remove-BackupSet'
+    'Remove-BackupSet',
+    'Test-LocalGraphData'
 )

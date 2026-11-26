@@ -28,8 +28,10 @@ export const getQaActiveSummary = (request: AuthRequest, id: string, signal?: Ab
   request<QaActiveJob>(`/api/v1/qa/conversations/${segment(id)}/summary-jobs/active`, { signal });
 export const createQaConversation = (request: AuthRequest, documentIds: string[]) =>
   request<QaConversation>("/api/v1/qa/conversations", { method: "POST", ...json({ document_ids: documentIds }) });
-export const askQaQuestion = (request: AuthRequest, id: string, question: string, mode: QaMode, clientRequestId: string) =>
-  request<QaMessage>(`/api/v1/qa/conversations/${segment(id)}/messages`, { method: "POST", ...json({ question, mode, client_request_id: clientRequestId }) });
+export const askQaQuestion = (request: AuthRequest, id: string, question: string, mode: QaMode, clientRequestId: string, stream = false) =>
+  request<QaMessage>(`/api/v1/qa/conversations/${segment(id)}/messages${stream ? "?stream=true" : ""}`, { method: "POST", ...json({ question, mode, client_request_id: clientRequestId }) });
+export const qaMessageStreamUrl = (conversationId: string, messageId: string) =>
+  `/api/v1/qa/conversations/${segment(conversationId)}/messages/${segment(messageId)}/stream`;
 export const getQaMessage = (request: AuthRequest, id: string, signal?: AbortSignal) =>
   request<QaMessage>(`/api/v1/qa/messages/${segment(id)}`, { signal });
 export const retryQaMessage = (request: AuthRequest, id: string, clientRequestId: string) =>

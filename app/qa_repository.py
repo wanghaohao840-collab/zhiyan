@@ -406,8 +406,8 @@ class QaRepository:
                     id, assistant_message_id, conversation_id, user_id,
                     position, citation_id, document_id, document_name,
                     page_number, section, excerpt, reference, truncated,
-                    source_type
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    source_type, chunk_id
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -425,6 +425,7 @@ class QaRepository:
                         source.reference,
                         int(source.truncated),
                         source.source_type,
+                        source.chunk_id,
                     )
                     for position, source in enumerate(source_list)
                 ],
@@ -1556,4 +1557,5 @@ def _source_from_row(row: sqlite3.Row) -> QaSource:
         reference=row["reference"],
         truncated=bool(row["truncated"]),
         source_type=row["source_type"],
+        chunk_id=row["chunk_id"],
     )

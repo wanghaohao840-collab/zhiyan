@@ -3,6 +3,7 @@ import { type PropsWithChildren, useEffect, useRef, useState } from "react";
 import { Button } from "../Button/Button";
 import { MarkdownPreview } from "../MarkdownPreview/MarkdownPreview";
 import { ConstellationMark, OverlayDialog, useToast } from "../ui";
+import { qaStages, type QaLiveAnswer } from "../../features/qa/stream";
 import type { QaConversation, QaJob, QaMessage, QaMode, QaSource } from "../../features/qa/types";
 
 type OverlayProps = PropsWithChildren<{
@@ -91,6 +92,7 @@ export function ConversationList({
 
 type MessageListProps = {
   messages: QaMessage[];
+  liveAnswer?: QaLiveAnswer;
   onSources: (message: QaMessage, trigger: HTMLButtonElement, citationId?: string) => void;
   onRetry: (message: QaMessage) => void;
   activeCitationId?: string;
@@ -121,7 +123,11 @@ function QaStepTrack({ steps, ariaLabel }: { steps: ProgressStepItem[]; ariaLabe
   return (
     <ol className="qa-step-track" aria-label={ariaLabel}>
       {steps.map((step, index) => (
-        <li key={step.label} className={`qa-step-track__item qa-step-track__item--${step.state}`}>
+        <li
+          key={step.label}
+          className={`qa-step-track__item qa-step-track__item--${step.state}`}
+          aria-current={step.state === "active" ? "step" : undefined}
+        >
           <span className="qa-step-track__badge tabular-nums" aria-hidden="true">
             {index + 1}
           </span>
@@ -137,30 +143,28 @@ function QaStepTrack({ steps, ariaLabel }: { steps: ProgressStepItem[]; ariaLabe
   );
 }
 
-function buildMessageSteps(message: QaMessage): ProgressStepItem[] {
-  if (message.status === "pending") {
-    return [
-      { label: "接收问题", state: "done" },
-      { label: "文档检索", state: "active" },
-      { label: "引用整理", state: "idle" },
-      { label: "生成回答", state: "idle" },
-    ];
-  }
-  if (message.status === "failed") {
-    return [
-      { label: "接收问题", state: "done" },
-      { label: "文档检索", state: "error" },
-      { label: "引用整理", state: "idle" },
-      { label: "生成回答", state: "idle" },
-    ];
-  }
-  const hasSources = message.sources.length > 0;
-  return [
-    { label: "接收问题", state: "done" },
-    { label: "文档检索", state: "done" },
-    { label: hasSources ? `证据引用 (${message.sources.length})` : "证据核对", state: "done" },
-    { label: "生成回答", state: "done" },
-  ];
+function buildMessageSteps(message: QaMessage, live: QaLiveAnswer): ProgressStepItem[] {
+  const labels = {
+    retrieving: live.retrievedCount === undefined
+      ? "文档检索"
+      : `文档检索（${live.retrievedCount} 条）`,
+    reranking: "相关性重排",
+    verifying: "证据核验",
+    generating: "生成回答",
+  };
+  return qaStages.map((stage) => {
+    const label = labels[stage];
+    if (!live.stages.includes(stage)) return { label, state: "idle" };
+    if (stage === live.currentStage) {
+      if (message.status === "failed" || message.status === "cancelled") {
+        return { label, state: "error" };
+      }
+      if (message.status === "pending" && live.status !== "done") {
+        return { label, state: live.status === "receiving" ? "active" : "idle" };
+      }
+    }
+    return { label, state: "done" };
+  });
 }
 
 function buildSummarySteps(job: QaJob): ProgressStepItem[] {
@@ -191,6 +195,7 @@ function buildSummarySteps(job: QaJob): ProgressStepItem[] {
 
 export function MessageList({
   messages,
+  liveAnswer,
   onSources,
   onRetry,
   activeCitationId,
@@ -204,8 +209,14 @@ export function MessageList({
   const stickToBottomRef = useRef(true);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
 
-  const lastMessageKey = messages.at(-1)
-    ? `${messages.at(-1)!.message_id}:${messages.at(-1)!.status}:${messages.at(-1)!.content.length}`
+  const displayMessages = messages.map((message) =>
+    message.message_id === liveAnswer?.messageId && message.status === "pending" && liveAnswer.content
+      ? { ...message, content: liveAnswer.content, sources: liveAnswer.sources }
+      : message,
+  );
+  const lastMessage = displayMessages.at(-1);
+  const lastMessageKey = lastMessage
+    ? `${lastMessage.message_id}:${lastMessage.status}:${lastMessage.content.length}`
     : "";
 
   useEffect(() => {
@@ -259,7 +270,7 @@ export function MessageList({
           </div>
         ) : null}
         <ol className="qa-messages" aria-label="问答消息">
-          {messages.map((message) => (
+          {displayMessages.map((message) => (
             <li
               key={message.message_id}
               className={`qa-message qa-message--${message.role}`}
@@ -271,14 +282,14 @@ export function MessageList({
                   <CheckCircle2 size={14} strokeWidth={1.6} aria-hidden="true" />
                   <span>
                     {message.sources.length
-                      ? `已完成文档检索与组织 · 参考来源 ${message.sources.length} 条`
+                      ? `已完成回答 · 参考来源 ${message.sources.length} 条`
                       : "已完成回答"}
                   </span>
                 </div>
               ) : null}
-              {message.status === "pending" ? (
+              {message.status === "pending" && !message.content ? (
                 <p className="qa-message__pending" role="status">
-                  正在查找并组织答案…
+                  正在处理问题…
                 </p>
               ) : message.role === "assistant" && message.content ? (
                 <div className="qa-message__body">
@@ -300,8 +311,8 @@ export function MessageList({
                     (message.status === "failed" ? "回答失败，原问题已保留。" : "")}
                 </p>
               )}
-              {message.role === "assistant" ? (
-                <QaStepTrack steps={buildMessageSteps(message)} ariaLabel="回答处理阶段" />
+              {liveAnswer?.messageId === message.message_id && liveAnswer.stages.length > 0 ? (
+                <QaStepTrack steps={buildMessageSteps(message, liveAnswer)} ariaLabel="回答处理阶段" />
               ) : null}
               {message.status === "failed" ? (
                 <div className="qa-message__failure" role="alert">
@@ -434,7 +445,7 @@ export function QaComposer({
           </option>
         </select>
         <Button loading={busy} onClick={submit}>
-          <ArrowUp size={15} strokeWidth={1.6} aria-hidden="true" />
+          {busy ? null : <ArrowUp size={15} strokeWidth={1.6} aria-hidden="true" />}
           发送
         </Button>
       </div>

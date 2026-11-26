@@ -460,6 +460,7 @@ class SimpleRAGPipeline:
             raise ValueError(f"unsupported retrieval_mode: {retrieval_mode}")
         use_mmr = kwargs.pop("use_mmr", retrieval_mode == "hybrid")
         use_rerank = kwargs.pop("use_rerank", False)
+        rerank_callback = kwargs.pop("rerank_callback", None)
         mmr_lambda = float(kwargs.pop("mmr_lambda", 0.75))
         vector_weight = float(kwargs.pop("vector_weight", 0.7))
 
@@ -515,6 +516,8 @@ class SimpleRAGPipeline:
 
         results = dedupe_results_by_source(results, max(limit * 3, limit))
         if use_rerank:
+            if results and rerank_callback is not None:
+                rerank_callback(len(results))
             results = relevance_rerank_results(query, results, limit)
         if use_mmr:
             results = mmr_select(results, limit=limit, lambda_mult=mmr_lambda)
@@ -1218,6 +1221,32 @@ class SimpleRAGPipeline:
         if len(points) != 1:
             return None
         return self._point_to_chunk(points[0])
+
+    def get_document_preview_chunks(self, document_id: str, chunk_id: str):
+        """Read the target and immediately adjacent positions from this document."""
+        self._require_managed_active()
+        points = self._vector_store.scroll(
+            self._collection,
+            filters={"document_id": document_id, "_id": [chunk_id]},
+            with_vectors=False,
+        )
+        if len(points) != 1:
+            return None, None, None
+        target = points[0]
+        index = target.payload.get("chunk_index")
+        if type(index) is not int or index < 0:
+            return None, self._point_to_chunk(target), None
+        neighbors = self._vector_store.scroll(
+            self._collection,
+            filters={"document_id": document_id, "chunk_index": [index - 1, index + 1]},
+            with_vectors=False,
+        )
+
+        def adjacent(position: int):
+            matches = [point for point in neighbors if point.payload.get("chunk_index") == position]
+            return self._point_to_chunk(matches[0]) if len(matches) == 1 else None
+
+        return adjacent(index - 1), self._point_to_chunk(target), adjacent(index + 1)
 
     def get_document_chunks(
             self,

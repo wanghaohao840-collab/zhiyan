@@ -18,6 +18,7 @@ export type QaConversation = {
 export type QaConversationPage = { items: QaConversation[]; next_cursor: string | null };
 export type QaSource = {
   citation_id: string;
+  chunk_id?: string | null;
   document_id: string;
   document_name: string;
   page_number: number | null;

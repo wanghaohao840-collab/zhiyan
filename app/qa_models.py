@@ -87,6 +87,7 @@ class QaSource:
     reference: str
     truncated: bool
     source_type: str
+    chunk_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,7 @@ class QaSourceDraft:
     reference: str = ""
     truncated: bool = False
     source_type: str = "rag"
+    chunk_id: str | None = None
 
 
 @dataclass(frozen=True)

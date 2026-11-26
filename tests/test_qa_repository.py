@@ -154,7 +154,7 @@ def test_complete_persists_ordered_immutable_sources_and_rejects_stale_version(
         OWNER, conversation.id, "问题", "auto", "client-1"
     )
     sources = (
-        QaSourceDraft("[2]", "doc-0", "文档.pdf", page_number=2, excerpt="第二"),
+        QaSourceDraft("[2]", "doc-0", "文档.pdf", page_number=2, excerpt="第二", chunk_id="chunk-2"),
         QaSourceDraft("[1]", "doc-0", "文档.pdf", page_number=1, excerpt="第一"),
     )
     assert repository.complete_turn(
@@ -179,6 +179,7 @@ def test_complete_persists_ordered_immutable_sources_and_rejects_stale_version(
     assert message is not None
     assert message.status == "completed"
     assert [source.citation_id for source in message.sources] == ["[2]", "[1]"]
+    assert [source.chunk_id for source in message.sources] == ["chunk-2", None]
     assert repository.get_message(OTHER, pending.assistant_message.id) is None
 
 

@@ -12,6 +12,7 @@ from app.learning_repository import LearningRepository
 from app.learning_service import LearningService
 from app.document_library import DocumentLibraryService
 from app.document_search import DocumentSearchService
+from app.graph_service import GraphService
 from app.import_repository import ImportTaskRepository
 from app.import_service import ImportTaskService
 from app.import_worker import ImportWorkerPool
@@ -75,6 +76,7 @@ class ApplicationServices:
     document_search: DocumentSearchService
     learning_repository: LearningRepository
     learning_service: LearningService
+    graph_service: GraphService
     _started: bool = field(default=False, init=False, repr=False)
     _lifecycle_lock: RLock = field(default_factory=RLock, init=False, repr=False)
 
@@ -97,10 +99,12 @@ class ApplicationServices:
         session_registry = SessionRegistry(db_path=db_path, storage=storage)
         legacy_migration = LegacyMigrationService(db_path, storage, PROJECT_ROOT)
         import_repository = ImportTaskRepository(db_path)
+        graph_service = GraphService(db_path)
         import_worker_pool = ImportWorkerPool(
             import_repository,
             session_registry.runtime_registry,
             storage,
+            graph_service=graph_service,
         )
         import_service = ImportTaskService(
             session_registry,
@@ -130,6 +134,8 @@ class ApplicationServices:
             verify_evidence=os.getenv("RAG_QA_VERIFY_EVIDENCE", "").strip() == "1",
             evidence_strategy=os.getenv("RAG_QA_EVIDENCE_STRATEGY", "two_pass").strip(),
             evidence_max_tokens=os.getenv("RAG_QA_EVIDENCE_MAX_TOKENS", "").strip(),
+            retrieval_mode=os.getenv("RAG_QA_RETRIEVAL_MODE", "vector").strip().lower(),
+            use_rerank=os.getenv("RAG_QA_RERANK", "").strip() == "1",
         )
         summary_engine = answer_engine
         if (
@@ -167,6 +173,7 @@ class ApplicationServices:
             document_library,
             session_registry,
             legacy_migration=qa_legacy_migration,
+            graph_service=graph_service,
         )
         qa_deletion_service = QaDeletionService(
             session_registry,
@@ -202,6 +209,7 @@ class ApplicationServices:
             qa_repository=qa_repository,
             learning_repository=learning_repository,
             learning_service=learning_service,
+            graph_service=graph_service,
             qa_job_repository=qa_job_repository,
             qa_deletion_repository=qa_deletion_repository,
             qa_legacy_migration=qa_legacy_migration,

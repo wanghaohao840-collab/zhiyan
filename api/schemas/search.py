@@ -16,6 +16,7 @@ class ChunkLocator(BaseModel):
     chunk_id: str = Field(min_length=1, max_length=256)
     chunk_index: int = Field(ge=0, strict=True)
     content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    page_number: int | None = Field(default=None, ge=1, strict=True)
 
 
 class SearchHit(BaseModel):

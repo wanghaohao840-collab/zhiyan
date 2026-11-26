@@ -858,3 +858,129 @@ def test_restore_drill_configuration_failure_uses_safe_report_fallback(tmp_path:
     assert len(reports) == 1
     report = json.loads(reports[0].read_text(encoding="utf-8-sig"))
     assert report["failure_stage"] == "configuration"
+
+
+@pytest.mark.parametrize("scenario", ["success", "neo4j_stays_running", "qdrant_rollback_fails"])
+def test_graph_backup_is_cold_and_paired_with_qdrant(tmp_path, scenario):
+    if shutil.which("tar.exe") is None:
+        pytest.skip("tar.exe is unavailable")
+
+    repository, data, env_file = make_repository(tmp_path)
+    (data / "app" / "app.db").write_bytes(b"sqlite fixture")
+    graph_data = data / "neo4j" / "data"
+    graph_data.mkdir(parents=True)
+    (graph_data / "store.bin").write_bytes(b"neo4j fixture")
+    backups = tmp_path / "backups"
+    state = tmp_path / "state"
+    calls = tmp_path / "external-graph-calls.jsonl"
+    harness = tmp_path / "graph-round-trip.ps1"
+    stay_running = "$true" if scenario == "neo4j_stays_running" else "$false"
+    fail_rollback = "$true" if scenario == "qdrant_rollback_fails" else "$false"
+    harness.write_text(
+        "$ErrorActionPreference = 'Stop'\n"
+        "$global:runningForGraph = @('app', 'qdrant', 'neo4j')\n"
+        f"$global:neo4jRemainsRunning = {stay_running}\n"
+        f"$global:failGraphRollback = {fail_rollback}\n"
+        "$runner = {\n"
+        "  param([string]$FilePath, [string[]]$ArgumentList)\n"
+        f"  [PSCustomObject]@{{FilePath=$FilePath; Args=@($ArgumentList); Running=@($global:runningForGraph)}} | ConvertTo-Json -Compress | Add-Content -LiteralPath '{ps_quote(calls)}'\n"
+        "  if ($FilePath -eq 'docker') {\n"
+        "    if ($ArgumentList -contains 'ps') {\n"
+        "      if ($ArgumentList -notcontains '--profile' -or $ArgumentList -notcontains 'graph') { throw 'Neo4j profile not examined' }; $global:runningForGraph; return\n"
+        "    }\n"
+        "    if ($ArgumentList -contains 'stop') { $global:runningForGraph = @(); if ($global:neo4jRemainsRunning) { $global:runningForGraph = @('neo4j') }; return }\n"
+        "    if ($ArgumentList -contains 'start') { $global:runningForGraph = @('app', 'qdrant', 'neo4j'); return }\n"
+        "    if ($ArgumentList -contains 'inspect') { 'zhiyan_qdrant_data'; return }\n"
+        "    if ($ArgumentList -contains 'images') { 'abcd1234abcd1234'; return }\n"
+        "    if ($global:failGraphRollback -and $ArgumentList -contains '-xzf' -and $ArgumentList[-1] -like '/backup/qdrant-rollback-*') { throw 'forced Qdrant rollback import failure' }\n"
+        "    if ($ArgumentList -contains '-czf') {\n"
+        "      if ($global:runningForGraph.Count -ne 0) { throw 'Qdrant was exported while services were running' }\n"
+        "      $mount = $ArgumentList | Where-Object { $_ -match '^type=bind,source=.+,target=/backup$' }\n"
+        "      $null = $mount -match '^type=bind,source=(.+),target=/backup$'\n"
+        "      [IO.File]::WriteAllBytes((Join-Path $Matches[1] ($ArgumentList[-2].Substring(8))), [byte[]]@(1, 2, 3))\n"
+        "    }\n"
+        "    return\n"
+        "  }\n"
+        "  if ($ArgumentList -contains '-czf' -and $global:runningForGraph.Count -ne 0) { throw 'graph archive was created while services were running' }\n"
+        "  & $FilePath @ArgumentList\n"
+        "  if ($LASTEXITCODE -ne 0) { throw 'tar failed' }\n"
+        "}\n"
+        "$healthy = { param($Config) $true }\n"
+        f"$archive = (& '{ps_quote(BACKUP)}' -RepositoryRoot '{ps_quote(repository)}' -EnvFile '{ps_quote(env_file)}' -StateRoot '{ps_quote(state)}' -BackupRoot '{ps_quote(backups)}' -ExternalInvoker $runner -HealthProbe $healthy).Archive\n"
+        f"Set-Content -LiteralPath '{ps_quote(graph_data / 'store.bin')}' -Value 'mutated'\n"
+        "if ($global:failGraphRollback) { $healthy = { param($Config) $false } }\n"
+        f"& '{ps_quote(RESTORE)}' -Archive $archive -RepositoryRoot '{ps_quote(repository)}' -EnvFile '{ps_quote(env_file)}' -StateRoot '{ps_quote(state)}' -BackupRoot '{ps_quote(backups)}' -ExternalInvoker $runner -HealthProbe $healthy\n",
+        encoding="ascii",
+    )
+
+    result = run_ps(f"& '{ps_quote(harness)}'")
+    archives = list((backups / "daily").glob("*.tar.gz.meta"))
+    records = [json.loads(line) for line in calls.read_text().splitlines()]
+    if scenario == "neo4j_stays_running":
+        assert result.returncode != 0
+        assert "Deployment services remain running after stop" in result.stdout + result.stderr
+        assert archives == []
+        assert all("-czf" not in record["Args"] for record in records)
+        return
+    if scenario == "qdrant_rollback_fails":
+        assert result.returncode != 0
+        assert "forced Qdrant rollback import failure" in result.stdout + result.stderr
+        assert (graph_data / "store.bin").read_text(encoding="utf-8-sig").strip() == "mutated"
+        assert sum("start" in record["Args"] for record in records) == 2
+        assert records[-1]["Running"] == []
+        return
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len(archives) == 1
+    metadata = json.loads(archives[0].read_text())
+    assert metadata["neo4j_data"] == "neo4j/data"
+    assert metadata["qdrant_sha256"] == hashlib.sha256(b"\x01\x02\x03").hexdigest()
+    with tarfile.open(archives[0].parent / metadata["archive"]) as archive:
+        names = set(archive.getnames())
+        assert "./app/app.db" in names
+        assert "./neo4j/data/store.bin" in names
+    assert (graph_data / "store.bin").read_bytes() == b"neo4j fixture"
+    assert all("neo4j" in record["Args"] for record in records if "stop" in record["Args"])
+
+
+def test_graph_restore_rejects_qdrant_archive_from_a_different_set(tmp_path):
+    if shutil.which("tar.exe") is None:
+        pytest.skip("tar.exe is unavailable")
+
+    repository, data, env_file = make_repository(tmp_path)
+    backups = tmp_path / "backups"
+    archive = backups / "daily" / "assistant-20261126T030000Z.tar.gz"
+    archive.parent.mkdir(parents=True)
+    graph_data = data / "neo4j" / "data"
+    graph_data.mkdir(parents=True)
+    (graph_data / "store.bin").write_bytes(b"current graph")
+    with tarfile.open(archive, "w:gz") as store:
+        store.add(data, arcname=".")
+    write_checksum(archive)
+    qdrant = archive.with_name(f"{archive.name}.qdrant-volume.tar.gz")
+    qdrant.write_bytes(b"qdrant from a different snapshot")
+    write_checksum(qdrant)
+    archive.with_name(f"{archive.name}.meta").write_text(
+        json.dumps({
+            "neo4j_data": "neo4j/data",
+            "archive": archive.name,
+            "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+            "qdrant_archive": qdrant.name,
+            "qdrant_sha256": hashlib.sha256(b"original snapshot qdrant").hexdigest(),
+        }),
+        encoding="utf-8",
+    )
+
+    result = run_ps(
+        "$runner = { param([string]$FilePath, [string[]]$ArgumentList) "
+        "if ($FilePath -eq 'docker') { throw 'deployment should not be touched' }; "
+        "& $FilePath @ArgumentList }; "
+        f"& '{ps_quote(RESTORE)}' -Archive '{ps_quote(archive)}' -RepositoryRoot '{ps_quote(repository)}' "
+        f"-EnvFile '{ps_quote(env_file)}' -StateRoot '{ps_quote(tmp_path / 'state')}' "
+        f"-BackupRoot '{ps_quote(backups)}' -ExternalInvoker $runner"
+    )
+
+    assert result.returncode != 0
+    assert "The Neo4j backup metadata does not match the selected archives" in result.stdout + result.stderr
+    assert "deployment should not be touched" not in result.stdout + result.stderr
+    assert (graph_data / "store.bin").read_bytes() == b"current graph"

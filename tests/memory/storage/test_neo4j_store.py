@@ -546,3 +546,52 @@ def test_namespace_is_part_of_every_document_scope():
     ]
     assert any(params.get("rag_namespace") == "tenant-a" for params in scoped_calls)
     assert any(params.get("rag_namespace") == "tenant-b" for params in scoped_calls)
+
+
+def test_canvas_queries_use_authorized_docs_bounded_rows_and_in_scope_endpoints():
+    driver = RecordingDriver(responses={
+        "GRAPH_CANVAS_NODES": [
+            {
+                "element_id": "local", "document_ids": ["owned"], "type": "Concept",
+                "label": "Graph", "graph_id": "concept", "scope_id": "owned", "weight": None,
+            },
+            {
+                "element_id": "global", "document_ids": ["owned"], "type": "CanonicalEntity",
+                "label": "Graph", "graph_id": "canonical", "scope_id": "", "weight": 5.0,
+            },
+            {
+                "element_id": "extra", "document_ids": ["owned"], "type": "Document",
+                "label": "More", "graph_id": "doc", "scope_id": "owned", "weight": 1.0,
+            },
+        ],
+        "GRAPH_CANVAS_EDGES": [
+            {"source": "local", "target": "global", "relation": "REFERS_TO", "weight": 2.0}
+        ],
+    })
+    store = Neo4jGraphStore(driver=driver)
+
+    graph = store.get_subgraph(
+        rag_namespace="pdf_owner", document_ids=["owned"], query="GRAPH", limit=2,
+    )
+
+    ((nodes_query, node_params), (edges_query, edge_params)) = driver.transactions[-1].calls
+    assert nodes_query.count("rag_namespace: $rag_namespace") == 3
+    assert nodes_query.count("document_id IN $document_ids") == 2
+    assert edges_query.count("rag_namespace: $rag_namespace") == 2
+    assert "r.rag_namespace" in edges_query
+    assert "elementId(target) IN $element_ids" in edges_query
+    assert node_params["document_ids"] == ["owned"]
+    assert node_params["search_term"] == "graph"
+    assert node_params["rag_namespace"] == edge_params["rag_namespace"] == "pdf_owner"
+    assert node_params["limit"] == edge_params["limit"] == 3
+    assert edge_params["element_ids"] == ["local", "global"]
+    assert graph["truncated"]
+    assert graph["edges"] == [
+        {
+            "source": "Concept:owned:concept", "target": "CanonicalEntity::canonical",
+            "relation": "REFERS_TO", "weight": 2.0,
+        }
+    ]
+    assert len(graph["nodes"]) == 2
+    with pytest.raises(ValueError):
+        store.get_subgraph(rag_namespace="pdf_owner", document_ids=["owned"], limit=201)

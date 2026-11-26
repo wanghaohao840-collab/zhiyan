@@ -12,6 +12,7 @@ from app.qa_answer_engine import (
     QaEngineError,
     RagQaAnswerEngine,
 )
+from hello_agents.core.llm import HelloAgentsLLM
 from hello_agents.memory.rag.contracts import RAGActionResult
 from hello_agents.tools.builtin.rag_tool import RAGTool
 
@@ -197,14 +198,65 @@ def test_rag_retrieves_only_with_question_but_final_prompt_receives_history() ->
     assert "当前问题" in tool.llm.prompts[-1]
 
 
+def test_streaming_rag_reports_observed_stages_and_provider_deltas(monkeypatch):
+    events = []
+    llm = HelloAgentsLLM()
+    llm.client = SimpleNamespace()
+
+    def completion(messages, **kwargs):
+        assert kwargs["stream"] is True
+        assert "[S-abc123]" in messages[-1]["content"]
+        yield SimpleNamespace(choices=[SimpleNamespace(
+            delta=SimpleNamespace(content="first"), finish_reason=None,
+        )])
+        assert events[-1] == ("token", "first")
+        yield SimpleNamespace(choices=[SimpleNamespace(
+            delta=SimpleNamespace(content=" second"), finish_reason="stop",
+        )])
+
+    monkeypatch.setattr(llm, "_create_completion", completion)
+
+    def search(**kwargs):
+        assert events == [("retrieving", None)]
+        assert kwargs["retrieval_mode"] == "hybrid"
+        kwargs["rerank_callback"](3)
+        return [{
+            "id": "chunk-1", "content": "Evidence", "score": 0.9,
+            "metadata": {"document_id": "doc-1", "file_name": "one.pdf"},
+        }]
+
+    tool = RAGTool.__new__(RAGTool)
+    tool.rag_namespace = "test"
+    tool._pipelines = {"test": SimpleNamespace(search=search)}
+    tool.llm = llm
+    tool.qdrant_api_key = None
+    tool.graph_service = None
+    tool.graph_configuration_error = None
+    result = RagQaAnswerEngine(retrieval_mode="hybrid", use_rerank=True).answer(
+        SimpleNamespace(rag_tool=tool),
+        request(mode="joint", structured_output=False),
+        stage_callback=lambda stage, count: events.append((stage, count)),
+        token_callback=lambda delta: events.append(("token", delta)),
+    )
+    assert events[:4] == [
+        ("retrieving", None), ("retrieving", 3), ("reranking", 3), ("generating", None),
+    ]
+    assert "verifying" not in [event for event, _ in events]
+    assert result.answer.startswith("".join(value for event, value in events if event == "token"))
+    assert result.sources[0].chunk_id == "chunk-1"
+
+
 def test_verified_evidence_setting_only_applies_to_joint_qa() -> None:
     tool = FakeResultTool(RAGActionResult(action="ask", success=True, message="ok", data={}))
     runtime = SimpleNamespace(rag_tool=tool)
     RagQaAnswerEngine(verify_evidence=True).answer(runtime, request(mode="joint"))
     RagQaAnswerEngine(verify_evidence=True).answer(runtime, request(mode="compare"))
     RagQaAnswerEngine().answer(runtime, request(mode="joint"))
+    RagQaAnswerEngine(verify_evidence=True).answer(runtime, request(mode="auto"))
+    RagQaAnswerEngine(verify_evidence=True).answer(runtime, request(mode="auto", question="比较这两篇文章"))
     assert tool.calls[0][1]["verify_evidence"] is True
-    assert all("verify_evidence" not in kwargs for _, kwargs in tool.calls[1:])
+    assert tool.calls[3][1]["verify_evidence"] is True
+    assert all("verify_evidence" not in tool.calls[i][1] for i in (1, 2, 4))
 
 
 def test_single_pass_evidence_strategy_is_explicit_and_only_used_for_joint_qa():

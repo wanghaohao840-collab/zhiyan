@@ -282,6 +282,30 @@ def test_qdrant_replace_document_deletes_orphan_chunks(monkeypatch):
     assert [payload["content"] for payload in payloads] == ["only"]
 
 
+def test_qdrant_preview_scopes_chunks_and_preserves_exact_source_context(monkeypatch):
+    client = FakeQdrantClient()
+    monkeypatch.setenv("RAG_BACKEND", "qdrant")
+    monkeypatch.setenv("QDRANT_URL", "http://localhost:6333")
+
+    owner = create_rag_pipeline(rag_namespace="owner", qdrant_client=client)
+    outsider = create_rag_pipeline(rag_namespace="outsider", qdrant_client=client)
+    page = " ".join(f"word-{number:04d}" for number in range(300))
+    owner.replace_document("doc-1", [DocumentSegment(page, {"page_number": 1})])
+    outsider.replace_document("doc-1", [DocumentSegment("foreign text", {})])
+    target_id = qdrant_point_id("owner", "doc-1", 1)
+    client.scroll_calls.clear()
+
+    previous, target, following = owner.get_document_preview_chunks("doc-1", target_id)
+
+    assert len(client.scroll_calls) == 2
+    assert [item["metadata"]["chunk_index"] for item in (previous, target, following)] == [0, 1, 2]
+    metadata = target["metadata"]
+    context = metadata["preview_before"] + target["content"] + metadata["preview_after"]
+    assert context in page
+    assert len(metadata["preview_before"]) == len(metadata["preview_after"]) == 350
+    assert outsider.get_document_preview_chunks("doc-1", target_id) == (None, None, None)
+
+
 def test_qdrant_search_filters_to_selected_document_ids(monkeypatch):
     client = FakeQdrantClient()
     monkeypatch.setenv("RAG_BACKEND", "qdrant")

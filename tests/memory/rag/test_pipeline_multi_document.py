@@ -80,6 +80,26 @@ class PipelineMultiDocumentTests(unittest.TestCase):
 
         self.assertEqual(len(results), 2)
 
+    def test_preview_reads_only_target_and_adjacent_chunks(self):
+        pipeline = self.make_pipeline()
+        for document_id, count in (("doc-1", 3), ("doc-2", 2)):
+            for index in range(count):
+                pipeline.add_text(
+                    f"alpha {document_id} chunk {index}",
+                    document_id=document_id,
+                    replace_existing=False,
+                )
+        chunks = pipeline.get_document_chunks("doc-1")
+        previous, target, following = pipeline.get_document_preview_chunks("doc-1", chunks[1]["id"])
+        self.assertEqual(
+            [item["id"] for item in (previous, target, following)],
+            [item["id"] for item in chunks],
+        )
+        self.assertEqual(
+            pipeline.get_document_preview_chunks("doc-2", chunks[1]["id"]),
+            (None, None, None),
+        )
+
     def test_summary_sampling_uses_spare_slots_for_later_chunks(self):
         pipeline = self.make_pipeline()
         for page, contents in (

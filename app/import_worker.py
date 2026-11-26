@@ -115,12 +115,14 @@ class ImportTaskRunner:
         storage: UserStorage,
         *,
         assistant_factory: Callable[..., Any] = PDFLearningAssistant,
+        graph_service=None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.repository = repository
         self.runtime_registry = runtime_registry
         self.storage = storage
         self.assistant_factory = assistant_factory
+        self.graph_service = graph_service
         self.clock = clock or (lambda: datetime.now(timezone.utc))
 
     def run(self, task: ImportTaskRecord) -> None:
@@ -176,6 +178,11 @@ class ImportTaskRunner:
             if current is None or current.stage != "committing":
                 if not self._try_begin_committing(task):
                     raise ImportCancelled()
+            if self.graph_service is not None:
+                try:
+                    self.graph_service.build_after_import(task, runtime)
+                except Exception:
+                    logger.warning("optional document graph build failed")
             self.repository.mark_succeeded(
                 task.user_id, task.task_id, now=self._now_iso()
             )
@@ -342,6 +349,7 @@ class ImportWorkerPool:
         storage: UserStorage,
         *,
         runner: Any = None,
+        graph_service=None,
         worker_count: int = 4,
     ) -> None:
         if worker_count < 1:
@@ -349,7 +357,7 @@ class ImportWorkerPool:
         self.repository = repository
         self.storage = storage
         self.runner = runner or ImportTaskRunner(
-            repository, runtime_registry, storage
+            repository, runtime_registry, storage, graph_service=graph_service
         )
         self.worker_count = worker_count
         self._condition = threading.Condition()

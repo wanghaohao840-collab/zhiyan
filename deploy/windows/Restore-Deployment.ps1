@@ -80,13 +80,13 @@ function Invoke-RestoreExternal {
 
 function Get-ComposeArguments {
     param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)][string[]]$Command)
-    return @('compose', '--project-directory', $Config.RepositoryRoot, '--file', $Config.ComposeFile, '--env-file', $Config.EnvFile) + $Command
+    return @('compose', '--project-directory', $Config.RepositoryRoot, '--file', $Config.ComposeFile, '--env-file', $Config.EnvFile, '--profile', 'graph') + $Command
 }
 
 function Get-RunningDeploymentServices {
     param([Parameter(Mandatory)]$Config)
     $output = Invoke-RestoreExternal -FilePath 'docker' -ArgumentList (
-        Get-ComposeArguments -Config $Config -Command @('ps', '--services', '--filter', 'status=running')
+        Get-ComposeArguments -Config $Config -Command @('ps', '--all', '--services', '--status', 'running', '--status', 'paused', '--status', 'restarting', '--status', 'removing')
     )
     $services = @()
     foreach ($line in $output) {
@@ -209,6 +209,7 @@ if (-not $preExtractionHash.Equals($checksumMatch.Groups['hash'].Value, [StringC
 
 $qdrantArchivePath = "$archivePath.qdrant-volume.tar.gz"
 $qdrantChecksumPath = "$qdrantArchivePath.sha256"
+$qdrantActualHash = $null
 $useQdrantVolume = Test-Path -LiteralPath $qdrantArchivePath -PathType Leaf
 if ($useQdrantVolume) {
     Assert-RegularNonReparseFile -LiteralPath $qdrantChecksumPath
@@ -224,6 +225,11 @@ if ($useQdrantVolume) {
     }
 }
 
+$archiveHasGraphData = @($members | Where-Object { ([string]$_).Trim() -match '^(?:\.[\\/])?neo4j[\\/]data(?:[\\/]|$)' }).Count -gt 0
+if ($archiveHasGraphData) {
+    Assert-GraphBackupPair -Archive $archivePath -ArchiveHash $actualHash -QdrantArchive $qdrantArchivePath -QdrantHash $qdrantActualHash
+}
+
 $ownsOperationLock = $null -eq $InheritedOperationLock
 if ($ownsOperationLock) {
     $operationLock = Enter-OperationsLock -StateRoot $config.StateRoot
@@ -234,6 +240,12 @@ if ($ownsOperationLock) {
 try {
 $dataParent = [IO.Path]::GetDirectoryName($dataRoot)
 Assert-BackupTreeSafe -Path $dataRoot -AllowedRoot $dataParent | Out-Null
+$runningServices = @(Get-RunningDeploymentServices -Config $config)
+$neo4jData = Test-LocalGraphData -Config $config -GraphRunning:($runningServices -contains 'neo4j') -AllowMissing
+if ($neo4jData -and -not $archiveHasGraphData) {
+    throw 'The selected archive has no Neo4j data for this graph deployment'
+}
+$graphRestore = $neo4jData -or $archiveHasGraphData
 $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
 $stagingPath = "$dataRoot.staging-$stamp-$([Guid]::NewGuid().ToString('N'))"
 $rollbackPath = "$dataRoot.rollback-$stamp"
@@ -248,13 +260,14 @@ foreach ($candidate in @($stagingPath, $rollbackPath, $failedPath, $diagnosticPa
 New-Item -ItemType Directory -Path $stagingPath | Out-Null
 Invoke-RestoreExternal -FilePath 'tar.exe' -ArgumentList @('-C', $stagingPath, '-xzf', $archivePath) | Out-Null
 Assert-BackupTreeSafe -Path $stagingPath -AllowedRoot $dataParent | Out-Null
-foreach ($requiredDirectory in @('app', 'qdrant')) {
+$requiredDirectories = @(if ($useQdrantVolume) { 'app' } else { 'app'; 'qdrant' })
+if ($archiveHasGraphData) { $requiredDirectories += 'neo4j/data' }
+foreach ($requiredDirectory in $requiredDirectories) {
     if (-not (Test-Path -LiteralPath (Join-Path $stagingPath $requiredDirectory) -PathType Container)) {
         throw "Archive is missing required directory: $requiredDirectory"
     }
 }
 
-$runningServices = @(Get-RunningDeploymentServices -Config $config)
 $rollbackCreated = $false
 $candidateInstalled = $false
 $qdrantCandidateInstalled = $false
@@ -263,7 +276,7 @@ $qdrantVolumeName = $null
 $qdrantHelperImage = $null
 try {
     Invoke-ComposeForServices -Config $config -Action stop -Services $runningServices
-    if ($KeepStopped -and @(Get-RunningDeploymentServices -Config $config).Count -ne 0) {
+    if (($KeepStopped -or $graphRestore) -and @(Get-RunningDeploymentServices -Config $config).Count -ne 0) {
         throw 'Deployment services remain running after stop'
     }
     if ($useQdrantVolume) {
@@ -297,12 +310,19 @@ try {
     $restoreError = $_
     $compensationErrors = @()
     $rollbackRestored = $false
+    $rollbackSafe = $true
     if ($rollbackCreated) {
         try {
             Invoke-ComposeForServices -Config $config -Action stop -Services $runningServices
+            if ($graphRestore -and @(Get-RunningDeploymentServices -Config $config).Count -ne 0) {
+                throw 'Deployment services remain running during graph restore rollback'
+            }
         } catch {
             $compensationErrors += "stop failed services: $($_.Exception.Message)"
+            if ($graphRestore) { $rollbackSafe = $false }
         }
+    }
+    if ($rollbackCreated -and $rollbackSafe) {
         if ($candidateInstalled -and (Test-Path -LiteralPath $dataRoot -PathType Container)) {
             try {
                 Rename-Sibling -LiteralPath $dataRoot -Destination $failedPath
@@ -321,7 +341,7 @@ try {
             $compensationErrors += 'restore rollback: rollback directory is missing'
         }
     }
-    if ($useQdrantVolume -and $qdrantRollbackCreated) {
+    if ($useQdrantVolume -and $qdrantRollbackCreated -and $rollbackSafe) {
         try {
             Clear-QdrantVolume -Name $qdrantVolumeName -HelperImage $qdrantHelperImage -ExternalInvoker $ExternalInvoker
             Import-QdrantVolume -Name $qdrantVolumeName -Archive $qdrantRollbackArchive -HelperImage $qdrantHelperImage -RequireEmpty -ExternalInvoker $ExternalInvoker
@@ -331,7 +351,7 @@ try {
         }
     }
     $restartSucceeded = $false
-    if (-not $KeepStopped) {
+    if (-not $KeepStopped -and $rollbackSafe -and (-not $graphRestore -or $compensationErrors.Count -eq 0)) {
         try {
             Invoke-ComposeForServices -Config $config -Action start -Services $runningServices
             $restartSucceeded = $true

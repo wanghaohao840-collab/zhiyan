@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import asyncio
+import json
+from threading import Event
+from time import monotonic, sleep
 from types import SimpleNamespace
 from urllib.parse import quote
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 from api.app import create_api_app
+from api.routes import qa as qa_routes
 from app.bootstrap import ApplicationServices
 from app.qa_answer_engine import QaAnswerResult, QaEngineError
 from app.qa_models import QaSourceDraft
@@ -112,6 +118,170 @@ def assert_safe(body: str) -> None:
         "c:\\",
     ):
         assert forbidden not in lowered
+
+
+def submit_streaming_question(parts, conversation_id, request_id):
+    response = parts.client.post(
+        f"/api/v1/qa/conversations/{conversation_id}/messages?stream=true",
+        headers=csrf(parts),
+        json={"question": "证据是什么？", "client_request_id": request_id},
+    )
+    assert response.status_code == 202, response.text
+    return response.json()["message_id"]
+
+
+async def open_answer_iterator(parts, conversation_id, message_id):
+    request = Request({
+        "type": "http",
+        "app": parts.client.app,
+        "headers": [(b"cookie", f"{COOKIE}={parts.owner_token}".encode())],
+    })
+    response = await qa_routes.stream_message(
+        conversation_id, message_id, request,
+        parts.services.session_registry.get_session(parts.owner_token),
+        parts.services.qa_service,
+    )
+    return response.body_iterator
+
+
+def test_stream_sends_live_frames_and_persists_after_disconnect(qa_parts, monkeypatch):
+    conversation_id = create_conversation(qa_parts)["conversation_id"]
+    started = Event()
+    release_model = Event()
+    answer = qa_parts.engine.answer
+
+    def staged(runtime, request, *, stage_callback, token_callback):
+        stage_callback("retrieving", 3)
+        stage_callback("reranking", 3)
+        stage_callback("generating", None)
+        token_callback("可信")
+        started.set()
+        assert release_model.wait(5)
+        return answer(runtime, request)
+
+    monkeypatch.setattr(qa_parts.engine, "answer_stream", staged, raising=False)
+    monkeypatch.setattr(qa_routes, "STREAM_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(qa_routes, "STREAM_HEARTBEAT_SECONDS", 0.02)
+    qa_parts.services.qa_worker_pool.start()
+    try:
+        request_id = str(uuid4())
+        message_id = submit_streaming_question(qa_parts, conversation_id, request_id)
+        assert started.wait(5)
+        assert submit_streaming_question(qa_parts, conversation_id, request_id) == message_id
+        stream_url = f"/api/v1/qa/conversations/{conversation_id}/messages/{message_id}/stream"
+        qa_parts.client.cookies.set(COOKIE, qa_parts.other_token)
+        assert qa_parts.client.get(stream_url).status_code == 404
+        qa_parts.client.cookies.clear()
+        assert qa_parts.client.get(stream_url).status_code == 401
+        owner(qa_parts)
+        assert qa_parts.client.get(stream_url.replace(conversation_id, str(uuid4()))).status_code == 404
+
+        async def observe_and_disconnect():
+            events = await open_answer_iterator(qa_parts, conversation_id, message_id)
+            try:
+                first = await asyncio.wait_for(anext(events), timeout=3)
+                assert first.index('"retrieving"') < first.index('"reranking"') < first.index('"generating"')
+                assert '"retrieved_count": 3' in first
+                assert 'event: token\ndata: {"delta": "可信"}' in first
+                assert await asyncio.wait_for(anext(events), timeout=3) == ": ping\n\n"
+            finally:
+                await events.aclose()
+
+        asyncio.run(observe_and_disconnect())
+        release_model.set()
+        until = monotonic() + 5
+        while qa_parts.services.qa_service.get_message(qa_parts.owner_token, message_id).status == "pending":
+            assert monotonic() < until
+            sleep(0.02)
+        messages = qa_parts.client.get(stream_url.split(f"/{message_id}/stream")[0]).json()["items"]
+        saved = next(item for item in messages if item["message_id"] == message_id)
+        assert saved["status"] == "completed"
+        assert saved["content"] == "可信回答"
+        assert qa_parts.engine.calls == 1
+        replay = qa_parts.client.get(stream_url)
+        assert replay.headers["content-type"].startswith("text/event-stream")
+        assert replay.headers["cache-control"] == "no-cache"
+        assert replay.headers["x-accel-buffering"] == "no"
+        frames = [frame.split("\ndata: ") for frame in replay.text.strip().split("\n\n")]
+        deltas = [json.loads(data)["delta"] for event, data in frames if event == "event: token"]
+        assert "".join(deltas) == saved["content"]
+        assert ("event: citations", saved["sources"]) in [(event, json.loads(data)) for event, data in frames]
+        assert frames[-1][0] == "event: done"
+    finally:
+        release_model.set()
+
+
+def test_stream_stops_on_conversation_deletion_before_publishing_more(qa_parts, monkeypatch):
+    conversation_id = create_conversation(qa_parts)["conversation_id"]
+    first_chunk = Event()
+    release_model = Event()
+    answer = qa_parts.engine.answer
+
+    def staged(runtime, request, *, stage_callback, token_callback):
+        token_callback("首段")
+        first_chunk.set()
+        assert release_model.wait(5)
+        token_callback("栅栏之后")
+        return answer(runtime, request)
+
+    monkeypatch.setattr(qa_parts.engine, "answer_stream", staged, raising=False)
+    qa_parts.services.qa_worker_pool.start()
+    try:
+        message_id = submit_streaming_question(qa_parts, conversation_id, str(uuid4()))
+        assert first_chunk.wait(5)
+        service = qa_parts.services.qa_service
+        get_stream_message = service.get_stream_message
+        delete_on_read = Event()
+
+        def fence_after_visibility(*args):
+            current = get_stream_message(*args)
+            if delete_on_read.is_set():
+                delete_on_read.clear()
+                deletion = service.delete_conversation(qa_parts.owner_token, conversation_id)
+                assert deletion.status == "queued"
+                service.live_answers.get(message_id).token("栅栏之后")
+                release_model.set()
+            return current
+
+        monkeypatch.setattr(service, "get_stream_message", fence_after_visibility)
+
+        async def observe_with_fence():
+            events = await open_answer_iterator(qa_parts, conversation_id, message_id)
+            try:
+                assert "首段" in await asyncio.wait_for(anext(events), timeout=3)
+                delete_on_read.set()
+                assert await asyncio.wait_for(anext(events), timeout=3) == (
+                    'event: error\ndata: {"safe_error_code": "QA_NOT_FOUND"}\n\n'
+                )
+            finally:
+                await events.aclose()
+
+        asyncio.run(observe_with_fence())
+        assert qa_parts.client.get(f"/api/v1/qa/messages/{message_id}").status_code == 404
+    finally:
+        release_model.set()
+
+
+def test_stream_engine_failure_keeps_provider_details_out_of_response(qa_parts, monkeypatch):
+    conversation_id = create_conversation(qa_parts)["conversation_id"]
+
+    def broken(runtime, request, *, stage_callback, token_callback):
+        stage_callback("generating", None)
+        raise RuntimeError("private provider response")
+
+    monkeypatch.setattr(qa_parts.engine, "answer_stream", broken, raising=False)
+    qa_parts.services.qa_worker_pool.start()
+    message_id = submit_streaming_question(qa_parts, conversation_id, str(uuid4()))
+    answer = qa_parts.client.get(
+        f"/api/v1/qa/conversations/{conversation_id}/messages/{message_id}/stream"
+    )
+    assert answer.status_code == 200
+    assert "event: done" not in answer.text
+    assert "private provider response" not in answer.text
+    assert answer.text.endswith('event: error\ndata: {"safe_error_code": "QA_ENGINE_UNAVAILABLE"}\n\n')
+    saved = qa_parts.client.get(f"/api/v1/qa/messages/{message_id}").json()
+    assert saved["status"] == "failed"
+    assert saved["safe_error_code"] == "QA_ENGINE_UNAVAILABLE"
 
 
 def test_capabilities_and_every_route_require_authentication(qa_parts) -> None:

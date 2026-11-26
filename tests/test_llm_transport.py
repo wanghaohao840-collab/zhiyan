@@ -99,6 +99,23 @@ class HelloAgentsLLMTransportTests(unittest.TestCase):
         self.assertTrue(llm.client.chat.completions.calls[0]["stream"])
         self.assertNotIn("stream", llm.client.chat.completions.calls[1])
 
+    def test_strict_stream_does_not_replay_or_expose_transport_errors_as_text(self):
+        llm = self.make_llm([broken_stream(), completion("duplicate")])
+        stream = llm.stream_invoke("hello", strict=True)
+        self.assertEqual(next(stream), "partial ")
+        with self.assertRaises(FakeTransportError):
+            next(stream)
+        self.assertEqual(len(llm.client.chat.completions.calls), 1)
+
+    def test_strict_stream_requires_a_successful_finish_reason(self):
+        valid = [SimpleNamespace(choices=[SimpleNamespace(
+            delta=SimpleNamespace(content="complete"), finish_reason="stop",
+        )])]
+        llm = self.make_llm([iter(valid), stream_chunks("no finish frame")])
+        self.assertEqual(list(llm.stream_invoke("hello", strict=True)), ["complete"])
+        with self.assertRaisesRegex(RuntimeError, "ended before a complete answer"):
+            list(llm.stream_invoke("hello", strict=True))
+
 
 if __name__ == "__main__":
     unittest.main()

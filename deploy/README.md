@@ -65,6 +65,7 @@ python3 deploy/smoke_test.py --env-file deploy/.env
 先在 `deploy/.env` 设置：
 
 ```dotenv
+ZHIYAN_GRAPH_ENABLED=1
 NEO4J_URI=neo4j://neo4j:7687
 NEO4J_USERNAME=neo4j
 NEO4J_PASSWORD=使用新的强密码
@@ -80,6 +81,7 @@ docker compose --env-file deploy/.env --profile graph ps
 ```
 
 Neo4j 不参与当前主问答召回。图谱失败不会撤销已经成功的 RAG 导入。
+关闭 `ZHIYAN_GRAPH_ENABLED` 会停止查询和构建新图谱。此前创建过图谱的文档在删除时仍需清理 Neo4j 数据。Neo4j 离线时，文档立即隐藏，清理任务保留并可重试。
 
 ## 冒烟检查
 

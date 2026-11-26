@@ -72,6 +72,7 @@ class QaCitationResponse(BaseModel):
     reference: str
     truncated: bool
     source_type: str
+    chunk_id: str | None = None
 
 
 class QaMessageResponse(BaseModel):
@@ -178,6 +179,7 @@ def source_response(source: QaSource) -> QaCitationResponse:
         reference=source.reference,
         truncated=source.truncated,
         source_type=source.source_type,
+        chunk_id=source.chunk_id,
     )
 
 

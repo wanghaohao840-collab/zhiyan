@@ -90,7 +90,8 @@ function Get-ComposeArguments {
         'compose',
         '--project-directory', $Config.RepositoryRoot,
         '--file', $Config.ComposeFile,
-        '--env-file', $Config.EnvFile
+        '--env-file', $Config.EnvFile,
+        '--profile', 'graph'
     ) + $Command
 }
 
@@ -98,7 +99,7 @@ function Get-RunningDeploymentServices {
     param([Parameter(Mandatory)]$Config)
 
     $output = Invoke-BackupExternal -FilePath 'docker' -ArgumentList (
-        Get-ComposeArguments -Config $Config -Command @('ps', '--services', '--filter', 'status=running')
+        Get-ComposeArguments -Config $Config -Command @('ps', '--all', '--services', '--status', 'running', '--status', 'paused', '--status', 'restarting', '--status', 'removing')
     )
     $services = @()
     foreach ($line in $output) {
@@ -153,7 +154,8 @@ function Write-BackupMetadata {
         [Parameter(Mandatory)][ValidateSet('daily', 'weekly')][string]$Kind,
         [string]$QdrantArchive,
         [string]$QdrantHash,
-        [string]$QdrantVolumeName
+        [string]$QdrantVolumeName,
+        [switch]$Neo4jDataIncluded
     )
     $payload = [ordered]@{
         archive = [IO.Path]::GetFileName($Archive)
@@ -164,6 +166,7 @@ function Write-BackupMetadata {
         qdrant_volume_name = $QdrantVolumeName
         qdrant_archive = if ([string]::IsNullOrWhiteSpace($QdrantArchive)) { $null } else { [IO.Path]::GetFileName($QdrantArchive) }
         qdrant_sha256 = $QdrantHash
+        neo4j_data = if ($Neo4jDataIncluded) { 'neo4j/data' } else { $null }
     } | ConvertTo-Json
     [IO.File]::WriteAllText(
         "$Archive.meta",
@@ -245,11 +248,12 @@ foreach ($candidate in @($archive, "$archive.sha256", "$archive.meta", $qdrantAr
 }
 
 $runningServices = @(Get-RunningDeploymentServices -Config $config)
+$neo4jData = Test-LocalGraphData -Config $config -GraphRunning:($runningServices -contains 'neo4j')
 $operationError = $null
 $restartError = $null
 try {
     Invoke-ComposeForServices -Config $config -Action stop -Services $runningServices
-    if ($KeepStopped -and @(Get-RunningDeploymentServices -Config $config).Count -ne 0) {
+    if (($KeepStopped -or $neo4jData) -and @(Get-RunningDeploymentServices -Config $config).Count -ne 0) {
         throw 'Deployment services remain running after stop'
     }
     $qdrantHash = $null
@@ -258,14 +262,14 @@ try {
         $helperImage = Get-QdrantHelperImage -Config $config -ExternalInvoker $ExternalInvoker
         Export-QdrantVolume -Name $qdrantVolumeName -Archive $qdrantArchive -HelperImage $helperImage -ExternalInvoker $ExternalInvoker | Out-Null
         $qdrantHash = Write-BackupChecksum -Archive $qdrantArchive
-    } elseif ($null -eq $ExternalInvoker) {
+    } elseif ($neo4jData -or $null -eq $ExternalInvoker) {
         throw "Required Qdrant volume was not found: $qdrantVolumeName"
     }
     Invoke-BackupExternal -FilePath 'tar.exe' -ArgumentList @('-C', $dataRoot, '-czf', $archive, '.') | Out-Null
     $hash = Write-BackupChecksum -Archive $archive
     Write-BackupMetadata -Archive $archive -Hash $hash -CreatedUtc $now -Kind daily `
         -QdrantArchive $(if ($null -ne $qdrantHash) { $qdrantArchive } else { $null }) `
-        -QdrantHash $qdrantHash -QdrantVolumeName $qdrantVolumeName
+        -QdrantHash $qdrantHash -QdrantVolumeName $qdrantVolumeName -Neo4jDataIncluded:$neo4jData
 
     $createdSet = @(Get-CompleteBackupSets -Directory $dailyDirectory -Prefix 'assistant-' | Where-Object {
         $_.Archive.Equals($archive, [StringComparison]::OrdinalIgnoreCase)
@@ -330,7 +334,7 @@ if ($weeklySet.Count -eq 0) {
     $weeklyHash = Write-BackupChecksum -Archive $weeklyArchive
     Write-BackupMetadata -Archive $weeklyArchive -Hash $weeklyHash -CreatedUtc $now -Kind weekly `
         -QdrantArchive $(if ($null -ne $weeklyQdrantHash) { $weeklyQdrantArchive } else { $null }) `
-        -QdrantHash $weeklyQdrantHash -QdrantVolumeName $qdrantVolumeName
+        -QdrantHash $weeklyQdrantHash -QdrantVolumeName $qdrantVolumeName -Neo4jDataIncluded:$neo4jData
     $weeklySet = @(Get-CompleteBackupSets -Directory $weeklyDirectory -Prefix 'assistant-week-' | Where-Object {
         $_.Archive.Equals($weeklyArchive, [StringComparison]::OrdinalIgnoreCase)
     })

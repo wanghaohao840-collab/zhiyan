@@ -18,7 +18,7 @@ from evals.rag_quality_report import write_report
 from evals.rag_quality_scoring import extract_answer_body, score_answer, score_citations
 from hello_agents.memory.embedding import SimpleEmbedding
 from hello_agents.memory.rag.pipeline import SimpleRAGPipeline
-from hello_agents.tools.builtin.rag_tool import RAGTool
+from hello_agents.tools.builtin.rag_tool import QA_CITATION_REQUIREMENT, RAGTool
 
 
 @dataclass(frozen=True)
@@ -59,7 +59,6 @@ LIVE_IDS = (
 )
 LIVE_VARIANTS = (BASELINE, HYBRID, RERANK, NO_CITATION_INSTRUCTION)
 
-_CITATION_REQUIREMENT = "只能基于资料回答，并使用资料中的稳定引用 ID 标注依据。"
 _SOURCE_BLOCK = re.compile(r"(?m)^\[(S-[a-f0-9]{12})(?: \| [^\n]*)?\]\n([^\n]+)")
 
 
@@ -97,9 +96,9 @@ class TrialGenerator:
     def _generate(self, prompt, **kwargs):
         self.error = None
         if not self.cite:
-            if _CITATION_REQUIREMENT not in prompt:
+            if QA_CITATION_REQUIREMENT not in prompt:
                 raise ValueError("Citation instruction changed")
-            prompt = prompt.replace(_CITATION_REQUIREMENT, "只能基于资料回答。", 1)
+            prompt = prompt.replace(QA_CITATION_REQUIREMENT, "只能基于资料回答。", 1)
         if self.generate_answer is None:
             # This generator sees the prompt only. It extracts the first passage.
             match = _SOURCE_BLOCK.search(prompt.split("\n资料：\n", 1)[1])

@@ -15,6 +15,8 @@ from hello_agents.memory.rag.embedding_runtime import RAGEmbeddingRuntime, valid
 
 PROJECT_POINT_NAMESPACE_UUID = uuid.UUID("c273c00a-40ac-47a9-b475-164f135ada18")
 logger = logging.getLogger(__name__)
+_PREVIEW_CONTEXT_CHARS = 350
+_PREVIEW_LOOKAHEAD_CHARS = 4096
 _SECRET_METADATA_KEYS = {
     "apikey", "authorization", "accesstoken", "refreshtoken", "secret",
     "password", "token",
@@ -154,10 +156,27 @@ def prepare_document_chunks(
         if not segment.content or not segment.content.strip():
             continue
         segment_metadata = json_safe_dict(segment.metadata or {})
+        segment_metadata.pop("preview_before", None)
+        segment_metadata.pop("preview_after", None)
+        scan_start = 0
         for chunk_text in split_text(segment.content):
             chunk_text = str(chunk_text).strip()
-            if chunk_text:
-                pending.append((segment_metadata, chunk_text))
+            if not chunk_text:
+                continue
+            metadata = segment_metadata
+            # Chunks can overlap, and the JSON splitter sometimes normalizes
+            # whitespace. Record context only for an exact, unambiguous match.
+            scan_end = scan_start + len(chunk_text) + _PREVIEW_LOOKAHEAD_CHARS
+            start = segment.content.find(chunk_text, scan_start, scan_end)
+            if start != -1 and segment.content.find(chunk_text, start + 1, scan_end) == -1:
+                end = start + len(chunk_text)
+                metadata = {
+                    **segment_metadata,
+                    "preview_before": segment.content[max(0, start - _PREVIEW_CONTEXT_CHARS):start],
+                    "preview_after": segment.content[end:end + _PREVIEW_CONTEXT_CHARS],
+                }
+                scan_start = start + 1
+            pending.append((metadata, chunk_text))
 
     total_chunks = len(pending)
     vectors: list[list[float]] = []

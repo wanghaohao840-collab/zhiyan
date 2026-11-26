@@ -23,6 +23,7 @@ from app.qa_models import (
 )
 from app.qa_observability import QaTelemetry
 from app.qa_repository import QaRepository
+from app.qa_stream import QaLiveAnswer, QaLiveAnswers
 from assistants.document_selection import build_document_scope
 
 
@@ -91,6 +92,7 @@ class QaService:
         self.worker_pool = worker_pool
         self.deletion_service = deletion_service
         self.legacy_migration = legacy_migration
+        self.live_answers = QaLiveAnswers()
 
     def create_conversation(
         self,
@@ -175,6 +177,14 @@ class QaService:
         session = self.session_registry.get_session(session_token)
         return self._require_message(str(session.user_id), message_id)
 
+    def get_stream_message(
+        self, session_token: str, conversation_id: str, message_id: str
+    ) -> QaMessage:
+        message = self.get_message(session_token, message_id)
+        if message.conversation_id != conversation_id or message.role != "assistant":
+            raise QaNotFoundError(message_id)
+        return message
+
     def report_turns(self, session_token: str):
         session = self.session_registry.get_session(session_token)
         self._ensure_migrated(session)
@@ -208,6 +218,8 @@ class QaService:
         question: str,
         mode: str,
         client_request_id: str,
+        *,
+        stream: bool = False,
     ) -> QaMessage:
         session = self.session_registry.get_session(session_token)
         user_id = str(session.user_id)
@@ -232,8 +244,11 @@ class QaService:
                 message_id=pending.assistant_message.id,
             )
             return self._require_message(user_id, pending.assistant_message.id)
+        if stream:
+            return self._schedule_question(user_id, conversation, pending, normalized_mode)
         return self._execute_pending(
-            session,
+            session.runtime,
+            user_id,
             conversation,
             pending,
             pending.user_message.content,
@@ -292,7 +307,8 @@ class QaService:
             message_id=pending.assistant_message.id,
         )
         return self._execute_pending(
-            session,
+            session.runtime,
+            user_id,
             conversation,
             pending,
             paired_user.content,
@@ -359,37 +375,79 @@ class QaService:
             raise QaNotFoundError(conversation_id)
         return deletion
 
+    def _schedule_question(
+        self, user_id: str, conversation: QaConversationAggregate,
+        pending: PendingTurn, mode: str,
+    ) -> QaMessage:
+        message = pending.assistant_message
+        live = self.live_answers.start(message.id)
+        runtime_registry = self.session_registry.runtime_registry
+
+        def execute(accepted: bool) -> None:
+            runtime = None
+            try:
+                if not accepted:
+                    self.repository.fail_turn(
+                        user_id, message.id, message.version,
+                        "QA_ENGINE_UNAVAILABLE", secrets.token_urlsafe(12),
+                    )
+                elif self.repository.get_message(user_id, message.id) is not None:
+                    runtime = runtime_registry.acquire_background(user_id)
+                    self._execute_pending(
+                        runtime, user_id, conversation, pending,
+                        pending.user_message.content, mode, live=live,
+                    )
+            except (QaEngineUnavailableError, QaNotFoundError):
+                pass
+            except Exception:
+                self.repository.fail_turn(
+                    user_id, message.id, message.version,
+                    "QA_ENGINE_UNAVAILABLE", secrets.token_urlsafe(12),
+                )
+                raise
+            finally:
+                self.live_answers.finish(message.id)
+                if runtime is not None:
+                    runtime_registry.release_background(user_id)
+
+        if self.worker_pool is None or not self.worker_pool.schedule_question(execute):
+            execute(False)
+            return self._require_message(user_id, message.id)
+        return message
+
     def _execute_pending(
         self,
-        session,
+        runtime,
+        user_id: str,
         conversation: QaConversationAggregate,
         pending: PendingTurn,
         question: str,
         mode: str,
+        *,
+        live: QaLiveAnswer | None = None,
     ) -> QaMessage:
         started = time.perf_counter()
-        user_id = str(session.user_id)
-        context = self.context_builder.build(
-            rolling_summary=conversation.conversation.rolling_summary,
-            summary_through_message_id=(
-                conversation.conversation.summary_through_message_id
-            ),
-            messages=self._all_messages(user_id, conversation.id),
-            current_question=question,
-        )
         try:
-            result = self.answer_engine.answer(
-                session.runtime,
-                QaAnswerRequest(
-                    question=question,
-                    conversation_context=context.rendered,
-                    document_ids=tuple(
-                        item.document_id for item in conversation.documents
-                    ),
-                    mode=mode,
-                    structured_output=mode == "compare",
-                ),
+            context = self.context_builder.build(
+                rolling_summary=conversation.conversation.rolling_summary,
+                summary_through_message_id=conversation.conversation.summary_through_message_id,
+                messages=self._all_messages(user_id, conversation.id),
+                current_question=question,
             )
+            request = QaAnswerRequest(
+                question=question,
+                conversation_context=context.rendered,
+                document_ids=tuple(item.document_id for item in conversation.documents),
+                mode=mode,
+                structured_output=mode == "compare",
+            )
+            stream_answer = getattr(self.answer_engine, "answer_stream", None)
+            if live is not None and callable(stream_answer):
+                result = stream_answer(
+                    runtime, request, stage_callback=live.stage, token_callback=live.token,
+                )
+            else:
+                result = self.answer_engine.answer(runtime, request)
         except Exception as error:
             code, retryable = self._safe_engine_failure(error)
             trace_id = secrets.token_urlsafe(12)

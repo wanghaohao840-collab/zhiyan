@@ -132,5 +132,90 @@ def test_live_neo4j_replace_query_and_delete():
                 rag_namespace=namespace,
             )
             assert removed["nodes_removed"] >= 0
+            store.delete_document(second_document_id, rag_namespace=namespace)
+        finally:
+            store.close()
+
+
+@pytest.mark.skipif(
+    not os.getenv("NEO4J_TEST_URI"),
+    reason="NEO4J_TEST_URI is not configured",
+)
+def test_live_canvas_isolation_and_document_delete_cascade():
+    scope = f"canvas-{uuid.uuid4()}"
+    foreign_scope = f"foreign-{scope}"
+    first_id, second_id = f"{scope}-first", f"{scope}-second"
+    store = Neo4jGraphStore(
+        uri=os.environ["NEO4J_TEST_URI"],
+        username=os.getenv("NEO4J_TEST_USERNAME", "neo4j"),
+        password=os.environ["NEO4J_TEST_PASSWORD"],
+        database=os.getenv("NEO4J_TEST_DATABASE", "neo4j"),
+    )
+
+    def subgraph(namespace=scope, limit=200, query=""):
+        return store.get_subgraph(
+            rag_namespace=namespace,
+            document_ids=[first_id, second_id],
+            limit=limit,
+            query=query,
+        )
+
+    def count_canonical(namespace):
+        with store._driver.session(database=store.database) as session:
+            row = session.run(
+                "MATCH (n:CanonicalEntity {rag_namespace: $scope}) RETURN count(n) AS count",
+                scope=namespace,
+            ).single()
+        return row["count"]
+
+    try:
+        for namespace, document_id in (
+            (scope, first_id), (scope, second_id), (foreign_scope, first_id)
+        ):
+            graph = _live_graph(document_id)
+            if namespace == foreign_scope:
+                graph["document"]["name"] = "Foreign private document"
+            store.replace_document_graph(document_id, "build-one", graph, rag_namespace=namespace)
+
+        with store._driver.session(database=store.database) as session:
+            session.run(
+                "MATCH (a:Document {rag_namespace: $scope, document_id: $first}), "
+                "(b:Document {rag_namespace: $foreign_scope, document_id: $first}), "
+                "(c:Chunk {rag_namespace: $scope, document_id: $first}) "
+                "MERGE (a)-[:RELATED_TO {weight: 9876.0}]->(b) "
+                "MERGE (a)-[:RELATED_TO {rag_namespace: $foreign_scope, weight: 1234.0}]->(c)",
+                scope=scope, foreign_scope=foreign_scope, first=first_id,
+            ).consume()
+
+        graph = subgraph()
+        assert len(graph["nodes"]) == 7
+        assert len(graph["edges"]) > 0
+        assert any(node["document_ids"] == sorted([first_id, second_id]) for node in graph["nodes"])
+        assert "Foreign private document" not in repr(graph)
+        assert {1234.0, 9876.0}.isdisjoint(edge["weight"] for edge in graph["edges"])
+        assert any(node["label"] == "Neo4j" for node in subgraph(query="NEO4J")["nodes"])
+        limited = subgraph(limit=2)
+        assert len(limited["nodes"]) == 2 and limited["truncated"]
+        assert {end for edge in limited["edges"] for end in (edge["source"], edge["target"])} <= {
+            node["id"] for node in limited["nodes"]
+        }
+
+        store.delete_document(first_id, rag_namespace=scope)
+        remaining = subgraph()
+        assert all(node["document_ids"] == [second_id] for node in remaining["nodes"])
+        assert all(first_id not in end for edge in remaining["edges"] for end in (edge["source"], edge["target"]))
+        assert count_canonical(scope) == 1
+        assert count_canonical(foreign_scope) == 1
+
+        store.delete_document(second_id, rag_namespace=scope)
+        assert subgraph() == {"nodes": [], "edges": [], "truncated": False}
+        assert count_canonical(scope) == 0
+        assert count_canonical(foreign_scope) == 1
+        assert any(node["label"] == "Foreign private document" for node in subgraph(foreign_scope)["nodes"])
+    finally:
+        try:
+            store.delete_document(first_id, rag_namespace=scope)
+            store.delete_document(second_id, rag_namespace=scope)
+            store.delete_document(first_id, rag_namespace=foreign_scope)
         finally:
             store.close()

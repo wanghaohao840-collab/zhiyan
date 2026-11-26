@@ -782,3 +782,29 @@ def test_document_removal_replay_converges_real_resources_and_legacy_backup(
     assert memory.removed == [("qa-real-replay", "episodic")]
     assert qa.get_conversation(OWNER, conversation.id) is None
     assert not repository.has_active_fence(OWNER, "document", "doc")
+
+
+def test_document_deletion_retries_graph_cleanup_before_removing_source(deletion_parts):
+    _, repository, service, worker, _, documents, _ = deletion_parts
+    attempts = []
+
+    def delete_graph(user_id, document_id):
+        assert repository.has_active_fence(user_id, "document", document_id)
+        assert document_id in documents.items[user_id]
+        attempts.append((user_id, document_id))
+        if len(attempts) == 1:
+            raise OSError("graph offline")
+
+    worker.graph_service = SimpleNamespace(delete_document=delete_graph)
+    deletion = service.request_document("token", "doc")
+
+    assert worker.run_once("delete-graph-first")
+    assert repository.get_deletion(OWNER, deletion.id).status == "failed"
+    assert repository.has_active_fence(OWNER, "document", "doc")
+    assert documents.deleted == []
+
+    assert worker.run_once("delete-graph-retry")
+    assert repository.get_deletion(OWNER, deletion.id).status == "completed"
+    assert attempts == [(OWNER, "doc"), (OWNER, "doc")]
+    assert documents.deleted == [(OWNER, "doc")]
+    assert documents.items[OTHER] == {"other-doc"}

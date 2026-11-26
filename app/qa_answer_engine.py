@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import PurePath
-from typing import Any, Literal, Mapping, Protocol
+from typing import Any, Callable, Literal, Mapping, Protocol
 
 from app.qa_models import QaMode, QaSourceDraft
+from app.qa_stream import QaStage
+from hello_agents.memory.rag.result_utils import RETRIEVAL_MODES, resolve_qa_mode
 from hello_agents.tools.builtin.rag_grounding import EVIDENCE_STRATEGIES
 
 
@@ -54,8 +56,14 @@ class RagQaAnswerEngine:
         verify_evidence: bool = False,
         evidence_strategy: str = "two_pass",
         evidence_max_tokens: int | str | None = None,
+        retrieval_mode: str = "vector",
+        use_rerank: bool = False,
     ) -> None:
         self.enable_summary_workflow = enable_summary_workflow
+        if retrieval_mode not in RETRIEVAL_MODES:
+            raise ValueError("RAG_QA_RETRIEVAL_MODE must be vector or hybrid")
+        self.retrieval_mode = retrieval_mode
+        self.use_rerank = use_rerank
         if verify_evidence and evidence_strategy not in EVIDENCE_STRATEGIES:
             raise ValueError("RAG_QA_EVIDENCE_STRATEGY must be two_pass, single_pass or adaptive")
         if verify_evidence and evidence_max_tokens not in (None, ""):
@@ -80,6 +88,8 @@ class RagQaAnswerEngine:
         *,
         progress_callback: object | None = None,
         cancel_event: object | None = None,
+        stage_callback: Callable[[QaStage, int | None], None] | None = None,
+        token_callback: Callable[[str], None] | None = None,
     ) -> QaAnswerResult:
         kwargs: dict[str, Any] = {
             "query": request.question,
@@ -90,12 +100,20 @@ class RagQaAnswerEngine:
             "min_score": 0.12,
             "structured_output": request.structured_output,
         }
-        if self.verify_evidence and request.mode == "joint":
+        if self.verify_evidence and resolve_qa_mode(request.question, request.mode) == "joint":
             kwargs["verify_evidence"] = True
             if self.evidence_max_tokens is not None:
                 kwargs["evidence_max_tokens"] = self.evidence_max_tokens
             if self.evidence_strategy != "two_pass":
                 kwargs["evidence_strategy"] = self.evidence_strategy
+        if self.retrieval_mode != "vector":
+            kwargs["retrieval_mode"] = self.retrieval_mode
+        if self.use_rerank:
+            kwargs["use_rerank"] = True
+        if stage_callback is not None:
+            kwargs["stage_callback"] = stage_callback
+        if token_callback is not None:
+            kwargs["token_callback"] = token_callback
         if progress_callback is not None:
             kwargs["progress_callback"] = progress_callback
         if cancel_event is not None:
@@ -131,6 +149,18 @@ class RagQaAnswerEngine:
             comparison=comparison if isinstance(comparison, Mapping) else None,
             comparison_format=_optional_text(result.data.get("comparison_format")),
             graph_sources=graph_sources,
+        )
+
+    def answer_stream(
+        self,
+        runtime: object,
+        request: QaAnswerRequest,
+        *,
+        stage_callback: Callable[[QaStage, int | None], None],
+        token_callback: Callable[[str], None],
+    ) -> QaAnswerResult:
+        return self.answer(
+            runtime, request, stage_callback=stage_callback, token_callback=token_callback,
         )
 
 
@@ -174,6 +204,7 @@ def _source_draft(
         reference=str(raw.get("reference") or "")[:1000],
         truncated=bool(raw.get("truncated")),
         source_type=source_type,
+        chunk_id=_optional_text(raw.get("chunk_id"), limit=256) if source_type == "rag" else None,
     )
 
 

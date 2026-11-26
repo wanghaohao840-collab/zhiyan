@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+import json
+from time import monotonic
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
-from fastapi.responses import JSONResponse
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from api.dependencies import (
     get_csrf_validated_session,
@@ -41,11 +45,14 @@ from app.qa_service import (
     QaNotFoundError,
     QaRetryNotAllowedError,
     QaService,
+    SAFE_ERROR_CODE,
 )
-from app.session import UserSession
+from app.session import InvalidSessionError, UserSession
 
 
 router = APIRouter(prefix="/api/v1/qa", tags=["qa"])
+STREAM_HEARTBEAT_SECONDS = 15
+STREAM_POLL_SECONDS = 0.25
 
 
 def _disabled(request: Request) -> JSONResponse | None:
@@ -212,6 +219,101 @@ def list_messages(
         return _domain_error(error)
 
 
+def _sse(event: str, data: object) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@router.get(
+    "/conversations/{conversation_id}/messages/{message_id}/stream",
+    response_class=StreamingResponse,
+    responses={200: {"content": {"text/event-stream": {}}}},
+)
+async def stream_message(
+    conversation_id: UUID,
+    message_id: UUID,
+    request: Request,
+    _session: Annotated[UserSession, Depends(get_current_session)],
+    service: Annotated[QaService, Depends(get_qa_service)],
+):
+    if disabled := _disabled(request):
+        return disabled
+    lookup = (
+        get_session_token(request), str(conversation_id), str(message_id),
+    )
+    try:
+        message = await run_in_threadpool(service.get_stream_message, *lookup)
+    except QaNotFoundError:
+        return _not_found()
+
+    async def events():
+        live = service.live_answers.get(message.id)
+        cursor = 0
+        streamed = []
+        last_sent = monotonic()
+        while True:
+            if live is None:
+                live = service.live_answers.get(message.id)
+            batch, overflowed = live.read(cursor) if live is not None else ((), False)
+            # Read the deletion fence after taking the live snapshot. A frame
+            # recorded after the visibility check belongs to the next pass.
+            try:
+                current = await run_in_threadpool(service.get_stream_message, *lookup)
+            except (QaNotFoundError, InvalidSessionError):
+                yield _sse("error", {"safe_error_code": "QA_NOT_FOUND"})
+                return
+            except Exception:
+                yield _sse("error", {"safe_error_code": "QA_OPERATION_FAILED"})
+                return
+
+            if current.status in {"failed", "cancelled"}:
+                code = current.safe_error_code or ""
+                if not SAFE_ERROR_CODE.fullmatch(code):
+                    code = (
+                        "QA_ANSWER_CANCELLED" if current.status == "cancelled"
+                        else "QA_ENGINE_UNAVAILABLE"
+                    )
+                yield _sse(
+                    "error",
+                    {"safe_error_code": code},
+                )
+                return
+
+            if overflowed:
+                yield _sse("error", {"safe_error_code": "QA_STREAM_LIMIT"})
+                return
+            frames = []
+            for event, data in batch:
+                if event == "token":
+                    streamed.append(data["delta"])
+                frames.append(_sse(event, data))
+            cursor += len(batch)
+
+            if current.status == "completed":
+                prefix = "".join(streamed)
+                if current.content.startswith(prefix) and (suffix := current.content[len(prefix):]):
+                    frames.append(_sse("token", {"delta": suffix}))
+                sources = message_response(current).sources
+                frames.append(_sse(
+                    "citations", [source.model_dump(mode="json") for source in sources]
+                ))
+                frames.append(_sse("done", {}))
+                yield "".join(frames)
+                return
+            if frames:
+                yield "".join(frames)
+                last_sent = monotonic()
+            elif monotonic() - last_sent >= STREAM_HEARTBEAT_SECONDS:
+                yield ": ping\n\n"
+                last_sent = monotonic()
+            await asyncio.sleep(STREAM_POLL_SECONDS)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Vary": "Cookie"},
+    )
+
+
 @router.delete(
     "/conversations/{conversation_id}",
     response_model=QaDeletionResponse,
@@ -246,6 +348,7 @@ def ask(
     request: Request,
     _session: Annotated[UserSession, Depends(get_csrf_validated_session)],
     service: Annotated[QaService, Depends(get_qa_service)],
+    stream: bool = False,
 ):
     if disabled := _disabled(request):
         return disabled
@@ -256,6 +359,7 @@ def ask(
             body.question,
             body.mode,
             str(body.client_request_id),
+            stream=stream,
         )
         if message.status == "pending":
             response.status_code = status.HTTP_202_ACCEPTED

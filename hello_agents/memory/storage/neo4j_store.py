@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from threading import Lock
 from typing import Any, Dict, Iterable, Optional
 
 try:
-    from neo4j import GraphDatabase
+    from neo4j import GraphDatabase, unit_of_work
 except Exception:  # pragma: no cover - exercised when dependency is absent
     GraphDatabase = None
+    unit_of_work = None
 
 
 class Neo4jConfigError(ValueError):
@@ -96,6 +98,7 @@ class Neo4jGraphStore:
         uri: Optional[str] = None,
         username: Optional[str] = None,
         password: Optional[str] = None,
+        connection_timeout: float | None = None,
     ):
         database = str(database or "").strip()
         if not database:
@@ -110,11 +113,17 @@ class Neo4jGraphStore:
                 raise Neo4jConfigError(
                     "The neo4j package is required for graph storage"
                 )
+            options = {} if connection_timeout is None else {
+                "connection_timeout": connection_timeout,
+                "connection_acquisition_timeout": connection_timeout,
+                "max_transaction_retry_time": 0,
+            }
             created_driver = None
             try:
                 created_driver = GraphDatabase.driver(
                     uri,
                     auth=(username, password),
+                    **options,
                 )
                 created_driver.verify_connectivity()
             except Exception as error:
@@ -520,6 +529,132 @@ class Neo4jGraphStore:
             },
         }
 
+    def check_database(self) -> None:
+        with self._driver.session(database=self.database) as session:
+            session.run("RETURN 1").single()
+
+    def get_subgraph(
+        self,
+        *,
+        rag_namespace: str,
+        document_ids: list[str],
+        query: str = "",
+        limit: int = 120,
+    ) -> dict[str, Any]:
+        """Project only graph nodes and edges in an explicitly authorized scope."""
+        rag_namespace = self._require_namespace(rag_namespace)
+        if not 1 <= limit <= 200:
+            raise ValueError("subgraph limit must be between 1 and 200")
+        if not document_ids:
+            return {"nodes": [], "edges": [], "truncated": False}
+
+        node_query = """
+            /* GRAPH_CANVAS_NODES */
+            CALL {
+                MATCH (n {rag_namespace: $rag_namespace})
+                WHERE n.document_id IN $document_ids AND n.graph_id IS NOT NULL
+                  AND labels(n)[0] IN $node_types
+                RETURN n, [n.document_id] AS document_ids, labels(n)[0] AS node_type,
+                       coalesce(n.name, n.title, n.graph_id) AS label,
+                       n.graph_id AS graph_id, n.document_id AS scope_id
+                UNION ALL
+                MATCH (local {rag_namespace: $rag_namespace})-[r:REFERS_TO]->
+                      (n:CanonicalEntity {rag_namespace: $rag_namespace})
+                WHERE local.document_id IN $document_ids
+                  AND n.canonical_id IS NOT NULL
+                  AND labels(local)[0] = n.entity_type
+                  AND coalesce(r.rag_namespace, $rag_namespace) = $rag_namespace
+                  AND coalesce(r.document_id, local.document_id) = local.document_id
+                WITH n, collect(DISTINCT local.document_id) AS document_ids,
+                     min(coalesce(local.name, local.title, local.graph_id)) AS label
+                RETURN n, document_ids, 'CanonicalEntity' AS node_type,
+                       label, n.canonical_id AS graph_id, '' AS scope_id
+            }
+            WITH n, document_ids, node_type, label, graph_id, scope_id
+            WHERE $search_term = '' OR toLower(label) CONTAINS $search_term
+            RETURN elementId(n) AS element_id, document_ids, node_type AS type,
+                   left(label, 300) AS label, graph_id, scope_id,
+                   toFloatOrNull(n.weight) AS weight
+            ORDER BY type, scope_id, graph_id
+            LIMIT $limit
+        """
+        edge_query = """
+            /* GRAPH_CANVAS_EDGES */
+            UNWIND $element_ids AS selected_id
+            MATCH (source {rag_namespace: $rag_namespace})-[r]->
+                  (target {rag_namespace: $rag_namespace})
+            WHERE elementId(source) = selected_id
+              AND elementId(target) IN $element_ids
+              AND coalesce(r.rag_namespace, $rag_namespace) = $rag_namespace
+              AND coalesce(r.document_id, source.document_id) = source.document_id
+              AND (
+                  (type(r) IN $relation_types AND source.document_id = target.document_id)
+                  OR (type(r) = 'REFERS_TO' AND target:CanonicalEntity
+                      AND labels(source)[0] = target.entity_type)
+              )
+            RETURN elementId(source) AS source, elementId(target) AS target,
+                   type(r) AS relation, coalesce(toFloatOrNull(r.weight),
+                   toFloatOrNull(r.confidence)) AS weight
+            ORDER BY relation, source, target
+            LIMIT $limit
+        """
+
+        def read(tx):
+            nodes = self._records(tx.run(
+                node_query,
+                rag_namespace=rag_namespace,
+                document_ids=document_ids,
+                node_types=["Document", *(label for label, _ in self.NODE_SPECS.values())],
+                search_term=query.strip().lower(),
+                limit=limit + 1,
+            ))
+            node_ids = [node["element_id"] for node in nodes[:limit]]
+            edges = self._records(tx.run(
+                edge_query,
+                rag_namespace=rag_namespace,
+                element_ids=node_ids,
+                relation_types=sorted(self.RELATION_TYPES),
+                limit=limit + 1,
+            )) if node_ids else []
+            return nodes, edges
+
+        if unit_of_work is not None:
+            read = unit_of_work(timeout=5)(read)
+        with self._driver.session(database=self.database) as session:
+            raw_nodes, raw_edges = session.execute_read(read)
+        nodes = []
+        id_map = {}
+        for node in raw_nodes[:limit]:
+            # graph_id is stable across a document rebuild. elementId only
+            # joins the two database projections within this read transaction.
+            node_id = f"{node['type']}:{node['scope_id']}:{node['graph_id']}"
+            id_map[node["element_id"]] = node_id
+            nodes.append({
+                "id": node_id,
+                "label": node["label"],
+                "type": node["type"],
+                "document_ids": sorted(node["document_ids"]),
+                "weight": self._canvas_weight(node["weight"]),
+            })
+        edges = [
+            {
+                "source": id_map[edge["source"]],
+                "target": id_map[edge["target"]],
+                "relation": edge["relation"],
+                "weight": self._canvas_weight(edge["weight"]),
+            }
+            for edge in raw_edges[:limit]
+        ]
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "truncated": len(raw_nodes) > limit or len(raw_edges) > limit,
+        }
+
+    @staticmethod
+    def _canvas_weight(value: float | None) -> float:
+        return value if value is not None and math.isfinite(value) and value >= 0 else 1.0
+
     def get_graph_context(
         self,
         document_id: str,
@@ -890,5 +1025,7 @@ class Neo4jGraphStore:
             )
             return counts
 
+        if unit_of_work is not None:
+            delete = unit_of_work(timeout=30)(delete)
         with self._driver.session(database=self.database) as session:
             return session.execute_write(delete)

@@ -73,6 +73,11 @@ from hello_agents.tools.builtin.rag_summary_workflow import (
 )
 
 
+QA_CITATION_REQUIREMENT = (
+    "只能基于资料回答。将资料中的方括号引用原样放在有依据的陈述之后，例如 [S-abc123]。"
+)
+
+
 class RAGTool(Tool):
     """RAG工具
 
@@ -1480,6 +1485,10 @@ class RAGTool(Tool):
             "section": str(metadata.get("section") or "")[:200] or None,
         }
 
+    def get_document_preview_chunks(self, document_id: str, chunk_id: str):
+        pipeline = self._get_pipeline(self.rag_namespace)
+        return pipeline.get_document_preview_chunks(document_id, chunk_id)
+
     def _get_document_chunk(
         self,
         document_id: str,
@@ -1521,6 +1530,8 @@ class RAGTool(Tool):
         verify_evidence: bool = False,
         evidence_strategy: str = "two_pass",
         evidence_max_tokens: int | None = None,
+        stage_callback: Any = None,
+        token_callback: Any = None,
         **kwargs,
     ) -> str:
         """Answer with joint, comparison, or summary behavior."""
@@ -1542,6 +1553,19 @@ class RAGTool(Tool):
             for key in ("retrieval_mode", "use_mmr", "mmr_lambda", "vector_weight", "use_rerank")
             if key in kwargs
         }
+        rerank_seen = False
+        retrieved_candidates = 0
+
+        def reranking(count: int) -> None:
+            nonlocal rerank_seen, retrieved_candidates
+            retrieved_candidates += count
+            if not rerank_seen:
+                stage_callback("retrieving", retrieved_candidates)
+                rerank_seen = True
+            stage_callback("reranking", retrieved_candidates)
+
+        if stage_callback is not None and retrieval_kwargs.get("use_rerank"):
+            retrieval_kwargs["rerank_callback"] = reranking
         graph_mode = str(graph_mode or "auto").strip().lower()
         if graph_mode not in {"off", "auto", "required"}:
             return "鉂?graph_mode must be off, auto, or required"
@@ -1566,6 +1590,7 @@ class RAGTool(Tool):
                 graph_mode=graph_mode,
                 graph_node_limit=graph_node_limit,
                 graph_relation_limit=graph_relation_limit,
+                stage_callback=stage_callback,
                 **retrieval_kwargs,
             )
 
@@ -1582,9 +1607,12 @@ class RAGTool(Tool):
                 graph_mode=graph_mode,
                 graph_node_limit=graph_node_limit,
                 graph_relation_limit=graph_relation_limit,
+                stage_callback=stage_callback,
                 **retrieval_kwargs,
             )
 
+        if stage_callback is not None:
+            stage_callback("retrieving", None)
         if summary_mode and document_id and hasattr(pipeline, "get_document_summary_context"):
             results = pipeline.get_document_summary_context(
                 document_id=document_id,
@@ -1599,6 +1627,8 @@ class RAGTool(Tool):
                 document_ids=document_ids,
                 **retrieval_kwargs,
             )
+        if stage_callback is not None and not rerank_seen:
+            stage_callback("retrieving", len(results))
 
         if verify_evidence:
             namespace = rag_namespace or self.rag_namespace
@@ -1612,6 +1642,7 @@ class RAGTool(Tool):
                 return "❌ 不支持的证据校验输出上限"
             return self._ask_verified_evidence(
                 query, conversation_context, results, evidence_strategy, evidence_max_tokens,
+                stage_callback=stage_callback,
             )
 
         if not results:
@@ -1623,7 +1654,7 @@ class RAGTool(Tool):
         fixed_prompt = f"""请根据下面资料回答用户问题。
 
 要求：
-1. 只能基于资料回答，并使用资料中的稳定引用 ID（例如 [S-abc123]）标注依据。
+1. {QA_CITATION_REQUIREMENT}
 2. 如果资料中没有相关内容，请明确说明“资料中没有提到”。
 3. 回答要简洁、准确。
 
@@ -1678,7 +1709,7 @@ class RAGTool(Tool):
         prompt = f"""请根据下面资料回答用户问题。
 
 要求：
-1. 只能基于资料回答，并使用资料中的稳定引用 ID 标注依据。
+1. {QA_CITATION_REQUIREMENT}
 2. 如果资料中没有相关内容，请明确说明“资料中没有提到”。
 3. 回答要简洁、准确。
 
@@ -1693,7 +1724,12 @@ class RAGTool(Tool):
 请给出回答：
 """
         try:
-            answer = self._generate(prompt)
+            if stage_callback is not None:
+                stage_callback("generating", None)
+            if token_callback is not None and isinstance(self.llm, HelloAgentsLLM):
+                answer = self._stream_answer(prompt, token_callback)
+            else:
+                answer = self._generate(prompt)
         except ContextCapacityError:
             return self._capacity_error()
         return self._format_answer(
@@ -1703,7 +1739,9 @@ class RAGTool(Tool):
             graph_sources=graph_sources,
         )
 
-    def _ask_verified_evidence(self, query, conversation_context, results, strategy, max_tokens) -> str:
+    def _ask_verified_evidence(
+        self, query, conversation_context, results, strategy, max_tokens, *, stage_callback=None,
+    ) -> str:
         adaptive = strategy == "adaptive"
         strategy = resolve_evidence_strategy(strategy, query)
         if not results:
@@ -1732,11 +1770,13 @@ class RAGTool(Tool):
 
             def generate(prompt):
                 self._context_budget(prompt, output_reserve=reserve)
-                return self._generate(prompt, max_tokens=max_tokens)
+                options = {"strict": True} if stage_callback is not None else {}
+                return self._generate(prompt, max_tokens=max_tokens, **options)
 
             verified = grounded_answer(
                 generate, query, history, context, visible,
                 strategy=strategy, compact_empty_retry=adaptive,
+                stage_callback=stage_callback,
             )
         except ContextCapacityError:
             self._last_action_data = {**trace, "evidence_status": "capacity"}
@@ -2143,6 +2183,15 @@ class RAGTool(Tool):
         result = (fitted.context, fitted.results, fitted.truncated)
         return result if return_details else fitted.context
 
+    def _stream_answer(self, prompt: str, token_callback) -> str:
+        pieces = []
+        for delta in self.llm.stream_invoke(prompt, strict=True):
+            if not pieces:
+                token_callback("🤖 RAG回答:\n")
+            pieces.append(delta)
+            token_callback(delta)
+        return "".join(pieces)
+
     def _generate(
         self, prompt: str, *, strict: bool = False, max_tokens: int | None = None
     ) -> str:
@@ -2224,12 +2273,14 @@ class RAGTool(Tool):
                 {
                     "citation_id": stable_id,
                     "document_id": document_id,
+                    "chunk_id": str(item.get("id") or "") or None,
                     "file_name": (
                         metadata.get("file_name")
                         or metadata.get("document_name")
                         or ""
                     ),
                     "page_number": page_number,
+                    "section": metadata.get("section"),
                     "excerpt": self._clean_preview_text(
                         item.get("content", ""),
                         max_len=500,
@@ -2268,12 +2319,15 @@ class RAGTool(Tool):
         graph_mode: str = "auto",
         graph_node_limit: int = 8,
         graph_relation_limit: int = 16,
+        stage_callback: Any = None,
         **search_kwargs,
     ) -> str:
         results: List[Dict[str, Any]] = []
         extras: List[Dict[str, Any]] = []
         missing: List[str] = []
 
+        if stage_callback is not None:
+            stage_callback("retrieving", None)
         for doc_id in document_ids:
             doc_results = pipeline.search(
                 query=query,
@@ -2304,6 +2358,8 @@ class RAGTool(Tool):
         remaining_slots = max(0, limit - len(results))
         extras.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
         results.extend(extras[:remaining_slots])
+        if stage_callback is not None and "rerank_callback" not in search_kwargs:
+            stage_callback("retrieving", len(results))
 
         if not results:
             return f"🔍 所选文档中未找到与 '{query}' 相关的知识，无法生成对比分析"
@@ -2391,7 +2447,11 @@ class RAGTool(Tool):
 citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
 """
         try:
-            answer = self._generate(prompt)
+            if stage_callback is not None:
+                stage_callback("generating", None)
+                answer = self._generate(prompt, strict=True)
+            else:
+                answer = self._generate(prompt)
         except ContextCapacityError:
             return self._capacity_error()
         if structured_output:
@@ -2439,6 +2499,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
         graph_node_limit: int = 8,
         graph_relation_limit: int = 16,
         use_summary_workflow: bool = False,
+        stage_callback: Any = None,
         **search_kwargs,
     ) -> str:
         total_documents = len(document_ids)
@@ -2464,6 +2525,8 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 )
 
         def prepare(_: SummaryState) -> SummaryState:
+            if stage_callback is not None:
+                stage_callback("retrieving", None)
             emit_progress("mapping", 0)
             graph_contexts, graph_error = self._graph_context_for_documents(
                 document_ids,
@@ -2568,6 +2631,8 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
             )
             graph_sources = self._graph_sources(document_graph_contexts)
             check_cancelled()
+            if stage_callback is not None:
+                stage_callback("generating", None)
             summary = self._generate_summary(
                 f"""请仅根据以下资料总结文档 {doc_id}。
 优先提取可直接回答用户问题的事实和规则。用简短要点呈现，每项保留稳定引用 ID，不逐条罗列无关或缺失内容。

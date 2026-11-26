@@ -3,6 +3,7 @@ export type ChunkLocator = {
   chunk_id: string;
   chunk_index: number;
   content_sha256: string;
+  page_number?: number | null;
 };
 
 export type SearchInput = { query: string; document_ids: string[]; limit: 5 | 10 | 20 };

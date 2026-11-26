@@ -44,6 +44,29 @@ async function openSources(page: Page) {
   await expect(page.getByText("[E2E-S1]").filter({ visible: true })).toBeVisible();
 }
 
+test("QA shows observed stream stages and recovers the saved answer after a reload", async ({ appUrl, page }, testInfo) => {
+  test.slow();
+  const { conversationId } = await createQaConversation(page, appUrl, uniqueUsername("qa_stream"));
+  await page.getByLabel("向这些文档提问").fill("[stream-test] 这篇文档的结论是什么？");
+  const accepted = page.waitForResponse((response) =>
+    response.url() === `${appUrl}/api/v1/qa/conversations/${conversationId}/messages?stream=true`
+      && response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "发送" }).click();
+  expect((await accepted).status()).toBe(202);
+  const track = page.getByRole("list", { name: "回答处理阶段" });
+  await expect(track.getByText("文档检索（1 条）")).toBeVisible();
+  await expect(track.locator('[aria-current="step"]')).toContainText("生成回答");
+  await expect(track.getByText("证据核验").locator("..")).toHaveClass(/--idle/);
+  await expect(page.getByText("这是确定性的可信回答", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("向这些文档提问")).toBeInViewport();
+  await page.screenshot({ path: testInfo.outputPath("qa-stream.png"), animations: "disabled" });
+
+  await page.reload();
+  await expect(page.getByText("这是确定性的可信回答，可通过右侧引用核对来源。")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "引用 1", exact: true })).toBeInViewport();
+});
+
 test("real server preserves answer, isolates users, cancels summary and deletes durably", async ({ appUrl, browser, page }, testInfo) => {
   test.slow();
   const ownerName = uniqueUsername("qa_owner");

@@ -71,6 +71,12 @@ on import_tasks(status, next_attempt_at, created_at);
 create index if not exists ix_import_tasks_user_created
 on import_tasks(user_id, created_at);
 
+create table if not exists graph_document_cleanup (
+    user_id text not null references users(id) on delete cascade,
+    document_id text not null,
+    primary key (user_id, document_id)
+);
+
 create table if not exists qa_conversations (
     id text primary key,
     user_id text not null references users(id) on delete cascade,
@@ -164,6 +170,7 @@ create table if not exists qa_message_sources (
     reference text not null,
     truncated integer not null default 0 check(truncated in (0, 1)),
     source_type text not null,
+    chunk_id text,
     unique(assistant_message_id, position),
     foreign key(assistant_message_id, conversation_id, user_id)
         references qa_messages(id, conversation_id, user_id) on delete cascade
@@ -412,6 +419,7 @@ def initialize_database(db_path: Path | str) -> None:
         # F1: idempotent upgrade for existing databases missing
         # the conflict_summary column.
         _ensure_column(conn, "data_migrations", "conflict_summary", "text")
+        _ensure_column(conn, "qa_message_sources", "chunk_id", "text")
         conn.executescript(LEARNING_SCHEMA)
 
 

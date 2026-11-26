@@ -428,8 +428,8 @@ class QaJobRepository:
                     id, assistant_message_id, conversation_id, user_id,
                     position, citation_id, document_id, document_name,
                     page_number, section, excerpt, reference, truncated,
-                    source_type
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    source_type, chunk_id
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -447,6 +447,7 @@ class QaJobRepository:
                         source.reference,
                         int(source.truncated),
                         source.source_type,
+                        source.chunk_id,
                     )
                     for position, source in enumerate(source_list)
                 ],

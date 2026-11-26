@@ -280,6 +280,7 @@ class RAGPipeline:
             raise ValueError(f"unsupported retrieval_mode: {retrieval_mode}")
         use_mmr = kwargs.pop("use_mmr", retrieval_mode == "hybrid")
         use_rerank = kwargs.pop("use_rerank", False)
+        rerank_callback = kwargs.pop("rerank_callback", None)
         mmr_lambda = float(kwargs.pop("mmr_lambda", 0.75))
         vector_weight = float(kwargs.pop("vector_weight", 0.7))
         candidate_limit = max(limit * 3, limit)
@@ -345,6 +346,8 @@ class RAGPipeline:
 
         results = dedupe_results_by_source(results, limit=candidate_limit)
         if use_rerank:
+            if results and rerank_callback is not None:
+                rerank_callback(len(results))
             results = relevance_rerank_results(query, results, limit)
         if use_mmr:
             results = mmr_select(results, limit=limit, lambda_mult=mmr_lambda)
@@ -451,6 +454,43 @@ class RAGPipeline:
         if (record.logical_id != chunk_id or payload.get("document_id") != document_id
                 or payload.get("rag_namespace") != self.rag_namespace
                 or payload.get("chunk_index") != chunk_index):
+            return None
+        return self._scoped_document_chunk(record, document_id)
+
+    def get_document_preview_chunks(self, document_id: str, chunk_id: str):
+        """Resolve one exact chunk and at most two neighboring payloads."""
+        self._require_managed_active()
+        scope = self._scope_filter(document_id=document_id)
+        page = self.vector_store.scroll_page(
+            self.collection_name, filters={**scope, "_id": [chunk_id]}, page_size=2,
+        )
+        if page.next_offset is not None or len(page.records) != 1:
+            return None, None, None
+        record = page.records[0]
+        target = self._scoped_document_chunk(record, document_id)
+        if target is None or record.logical_id != chunk_id:
+            return None, None, None
+        index = record.payload.get("chunk_index")
+        if type(index) is not int or index < 0:
+            return None, target, None
+        page = self.vector_store.scroll_page(
+            self.collection_name,
+            filters={**scope, "chunk_index": [index - 1, index + 1]},
+            page_size=3,
+        )
+        if page.next_offset is not None or len(page.records) > 2:
+            return None, target, None
+
+        def adjacent(position: int):
+            matches = [record for record in page.records if record.payload.get("chunk_index") == position]
+            return self._scoped_document_chunk(matches[0], document_id) if len(matches) == 1 else None
+
+        return adjacent(index - 1), target, adjacent(index + 1)
+
+    def _scoped_document_chunk(self, record, document_id: str):
+        payload = record.payload
+        if (payload.get("document_id") != document_id
+                or payload.get("rag_namespace") != self.rag_namespace):
             return None
         metadata = self._result_metadata(payload)
         self._validate_managed_metadata(metadata, document_id=document_id)

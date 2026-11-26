@@ -27,6 +27,7 @@ import {
   useQaMessages,
   useQaMutations,
 } from "../features/qa/queries";
+import { useQaAnswerStream } from "../features/qa/stream";
 import type { QaMessage, QaSource } from "../features/qa/types";
 
 const message = (reason: unknown, fallback: string) =>
@@ -48,6 +49,15 @@ export function QaPage() {
   const messages = useQaMessages(enabled ? selectedId : undefined);
   const documents = useDocumentsQuery();
   const mutations = useQaMutations();
+  const accepted = mutations.ask.data;
+  const pending = messages.items.find((item) =>
+    item.role === "assistant" && item.status === "pending" && item.mode !== "summary",
+  );
+  const acceptedId = accepted?.conversation_id === selectedId && accepted?.status === "pending"
+    ? accepted.message_id
+    : undefined;
+  const streamConversationId = enabled && !messages.isError ? selectedId : undefined;
+  const liveAnswer = useQaAnswerStream(streamConversationId, pending?.message_id ?? acceptedId);
   const split = useResizableSplit({
     storageKey: "zhiyan.ui.qa.split",
     defaultLeft: 224,
@@ -134,7 +144,7 @@ export function QaPage() {
   }
   function showSources(item: QaMessage, trigger: HTMLButtonElement, citationId?: string) {
     setSources(item.sources);
-    setSourceMessageId(item.message_id);
+    setSourceMessageId(item.status === "completed" ? item.message_id : undefined);
     setActiveCitationId(citationId);
     setSourceTrigger(trigger);
     if (window.innerWidth < 1200) setSourceOpen(true);
@@ -307,6 +317,7 @@ export function QaPage() {
               ) : (
                 <MessageList
                   messages={currentMessages}
+                  liveAnswer={liveAnswer}
                   activeCitationId={activeCitationId}
                   onSources={showSources}
                   onRetry={(item) =>
@@ -332,6 +343,7 @@ export function QaPage() {
                     question,
                     mode,
                     clientRequestId: newClientRequestId(),
+                    stream: typeof EventSource === "function",
                   })
                 }
               />

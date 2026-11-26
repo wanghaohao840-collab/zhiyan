@@ -52,6 +52,7 @@ def test_result_is_structured_and_uses_authoritative_name():
     assert result.result_count == 1
     assert result.results[0].document_name == "论文.pdf"
     assert result.results[0].locator.content_sha256 == HASH
+    assert result.results[0].locator.page_number == 2
     assert result.results[0].rank == 1
 
 

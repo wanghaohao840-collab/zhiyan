@@ -243,6 +243,7 @@ def test_exact_chunk_backend_contract(tmp_path, monkeypatch, backend):
         pipeline = qdrant_module.QdrantRAGPipeline(qdrant_client=client, rag_namespace="alice")
     try:
         pipeline.add_text("First source paragraph.", document_id="doc-1")
+        pipeline.add_text("Adjacent source paragraph.", document_id="doc-1", replace_existing=False)
         pipeline.add_text("Other private paragraph.", document_id="doc-2")
         chunk = pipeline.get_document_chunks("doc-1")[0]
         index = chunk["metadata"]["chunk_index"]
@@ -252,7 +253,8 @@ def test_exact_chunk_backend_contract(tmp_path, monkeypatch, backend):
         assert result.success
         assert result.data["result_count"] >= 1
         assert {item["document_id"] for item in result.data["results"]} == {"doc-1"}
-        assert result.data["results"][0]["content_sha256"] == hashlib.sha256(chunk["content"].encode()).hexdigest()
+        source = next(item for item in result.data["results"] if item["chunk_id"] == chunk["id"])
+        assert source["content_sha256"] == hashlib.sha256(chunk["content"].encode()).hexdigest()
         # Resolver may not fall back to reading the entire document.
         monkeypatch.setattr(pipeline, "get_document_chunks", lambda *a: pytest.fail("unbounded reader"))
         found = pipeline.get_document_chunk("doc-1", chunk["id"], index)
@@ -263,6 +265,11 @@ def test_exact_chunk_backend_contract(tmp_path, monkeypatch, backend):
         resolved = tool.execute_result("get_document_chunk", document_id="doc-1", chunk_id=chunk["id"], chunk_index=index)
         assert resolved.success
         assert resolved.data["chunk"]["content"] == chunk["content"]
+        previous, target, following = tool.get_document_preview_chunks("doc-1", chunk["id"])
+        assert previous is None
+        assert target["content"] == chunk["content"]
+        assert following["content"] == "Adjacent source paragraph."
+        assert tool.get_document_preview_chunks("doc-2", chunk["id"]) == (None, None, None)
     finally:
         if client is not None:
             client.close()

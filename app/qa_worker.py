@@ -7,7 +7,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from time import monotonic
-from typing import Iterator, Protocol, Sequence
+from typing import Callable, Iterator, Protocol, Sequence
 from uuid import uuid4
 
 from app.qa_answer_engine import QaAnswerEngine, QaAnswerRequest, QaEngineError
@@ -113,6 +113,8 @@ class QaWorkerPool:
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._threads: list[threading.Thread] = []
+        self._questions: queue.Queue[Callable[[bool], None]] = queue.Queue(maxsize=16)
+        self._question_admission = threading.Lock()
         self._refresh_queue: queue.Queue[_Refresh] = queue.Queue()
         self._refresh_keys: set[tuple[str, str]] = set()
         self._refresh_lock = threading.Lock()
@@ -136,14 +138,35 @@ class QaWorkerPool:
         self.notify()
 
     def stop(self, wait: bool = True) -> None:
-        self._stop.set()
+        with self._question_admission:
+            self._stop.set()
         self._wake.set()
         if wait:
             for thread in self._threads:
                 thread.join()
+        while True:
+            try:
+                question = self._questions.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                question(False)
+            except Exception:
+                logger.exception("Could not finalize an interrupted QA question")
 
     def notify(self) -> None:
         self._wake.set()
+
+    def schedule_question(self, question: Callable[[bool], None]) -> bool:
+        with self._question_admission:
+            if self._stop.is_set() or not any(thread.is_alive() for thread in self._threads):
+                return False
+            try:
+                self._questions.put_nowait(question)
+            except queue.Full:
+                return False
+        self.notify()
+        return True
 
     def schedule_summary_refresh(self, user_id: str, conversation_id: str) -> None:
         key = (user_id, conversation_id)
@@ -157,6 +180,14 @@ class QaWorkerPool:
     def _loop(self, worker_id: str) -> None:
         while not self._stop.is_set():
             try:
+                try:
+                    question = self._questions.get_nowait()
+                except queue.Empty:
+                    question = None
+                else:
+                    question(not self._stop.is_set())
+                if self._stop.is_set():
+                    return
                 job = self.job_repository.claim_next(
                     worker_id, lease_seconds=self.lease_seconds
                 )
@@ -173,8 +204,9 @@ class QaWorkerPool:
                 try:
                     refresh = self._refresh_queue.get_nowait()
                 except queue.Empty:
-                    self._wake.wait(self.poll_interval)
-                    self._wake.clear()
+                    if question is None:
+                        self._wake.wait(self.poll_interval)
+                        self._wake.clear()
                     continue
                 try:
                     self._run_refresh(refresh)

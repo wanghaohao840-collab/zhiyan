@@ -25,6 +25,15 @@ class DeterministicQaAnswerEngine:
     def __init__(self) -> None:
         self._failures: set[str] = set()
 
+    def answer_stream(self, runtime, request, *, stage_callback, token_callback):
+        stage_callback("retrieving", 1)
+        answer = self.answer(runtime, request)
+        stage_callback("generating", None)
+        if "[stream-test]" in request.question:
+            token_callback("这是确定性的可信回答")
+            time.sleep(2)
+        return answer
+
     def answer(
         self,
         runtime: object,

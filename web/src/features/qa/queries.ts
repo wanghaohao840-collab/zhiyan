@@ -148,7 +148,12 @@ export function useQaMutations() {
   };
   const create = useMutation({ mutationFn: (documentIds: string[]) => api.createQaConversation(request, documentIds), onSuccess: (item) => refresh(item.conversation_id) });
   const retryableOnce = (failureCount: number, error: Error) => failureCount < 1 && error instanceof ApiError && error.retryable;
-  const ask = useMutation({ mutationFn: (v: { conversationId: string; question: string; mode: QaMode; clientRequestId: string }) => api.askQaQuestion(request, v.conversationId, v.question, v.mode, v.clientRequestId), retry: retryableOnce, onSuccess: (item) => refresh(item.conversation_id) });
+  const ask = useMutation({
+    mutationFn: (v: { conversationId: string; question: string; mode: QaMode; clientRequestId: string; stream?: boolean }) =>
+      api.askQaQuestion(request, v.conversationId, v.question, v.mode, v.clientRequestId, v.stream),
+    retry: retryableOnce,
+    onSuccess: (item) => refresh(item.conversation_id),
+  });
   const retry = useMutation({ mutationFn: (v: { messageId: string; conversationId: string; clientRequestId: string }) => api.retryQaMessage(request, v.messageId, v.clientRequestId), retry: retryableOnce, onSuccess: (item) => refresh(item.conversation_id) });
   const summarize = useMutation({ mutationFn: (v: { conversationId: string; instruction: string; clientRequestId: string }) => api.startQaSummary(request, v.conversationId, v.instruction, v.clientRequestId), retry: retryableOnce, onSuccess: (job) => { client.setQueryData(qaJobKey(job.job_id), job); client.setQueryData(qaActiveSummaryKey(job.conversation_id), { job }); } });
   const cancel = useMutation({ mutationFn: (jobId: string) => api.cancelQaJob(request, jobId), onSuccess: (job) => client.setQueryData(qaJobKey(job.job_id), job) });

@@ -86,6 +86,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File deploy\windows\Restore-D
 ```
 
 新格式备份由宿主机数据归档、Qdrant 卷归档、各自的 SHA-256 和元数据组成。
+Neo4j 的宿主机绑定目录 `neo4j/data` 与 SQLite 一起归档。备份脚本发现
+图谱数据后，确认 App、Qdrant 和 Neo4j 全部停止，才归档宿主机目录及 Qdrant 卷。
+恢复图谱归档时会校验元数据中的两个归档及校验和，当前图谱部署拒绝使用
+缺少 Neo4j 数据的归档。
+
 恢复演练使用独立 Compose project、独立端口、独立宿主机目录和名称以
 `zhiyan-drill-` 开头的临时卷；成功后只删除经过名称验证的临时资源。
 

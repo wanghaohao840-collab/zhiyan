@@ -10,6 +10,7 @@ from evals.rag_quality_experiment import (
 )
 from evals.rag_quality_scoring import extract_answer_body, score_answer
 from hello_agents.memory.embedding import SimpleEmbedding
+from hello_agents.tools.builtin.rag_tool import QA_CITATION_REQUIREMENT
 
 
 def test_dataset_covers_languages_and_rejects_evidence_outside_scope(tmp_path):
@@ -43,7 +44,7 @@ def test_only_instruction_changes_and_only_body_citations_are_scored(tmp_path):
     required = evaluate_case(pipeline, case, RERANK, generate=generate)
     control = evaluate_case(pipeline, case, NO_CITATION_INSTRUCTION, generate=generate)
     assert required["ranked_chunks"] == control["ranked_chunks"]
-    assert prompts[0].replace("，并使用资料中的稳定引用 ID 标注依据", "", 1) == prompts[1]
+    assert prompts[0].replace(QA_CITATION_REQUIREMENT, "只能基于资料回答。", 1) == prompts[1]
     assert required["sources"] and required["citations"]["emitted"] == []
 
     body = extract_answer_body("🤖 RAG回答:\n36\n\n📚 参考知识条数: 1\n📌 参考来源:\n[S-abcdef123456]")
