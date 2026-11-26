@@ -139,3 +139,14 @@
 ~~~
 
 将 --retrieval-dir 及其参数替换为 --supplemental 可运行独立补充样本，覆盖版本分界、已确认与待确认的状态、同实体字段以及跨段关联。移除必要证据后的原始错误回答与校验拦截仍保留在逐题报告里。
+
+
+### JSON 和内存 Qdrant 对照
+
+使用常规 24 题和跨规模冻结 30 题，将同一批向量分别写入两个临时后端。四种检索策略都核对前五排名、所选文档和回查到的页码。评测在另一命名空间加入相同文档 ID、相同正文和不同页码的记录，验证不会混入。提供聊天环境文件会抽取六题，通过应用问答验证答复和引文。
+
+~~~powershell
+.\venv\Scripts\python.exe -m evals.rag_qdrant_parity --embedding-env-file deploy/.env --chat-env-file .env --output-dir output/rag-qdrant-parity-live
+~~~
+
+使用 --offline-vectors 可单独跑本地确定性向量对照。结果适用于内存 Qdrant，远程索引、性能和持久化需要各自实测。
