@@ -1,7 +1,7 @@
 {
   "name": "codex-harness",
   "displayName": "Codex Monitor",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Antigravity × Codex 显式 Harness 与单向实时监控插件：依据 AGENTS.md 自动路由模型与门禁，管理任务包与范围白名单，并在侧边栏实时监控 Codex 派单与执行轨迹。",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [

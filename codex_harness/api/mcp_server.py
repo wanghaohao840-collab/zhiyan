@@ -13,15 +13,16 @@ from typing import Any
 from pydantic import ValidationError
 
 from codex_harness import __version__
-from codex_harness.model.entities import SandboxMode
+from codex_harness.model.entities import DispatchStatus, SandboxMode
 from codex_harness.repository.dispatch_repository import DispatchRepository
 from codex_harness.repository.packet_repository import PacketRepository
 from codex_harness.repository.session_repository import SessionRepository
-from codex_harness.schema.contracts import DispatchRequest, RoutingRequest
+from codex_harness.schema.contracts import DispatchRequest, RoutingRequest, SpecInferenceRequest
 from codex_harness.service.dispatch_service import DispatchService
 from codex_harness.service.monitor_service import MonitorService
 from codex_harness.service.routing_service import RoutingService
 from codex_harness.service.scope_service import ScopeService
+from codex_harness.service.spec_inference_service import SpecInferenceService
 
 LOGGER = logging.getLogger(__name__)
 
@@ -73,6 +74,7 @@ class CodexHarnessMcpServer:
         scope_service: ScopeService,
         dispatch_service: DispatchService,
         monitor_service: MonitorService,
+        spec_inference_service: SpecInferenceService,
         app_html_path: Path | None = None,
     ) -> None:
         self._workspace = workspace.resolve()
@@ -84,6 +86,7 @@ class CodexHarnessMcpServer:
         self._scope_service = scope_service
         self._dispatch_service = dispatch_service
         self._monitor_service = monitor_service
+        self._spec_inference_service = spec_inference_service
         self._app_html_path = app_html_path
 
     def _load_app_html(self) -> str:
@@ -133,6 +136,12 @@ class CodexHarnessMcpServer:
                 "inputSchema": RoutingRequest.model_json_schema(),
             },
             {
+                "name": "codex_infer_dispatch_spec",
+                "title": "按方案与行业标准智能推导派单规格",
+                "description": "根据仓库方案文档、续轮会话上下文与行业软件功能模块完成标准，自动推导目标与可验证完成条件、允许改动文件白名单、验收命令与推荐风险路由。",
+                "inputSchema": SpecInferenceRequest.model_json_schema(),
+            },
+            {
                 "name": "codex_list_task_packets",
                 "title": "列出仓库任务包与门禁状态",
                 "description": "扫描 docs/agent-workflow/task-packets/，返回各计划的 REVIEW 结论、任务包依赖就绪状态及允许改动文件边界。",
@@ -164,7 +173,7 @@ class CodexHarnessMcpServer:
             {
                 "name": "codex_cancel_dispatch",
                 "title": "中止运行中的 Codex 派单",
-                "description": "安全终止指定 run_id 的后台 codex exec 子进程并将其状态标记为 cancelled。",
+                "description": "请求中止指定 run_id，由持有后台 codex exec 进程的服务确认退出后更新状态。",
                 "inputSchema": {
                     "type": "object",
                     "required": ["run_id"],
@@ -235,9 +244,30 @@ class CodexHarnessMcpServer:
                 "_meta": APP_ONLY_META,
             },
             {
+                "name": "app_list_plan_docs",
+                "title": "App 获取仓库方案文档列表",
+                "description": "前端派单表单加载 docs/superpowers/plans 与 docs/agent-work 方案清单。",
+                "inputSchema": {"type": "object", "properties": {}},
+                "_meta": APP_ONLY_META,
+            },
+            {
+                "name": "app_infer_dispatch_spec",
+                "title": "App 智能推导目标、白名单与验收命令",
+                "description": "前端派单表单基于方案、续轮上下文与行业功能模块完成标准自动生成完整规格。",
+                "inputSchema": SpecInferenceRequest.model_json_schema(),
+                "_meta": APP_ONLY_META,
+            },
+            {
                 "name": "app_create_dispatch",
                 "title": "App 发起显式派单",
                 "description": "前端派单表单提交接口。",
+                "inputSchema": DispatchRequest.model_json_schema(),
+                "_meta": APP_ONLY_META,
+            },
+            {
+                "name": "app_preview_dispatch",
+                "title": "App 预览有效派单规格",
+                "description": "按正式派单的规则计算当前表单的目标、改动范围、验收命令和风险路由。",
                 "inputSchema": DispatchRequest.model_json_schema(),
                 "_meta": APP_ONLY_META,
             },
@@ -314,6 +344,23 @@ class CodexHarnessMcpServer:
                 )
                 return self._ok(text, decision.model_dump())
 
+            if name in ("codex_infer_dispatch_spec", "app_infer_dispatch_spec"):
+                req = SpecInferenceRequest.model_validate(args)
+                dispatch_req = DispatchRequest(
+                    **req.model_dump(exclude={"objective_hint"}), objective=req.objective_hint,
+                )
+                spec = self._dispatch_service.preview_spec(dispatch_req)
+                text = (
+                    f"已推导派单规格：{spec.rationale}\n"
+                    f"白名单 ({len(spec.allowed_files)}): {', '.join(spec.allowed_files[:6])}\n"
+                    f"验收命令 ({len(spec.verification_commands)}): {' ; '.join(spec.verification_commands[:3])}"
+                )
+                return self._ok(text, spec.model_dump())
+
+            if name == "app_list_plan_docs":
+                docs = self._spec_inference_service.list_plan_docs()
+                return self._ok("ok", {"plans": [d.model_dump() for d in docs]})
+
             if name in ("codex_list_task_packets", "app_get_task_packets"):
                 plan_filter = args.get("plan_filter")
                 groups = self._packet_repo.list_plan_groups(
@@ -330,6 +377,11 @@ class CodexHarnessMcpServer:
                 req = DispatchRequest.model_validate(args)
                 res = self._dispatch_service.dispatch(req)
                 return self._ok(res.message, res.model_dump())
+
+            if name == "app_preview_dispatch":
+                req = DispatchRequest.model_validate(args)
+                spec = self._dispatch_service.preview_spec(req)
+                return self._ok("已计算有效派单规格。", spec.model_dump())
 
             if name == "codex_dispatch_status":
                 run_id = args.get("run_id")
@@ -355,7 +407,13 @@ class CodexHarnessMcpServer:
                 updated = self._dispatch_service.cancel(run_id)
                 if updated is None:
                     return self._err(f"未找到派单记录: {run_id}")
-                return self._ok(f"派单 {run_id} 当前状态: {updated.status.value}", updated.model_dump())
+                if updated.status in (DispatchStatus.QUEUED, DispatchStatus.RUNNING):
+                    text = f"已提交派单 {run_id} 的中止请求，正在等待执行进程确认退出。"
+                    cancel_requested = True
+                else:
+                    text = f"派单 {run_id} 当前状态: {updated.status.value}"
+                    cancel_requested = False
+                return self._ok(text, {**updated.model_dump(), "cancel_requested": cancel_requested})
 
             if name == "codex_verify_scope":
                 run_id = args.get("run_id")
@@ -374,9 +432,8 @@ class CodexHarnessMcpServer:
                         forbidden_paths=rec.forbidden_paths,
                         observed_files=observed,
                         read_only_expected=rec.routing.sandbox == SandboxMode.READ_ONLY,
+                        packet_scope=rec.packet_id is not None,
                     )
-                    rec.scope_audit = audit
-                    self._dispatch_repo.save(rec)
                     return self._ok(audit.summary, audit.model_dump())
 
                 allowed = self._scope_service.validate_allowed_files(
@@ -553,11 +610,21 @@ def build_default_server(
     packet_repo = PacketRepository(workspace=workspace)
     routing_service = RoutingService()
     scope_service = ScopeService()
+    spec_inference_service = SpecInferenceService(
+        workspace=workspace,
+        session_repo=session_repo,
+        dispatch_repo=dispatch_repo,
+        packet_repo=packet_repo,
+        routing_service=routing_service,
+        scope_service=scope_service,
+    )
     dispatch_service = DispatchService(
         default_workspace=workspace,
         dispatch_repo=dispatch_repo,
         routing_service=routing_service,
         scope_service=scope_service,
+        spec_inference_service=spec_inference_service,
+        session_repo=session_repo,
     )
     monitor_service = MonitorService(
         workspace=workspace,
@@ -575,6 +642,7 @@ def build_default_server(
         scope_service=scope_service,
         dispatch_service=dispatch_service,
         monitor_service=monitor_service,
+        spec_inference_service=spec_inference_service,
         app_html_path=app_html_path,
     )
 

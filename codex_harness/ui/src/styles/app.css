@@ -1,52 +1,69 @@
 :root {
   --ch-bg: var(--color-background-primary, #fbfbfa);
-  --ch-bg-rail: var(--color-background-secondary, #f5f5f3);
-  --ch-bg-card: var(--color-background-primary, #ffffff);
-  --ch-bg-dispatch: #f6f3ea;
-  --ch-bg-dispatch-border: #e6dfd0;
-  --ch-bg-progress: #f8f8f6;
-  --ch-bg-subtle: var(--color-background-tertiary, #f2f2ef);
   --ch-text: var(--color-text-primary, #1f2328);
-  --ch-text-secondary: var(--color-text-secondary, #59636e);
-  --ch-text-muted: var(--color-text-tertiary, #828b96);
-  --ch-border: var(--color-border-primary, #e6e5e1);
-  --ch-border-strong: var(--color-border-secondary, #d4d3ce);
-  --ch-accent: #d95d39;
-  --ch-accent-soft: rgba(217, 93, 57, 0.12);
-  --ch-blue: #2563eb;
-  --ch-blue-soft: rgba(37, 99, 235, 0.1);
-  --ch-green: #16a34a;
-  --ch-green-soft: rgba(22, 163, 74, 0.12);
-  --ch-red: #dc2626;
-  --ch-red-soft: rgba(220, 38, 38, 0.1);
-  --ch-amber: #b45309;
-  --ch-amber-soft: rgba(217, 119, 6, 0.12);
-  --ch-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --ch-text-secondary: var(--color-text-secondary, color-mix(in srgb, var(--ch-text) 72%, var(--ch-bg)));
+  --ch-text-muted: var(--color-text-tertiary, color-mix(in srgb, var(--ch-text) 52%, var(--ch-bg)));
+  /* NOTE: 所有派生表面与边框均基于宿主 --ch-bg 动态混合，兼顾暖色护眼浅主题与标准浅色主题，保证肉眼清晰辨识且彻底杜绝黑框黑底 */
+  --ch-bg-rail: color-mix(in srgb, var(--ch-bg) 94%, #6e5a33 6%);
+  --ch-bg-card: color-mix(in srgb, var(--ch-bg) 26%, #fffdf6 74%);
+  --ch-bg-dispatch: color-mix(in srgb, var(--ch-bg) 22%, #f4f7fc 78%);
+  --ch-bg-dispatch-border: color-mix(in srgb, #2e5d96 86%, var(--ch-bg) 14%);
+  --ch-bg-progress: color-mix(in srgb, var(--ch-bg) 84%, #7a5c2e 16%);
+  --ch-bg-progress-bar: color-mix(in srgb, var(--ch-bg) 74%, #7a5c2e 26%);
+  --ch-bg-progress-border: color-mix(in srgb, #7d5225 86%, var(--ch-bg) 14%);
+  --ch-bg-codex-border: color-mix(in srgb, #7d5225 76%, var(--ch-bg) 24%);
+  --ch-bg-subtle: color-mix(in srgb, var(--ch-bg) 86%, #755d34 14%);
+  --ch-bg-code: color-mix(in srgb, var(--ch-bg-card) 88%, var(--ch-text) 12%);
+  --ch-border: color-mix(in srgb, #7d6237 52%, var(--ch-bg) 48%);
+  --ch-border-strong: color-mix(in srgb, #6e5329 74%, var(--ch-bg) 26%);
+  --ch-accent: #c94f2c;
+  --ch-accent-soft: rgba(201, 79, 44, 0.14);
+  --ch-blue: #1842b8;
+  --ch-blue-soft: rgba(24, 66, 184, 0.13);
+  --ch-blue-border: rgba(24, 66, 184, 0.36);
+  --ch-green: #115c31;
+  --ch-green-soft: rgba(17, 92, 49, 0.13);
+  --ch-green-border: rgba(17, 92, 49, 0.34);
+  --ch-red: #a31818;
+  --ch-red-soft: rgba(163, 24, 24, 0.12);
+  --ch-red-border: rgba(163, 24, 24, 0.36);
+  --ch-amber: #85390b;
+  --ch-amber-soft: rgba(133, 57, 11, 0.14);
+  --ch-amber-border: rgba(133, 57, 11, 0.36);
+  --ch-shadow-sm: 0 2px 6px rgba(68, 52, 22, 0.09);
   --ch-mono: 'Cascadia Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 [data-theme='dark'] {
   --ch-bg: var(--color-background-primary, #14161a);
-  --ch-bg-rail: var(--color-background-secondary, #191c21);
-  --ch-bg-card: var(--color-background-secondary, #1e2228);
-  --ch-bg-dispatch: #25221b;
-  --ch-bg-dispatch-border: #3b3529;
-  --ch-bg-progress: #181b20;
-  --ch-bg-subtle: var(--color-background-tertiary, #232830);
   --ch-text: var(--color-text-primary, #e8eaed);
-  --ch-text-secondary: var(--color-text-secondary, #a8b0ba);
-  --ch-text-muted: var(--color-text-tertiary, #7f8894);
-  --ch-border: var(--color-border-primary, #2c323b);
-  --ch-border-strong: var(--color-border-secondary, #3d4551);
+  --ch-bg-rail: color-mix(in srgb, var(--ch-bg) 93%, #ffffff 7%);
+  --ch-bg-card: color-mix(in srgb, var(--ch-bg) 89%, #ffffff 11%);
+  --ch-bg-dispatch: color-mix(in srgb, var(--ch-bg) 84%, #3b82f6 16%);
+  --ch-bg-dispatch-border: color-mix(in srgb, #60a5fa 68%, var(--ch-bg) 32%);
+  --ch-bg-progress: color-mix(in srgb, var(--ch-bg) 94%, #ffffff 6%);
+  --ch-bg-progress-bar: color-mix(in srgb, var(--ch-bg) 87%, #ffffff 13%);
+  --ch-bg-progress-border: color-mix(in srgb, #d4a36a 58%, var(--ch-bg) 42%);
+  --ch-bg-codex-border: color-mix(in srgb, #d4a36a 50%, var(--ch-bg) 50%);
+  --ch-bg-subtle: color-mix(in srgb, var(--ch-bg) 87%, #ffffff 13%);
+  --ch-bg-code: color-mix(in srgb, var(--ch-bg-card) 86%, var(--ch-text) 14%);
+  --ch-border: color-mix(in srgb, var(--ch-bg) 74%, #ffffff 26%);
+  --ch-border-strong: color-mix(in srgb, var(--ch-bg) 62%, #ffffff 38%);
+  --ch-accent: #e4714f;
+  --ch-accent-soft: rgba(228, 113, 79, 0.16);
   --ch-blue: #60a5fa;
-  --ch-blue-soft: rgba(96, 165, 250, 0.14);
+  --ch-blue-soft: rgba(96, 165, 250, 0.16);
+  --ch-blue-border: rgba(96, 165, 250, 0.42);
   --ch-green: #4ade80;
-  --ch-green-soft: rgba(74, 222, 128, 0.14);
+  --ch-green-soft: rgba(74, 222, 128, 0.15);
+  --ch-green-border: rgba(74, 222, 128, 0.36);
   --ch-red: #f87171;
-  --ch-red-soft: rgba(248, 113, 113, 0.14);
+  --ch-red-soft: rgba(248, 113, 113, 0.15);
+  --ch-red-border: rgba(248, 113, 113, 0.38);
   --ch-amber: #fbbf24;
-  --ch-amber-soft: rgba(251, 191, 36, 0.14);
-  --ch-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.28);
+  --ch-amber-soft: rgba(251, 191, 36, 0.16);
+  --ch-amber-border: rgba(251, 191, 36, 0.38);
+  --ch-shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.32);
 }
 
 * {
@@ -170,8 +187,183 @@ body,
 }
 
 .ch-search-box {
-  padding: 4px 10px 8px;
+  padding: 4px 10px 6px;
   position: relative;
+}
+
+.ch-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 0 10px 8px;
+  border-bottom: 1px solid var(--ch-border);
+}
+
+.ch-filter-pill {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ch-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 5px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.ch-filter-pill:hover {
+  background: var(--ch-bg-subtle);
+  color: var(--ch-text);
+}
+
+.ch-filter-pill.is-active {
+  background: var(--ch-bg-card);
+  color: var(--ch-text);
+  border-color: var(--ch-border);
+  box-shadow: var(--ch-shadow-sm);
+}
+
+.ch-time-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.ch-time-divider {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--ch-text-muted);
+  padding: 4px 6px 2px;
+  letter-spacing: 0.02em;
+}
+
+.ch-timeline-flat {
+  padding: 4px 2px;
+}
+
+.ch-conv-node {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ch-tag-tiny {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 9.5px;
+  font-weight: 600;
+  background: var(--ch-bg-subtle);
+  color: var(--ch-text-secondary);
+  flex-shrink: 0;
+}
+
+.ch-tag-harness {
+  background: var(--ch-blue-soft);
+  color: var(--ch-blue);
+}
+
+.ch-tag-proj {
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ch-sub-wrap {
+  padding-left: 10px;
+}
+
+.ch-sub-toggle {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--ch-text-muted);
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  text-align: left;
+}
+
+.ch-sub-toggle:hover {
+  background: var(--ch-bg-subtle);
+  color: var(--ch-text-secondary);
+}
+
+.ch-sub-toggle-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ch-sub-list {
+  margin-left: 7px;
+  padding-left: 8px;
+  border-left: 1.5px solid var(--ch-border-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 2px;
+  margin-bottom: 4px;
+}
+
+.ch-sub-item {
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 7px;
+  padding: 5px 7px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--ch-text);
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.ch-sub-item:hover {
+  background: var(--ch-bg-subtle);
+}
+
+.ch-sub-item.is-selected {
+  background: var(--ch-bg-card);
+  border-color: var(--ch-border);
+  box-shadow: var(--ch-shadow-sm);
+}
+
+.ch-sub-item-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  margin-bottom: 2px;
+}
+
+.ch-sub-nick {
+  font-weight: 600;
+  color: var(--ch-text-secondary);
+}
+
+.ch-sub-meta {
+  color: var(--ch-text-muted);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.ch-sub-title {
+  font-size: 11px;
+  color: var(--ch-text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .ch-search-input {
@@ -487,7 +679,7 @@ body,
 
 .ch-btn-danger {
   color: var(--ch-red);
-  border-color: rgba(220, 38, 38, 0.35);
+  border-color: var(--ch-red-border);
   background: var(--ch-red-soft);
 }
 
@@ -507,7 +699,7 @@ body,
   margin: 10px 18px 0;
   padding: 8px 12px;
   border-radius: 8px;
-  border: 1px solid rgba(220, 38, 38, 0.3);
+  border: 1px solid var(--ch-red-border);
   background: var(--ch-red-soft);
   color: var(--ch-red);
   font-size: 12px;
@@ -589,12 +781,13 @@ body,
 .ch-avatar-agy {
   background: var(--ch-blue-soft);
   color: var(--ch-blue);
-  border-color: rgba(37, 99, 235, 0.25);
+  border-color: var(--ch-blue-border);
 }
 
 .ch-avatar-codex {
   background: var(--ch-bg-card);
   color: var(--ch-text);
+  border-color: var(--ch-bg-progress-border);
 }
 
 .ch-bubble {
@@ -609,14 +802,14 @@ body,
 .ch-bubble-antigravity {
   width: min(88%, 680px);
   background: var(--ch-bg-dispatch);
-  border: 1px solid var(--ch-bg-dispatch-border);
+  border: 1.5px solid var(--ch-bg-dispatch-border);
   border-top-right-radius: 5px;
 }
 
 .ch-bubble-codex {
   width: min(94%, 760px);
   background: var(--ch-bg-card);
-  border: 1px solid var(--ch-border);
+  border: 1.5px solid var(--ch-bg-codex-border);
   border-top-left-radius: 5px;
 }
 
@@ -659,7 +852,7 @@ body,
 .ch-progress-card {
   width: min(94%, 760px);
   background: var(--ch-bg-progress);
-  border: 1px solid var(--ch-border);
+  border: 1.5px solid var(--ch-bg-progress-border);
   border-radius: 12px;
   overflow: hidden;
   box-shadow: var(--ch-shadow-sm);
@@ -671,9 +864,9 @@ body,
   justify-content: space-between;
   gap: 8px;
   padding: 9px 13px;
-  background: var(--ch-bg-subtle);
+  background: var(--ch-bg-progress-bar);
   font-size: 12px;
-  color: var(--ch-text-secondary);
+  color: var(--ch-text);
   cursor: pointer;
   user-select: none;
 }
@@ -682,7 +875,7 @@ body,
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  font-weight: 500;
+  font-weight: 600;
   min-width: 0;
 }
 
@@ -691,12 +884,13 @@ body,
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  color: var(--ch-text-secondary);
 }
 
 .ch-mini-chip {
   border: 1px solid var(--ch-border);
   background: var(--ch-bg-card);
-  color: var(--ch-text-muted);
+  color: var(--ch-text-secondary);
   font-size: 10.5px;
   padding: 1px 7px;
   border-radius: 999px;
@@ -705,12 +899,12 @@ body,
 
 .ch-mini-chip.is-on {
   color: var(--ch-blue);
-  border-color: rgba(37, 99, 235, 0.35);
+  border-color: var(--ch-blue-border);
   background: var(--ch-blue-soft);
 }
 
 .ch-progress-body {
-  border-top: 1px solid var(--ch-border);
+  border-top: 1px solid var(--ch-bg-progress-border);
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
@@ -791,11 +985,13 @@ body,
 .ch-exit-pill.is-ok {
   background: var(--ch-green-soft);
   color: var(--ch-green);
+  border: 1px solid var(--ch-green-border);
 }
 
 .ch-exit-pill.is-err {
   background: var(--ch-red-soft);
   color: var(--ch-red);
+  border: 1px solid var(--ch-red-border);
 }
 
 .ch-cmd-output {
@@ -840,7 +1036,7 @@ body,
   gap: 8px;
   padding: 9px 12px;
   border-radius: 10px;
-  border: 1px solid rgba(220, 38, 38, 0.32);
+  border: 1px solid var(--ch-red-border);
   background: var(--ch-red-soft);
   color: var(--ch-red);
   font-size: 12px;
@@ -928,20 +1124,22 @@ body,
   font-size: 11.5px;
   padding: 1px 5px;
   border-radius: 5px;
-  background: var(--ch-bg-subtle);
+  background: var(--ch-bg-code);
   border: 1px solid var(--ch-border);
+  color: var(--ch-text);
 }
 
 .ch-md-codeblock {
   margin: 6px 0 8px;
   padding: 9px 11px;
   border-radius: 8px;
-  background: var(--ch-bg-subtle);
+  background: var(--ch-bg-code);
   border: 1px solid var(--ch-border);
   font-family: var(--ch-mono);
   font-size: 11.5px;
   overflow-x: auto;
   white-space: pre;
+  color: var(--ch-text);
 }
 
 .ch-pill {
@@ -958,26 +1156,31 @@ body,
 .ch-pill-blue {
   background: var(--ch-blue-soft);
   color: var(--ch-blue);
+  border: 1px solid var(--ch-blue-border);
 }
 
 .ch-pill-green {
   background: var(--ch-green-soft);
   color: var(--ch-green);
+  border: 1px solid var(--ch-green-border);
 }
 
 .ch-pill-red {
   background: var(--ch-red-soft);
   color: var(--ch-red);
+  border: 1px solid var(--ch-red-border);
 }
 
 .ch-pill-amber {
   background: var(--ch-amber-soft);
   color: var(--ch-amber);
+  border: 1px solid var(--ch-amber-border);
 }
 
 .ch-pill-neutral {
   background: var(--ch-bg-subtle);
   color: var(--ch-text-secondary);
+  border: 1px solid var(--ch-border);
 }
 
 .ch-diff-line-add {

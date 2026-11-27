@@ -8,7 +8,11 @@ from pathlib import Path
 from codex_harness.model.entities import DispatchStatus, ScopeAuditStatus
 from codex_harness.repository.dispatch_repository import DispatchRepository
 from codex_harness.repository.packet_repository import PacketRepository
-from codex_harness.repository.session_repository import SessionRepository, parse_exec_events_file
+from codex_harness.repository.session_repository import (
+    SessionRepository,
+    derive_worktree_name,
+    parse_exec_events_file,
+)
 from codex_harness.schema.contracts import (
     DashboardSnapshot,
     DispatchRoundRecord,
@@ -45,8 +49,14 @@ class MonitorService:
         self._packet_repo = packet_repo
 
     def _delegation_doc_path(self) -> str | None:
-        doc = self._workspace / "docs" / "agent-workflow" / "codex-delegation.md"
-        return str(doc.resolve()) if doc.exists() else None
+        for rel in (
+            Path("docs") / "agent-workflow" / "codex-delegation.md",
+            Path("docs") / "codex-delegation.md",
+        ):
+            doc = self._workspace / rel
+            if doc.exists():
+                return str(doc.resolve())
+        return None
 
     def _build_harness_session_summary(self, rounds: list[DispatchRoundRecord]) -> SessionSummary:
         """将同一 Harness 会话的多轮派单聚合成左侧栏摘要项。"""
@@ -58,12 +68,15 @@ class MonitorService:
             all_files.update(item.changed_files)
 
         updated_iso = latest.completed_at or latest.started_at
+        updated_ts = _parse_iso_ts(updated_iso)
         scope_status = latest.scope_audit.status if latest.scope_audit else ScopeAuditStatus.UNCHECKED
+        effective_parent = next((r.parent_thread_id for r in reversed(rounds) if r.parent_thread_id), None)
         return SessionSummary(
             session_id=latest.session_id,
             source_kind="harness",
             project_name=latest.project_name,
             workspace=latest.workspace,
+            worktree_name=derive_worktree_name(latest.workspace),
             title=first.title,
             model=latest.routing.model,
             effort=latest.routing.effort.value,
@@ -72,18 +85,47 @@ class MonitorService:
             status=latest.status.value,
             started_at=first.started_at,
             updated_at=updated_iso,
-            updated_ts=_parse_iso_ts(updated_iso),
+            updated_ts=updated_ts,
+            latest_activity_ts=updated_ts,
             originator=f"{latest.source_agent} → Codex",
+            is_subagent=bool(effective_parent),
+            parent_thread_id=effective_parent,
             packet_id=latest.packet_id,
+            packet_path=latest.packet_path if latest.packet_id is not None else None,
             run_id=latest.run_id,
+            cancel_requested=(
+                latest.status in (DispatchStatus.QUEUED, DispatchStatus.RUNNING)
+                and self._dispatch_repo.cancellation_requested(latest.run_id)
+            ),
             codex_thread_id=latest.codex_thread_id,
             command_count=total_cmds,
             file_count=len(all_files),
             scope_status=scope_status,
         )
 
-    def get_dashboard_snapshot(self, query: str | None = None, limit: int = 80) -> DashboardSnapshot:
-        """构建左侧项目会话树与顶部同步状态快照。"""
+    @staticmethod
+    def _matches_query(item: SessionSummary, lower_query: str) -> bool:
+        if not lower_query:
+            return True
+        haystack = " ".join(
+            filter(
+                None,
+                [
+                    item.title,
+                    item.project_name,
+                    item.workspace,
+                    item.worktree_name,
+                    item.model,
+                    item.agent_nickname,
+                    item.packet_id,
+                    item.session_id,
+                ],
+            )
+        ).lower()
+        return lower_query in haystack
+
+    def get_dashboard_snapshot(self, query: str | None = None, limit: int = 120) -> DashboardSnapshot:
+        """构建左侧按项目 → 主对话窗口（嵌套子代理）组织的实时同步快照。"""
         all_runs = self._dispatch_repo.list_all()
         runs_by_session: dict[str, list[DispatchRoundRecord]] = {}
         linked_codex_threads: set[str] = set()
@@ -96,59 +138,113 @@ class MonitorService:
             if run.status == DispatchStatus.RUNNING:
                 running_dispatches += 1
 
-        lower_query = query.strip().lower() if query else ""
-        merged_summaries: list[SessionSummary] = []
+        # 全量加载会话摘要（stat 缓存保障毫秒级响应），以便精确建立父子对话窗口归属
+        codex_sessions = self._session_repo.list_sessions(limit=max(limit * 3, 240), query=None)
+        codex_by_id: dict[str, SessionSummary] = {item.session_id: item for item in codex_sessions}
 
+        # 建立平铺的去重会话集合（复制避免污染缓存对象）
+        all_nodes: list[SessionSummary] = []
         for rounds in runs_by_session.values():
             rounds.sort(key=lambda item: (item.round_number, item.started_at))
             summary = self._build_harness_session_summary(rounds)
-            if lower_query:
-                haystack = " ".join(
-                    filter(
-                        None,
-                        [
-                            summary.title,
-                            summary.project_name,
-                            summary.workspace,
-                            summary.model,
-                            summary.packet_id,
-                            summary.session_id,
-                        ],
-                    )
-                ).lower()
-                if lower_query not in haystack:
-                    continue
-            merged_summaries.append(summary)
+            # 若该 Harness 续轮派单关联到了某个 Codex 子代理，继承其 parent_thread_id 以便归入同一对话窗口
+            if summary.codex_thread_id and summary.codex_thread_id in codex_by_id:
+                linked = codex_by_id[summary.codex_thread_id]
+                if linked.parent_thread_id:
+                    summary.parent_thread_id = linked.parent_thread_id
+                    summary.is_subagent = linked.is_subagent
+            all_nodes.append(summary)
 
-        codex_sessions = self._session_repo.list_sessions(limit=limit, query=query)
         for item in codex_sessions:
             if item.session_id in linked_codex_threads:
-                # 已关联到 Harness 派单的底层线程不重复展示
                 continue
-            merged_summaries.append(item)
+            all_nodes.append(item.model_copy(update={"child_sessions": [], "child_count": 0, "latest_activity_ts": item.updated_ts}))
 
-        merged_summaries.sort(key=lambda item: item.updated_ts, reverse=True)
+        node_by_id: dict[str, SessionSummary] = {node.session_id: node for node in all_nodes}
+        # 也允许通过 codex_thread_id 查到对应的 Harness 节点
+        for node in all_nodes:
+            if node.codex_thread_id and node.codex_thread_id not in node_by_id:
+                node_by_id[node.codex_thread_id] = node
 
-        # 按项目名分组，并保持最近活跃项目排在前面
+        def resolve_root_id(node: SessionSummary) -> str | None:
+            """向上沿 parent_thread_id 追溯，定位该子代理所属的最顶层主对话窗口。"""
+            visited: set[str] = {node.session_id}
+            curr_parent = node.parent_thread_id
+            last_valid_parent: str | None = None
+            while curr_parent and curr_parent not in visited:
+                parent_node = node_by_id.get(curr_parent)
+                if parent_node is None:
+                    break
+                visited.add(parent_node.session_id)
+                last_valid_parent = parent_node.session_id
+                curr_parent = parent_node.parent_thread_id
+            return last_valid_parent
+
+        root_nodes: list[SessionSummary] = []
+        children_by_root: dict[str, list[SessionSummary]] = {}
+        for node in all_nodes:
+            root_id = resolve_root_id(node)
+            if root_id and root_id != node.session_id:
+                children_by_root.setdefault(root_id, []).append(node)
+            else:
+                root_nodes.append(node)
+
+        lower_query = query.strip().lower() if query else ""
+        filtered_roots: list[SessionSummary] = []
+
+        for root in root_nodes:
+            kids = children_by_root.get(root.session_id, [])
+            kids.sort(key=lambda item: item.updated_ts, reverse=True)
+
+            if lower_query:
+                root_hit = self._matches_query(root, lower_query)
+                matched_kids = [k for k in kids if self._matches_query(k, lower_query)]
+                if not root_hit and not matched_kids:
+                    continue
+                visible_kids = kids if root_hit else matched_kids
+            else:
+                visible_kids = kids
+
+            latest_ts = max([root.updated_ts, *(k.updated_ts for k in visible_kids)])
+            any_running = root.status == "running" or any(k.status == "running" for k in visible_kids)
+            root_copy = root.model_copy(
+                update={
+                    "child_sessions": visible_kids,
+                    "child_count": len(visible_kids),
+                    "latest_activity_ts": latest_ts,
+                    "status": "running" if any_running else root.status,
+                }
+            )
+            filtered_roots.append(root_copy)
+
+        filtered_roots.sort(key=lambda item: item.latest_activity_ts, reverse=True)
+        filtered_roots = filtered_roots[:limit]
+
+        # 按项目名分组，并将各项目内所有 worktree 会话收敛在同一主仓库下
         groups_map: dict[str, ProjectSessionGroup] = {}
-        for item in merged_summaries:
-            group = groups_map.get(item.project_name)
+        total_threads = 0
+        for root in filtered_roots:
+            group = groups_map.get(root.project_name)
             if group is None:
                 group = ProjectSessionGroup(
-                    project_name=item.project_name,
-                    workspace=item.workspace,
+                    project_name=root.project_name,
+                    workspace=root.workspace,
                     session_count=0,
+                    total_thread_count=0,
                     running_count=0,
-                    latest_updated_ts=item.updated_ts,
+                    latest_updated_ts=root.latest_activity_ts,
                     sessions=[],
                 )
-                groups_map[item.project_name] = group
-            group.sessions.append(item)
+                groups_map[root.project_name] = group
+            group.sessions.append(root)
             group.session_count += 1
-            if item.status == "running":
+            thread_inc = 1 + root.child_count
+            group.total_thread_count += thread_inc
+            total_threads += thread_inc
+            if root.status == "running":
                 group.running_count += 1
-            if item.updated_ts > group.latest_updated_ts:
-                group.latest_updated_ts = item.updated_ts
+            if root.latest_activity_ts > group.latest_updated_ts:
+                group.latest_updated_ts = root.latest_activity_ts
 
         project_groups = sorted(groups_map.values(), key=lambda g: g.latest_updated_ts, reverse=True)
 
@@ -170,7 +266,7 @@ class MonitorService:
             delegation_doc_path=self._delegation_doc_path(),
             codex_cli_available=bool(codex_bin),
             codex_cli_path=codex_bin,
-            total_sessions=len(merged_summaries),
+            total_sessions=total_threads,
             running_dispatches=running_dispatches,
             harness_runs=len(all_runs),
             project_groups=project_groups,

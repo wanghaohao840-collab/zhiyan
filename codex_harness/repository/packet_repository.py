@@ -96,15 +96,22 @@ def _extract_allowed_and_forbidden(boundary_text: str) -> tuple[list[str], list[
     for raw_line in boundary_text.splitlines():
         stripped = raw_line.strip()
         lower = stripped.lower()
-        if lower.startswith("### forbidden") or lower.startswith("- forbidden"):
+        if lower.startswith("### "):
+            heading = lower[4:].strip()
+            if heading in ("allowed files", "allowed files/state"):
+                mode = "allowed"
+            elif heading.startswith("forbidden"):
+                mode = "forbidden"
+            else:
+                mode = "ignored"
+            continue
+        if lower.startswith("- forbidden") and mode != "ignored":
             mode = "forbidden"
-        elif lower.startswith("### allowed") or lower.startswith("- create:") or lower.startswith("- modify"):
-            mode = "allowed"
 
         if mode == "forbidden":
             if stripped.startswith("- "):
                 forbidden.append(stripped[2:].strip())
-        else:
+        elif mode == "allowed":
             for token in _BACKTICK_PATH_RE.findall(stripped):
                 # 去掉 path:line 中的行号后缀
                 base_token = token.split(":", 1)[0] if not re.match(r"^[A-Za-z]:\\", token) else token

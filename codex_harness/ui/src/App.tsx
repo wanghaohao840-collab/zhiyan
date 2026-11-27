@@ -83,13 +83,16 @@ export function App() {
             }}
             onSelectSession={harness.selectSession}
             onNewDispatch={() => {
-              harness.setLastDispatchResult(null);
+              harness.resetDispatchDraft();
               harness.setViewMode('dispatch');
             }}
             onFollowUpDispatch={harness.prepareFollowUpDispatch}
             onCancelRun={(runId) => {
               void harness.cancelRun(runId);
             }}
+            cancelPhase={harness.cancelRequest?.runId === harness.sessionDetail?.summary.run_id
+              ? harness.cancelRequest?.phase
+              : undefined}
             delegationDocPath={harness.snapshot?.delegation_doc_path}
           />
         )}
@@ -110,8 +113,14 @@ export function App() {
         {harness.viewMode === 'dispatch' && (
           <DispatchView
             draft={harness.dispatchDraft}
-            onChangeDraft={harness.setDispatchDraft}
+            onChangeDraft={harness.changeDispatchDraft}
+            planDocs={harness.planDocs}
             routingPreview={harness.routingPreview}
+            inferredSpec={harness.inferredSpec}
+            specError={harness.specError}
+            inferring={harness.inferringSpec}
+            onInferSpec={harness.inferDispatchSpec}
+            onResetDraft={harness.resetDispatchDraft}
             submitting={harness.submittingDispatch}
             lastResult={harness.lastDispatchResult}
             onSubmit={(dryRun) => {

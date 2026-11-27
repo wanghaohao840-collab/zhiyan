@@ -130,12 +130,13 @@ class SessionTurn(BaseModel):
 
 
 class SessionSummary(BaseModel):
-    """左侧项目会话树的轻量摘要条目。"""
+    """左侧项目会话树的轻量摘要条目（主对话窗口可嵌套子代理列表）。"""
 
     session_id: str
     source_kind: Literal["harness", "codex_session"]
     project_name: str
     workspace: str
+    worktree_name: str | None = None
     title: str
     model: str | None = None
     effort: str | None = None
@@ -145,24 +146,33 @@ class SessionSummary(BaseModel):
     started_at: str | None = None
     updated_at: str | None = None
     updated_ts: float = 0.0
+    latest_activity_ts: float = 0.0
     originator: str | None = None
     is_subagent: bool = False
     parent_thread_id: str | None = None
     agent_nickname: str | None = None
     packet_id: str | None = None
+    packet_path: str | None = None
     run_id: str | None = None
+    cancel_requested: bool = False
     codex_thread_id: str | None = None
     command_count: int = 0
     file_count: int = 0
     scope_status: ScopeAuditStatus = ScopeAuditStatus.UNCHECKED
+    child_count: int = 0
+    child_sessions: list[SessionSummary] = Field(default_factory=list)
+
+
+SessionSummary.model_rebuild()
 
 
 class ProjectSessionGroup(BaseModel):
-    """左侧栏按工作区聚合的项目分组。"""
+    """左侧栏按工作区聚合的项目分组（session_count 为顶层对话窗口数）。"""
 
     project_name: str
     workspace: str
     session_count: int
+    total_thread_count: int = 0
     running_count: int = 0
     latest_updated_ts: float = 0.0
     sessions: list[SessionSummary] = Field(default_factory=list)
@@ -215,25 +225,81 @@ class PacketPlanGroup(BaseModel):
     packets: list[TaskPacketInfo] = Field(default_factory=list)
 
 
-class DispatchRequest(BaseModel):
-    """向 Codex 发起显式派单的请求契约。"""
+class PlanDocSummary(BaseModel):
+    """仓库中可供派单关联的方案文档摘要。"""
 
-    title: str = Field(..., min_length=1, max_length=160)
-    objective: str = Field(..., min_length=1)
+    title: str
+    relative_path: str
+    absolute_path: str
+    category: Literal["plan", "agent_work", "task_packet"] = "plan"
+    updated_at: str
+    unchecked_items: int = 0
+    total_items: int = 0
+
+
+class SpecInferenceRequest(BaseModel):
+    """请求后端根据方案、续轮上下文与行业标准自动推导派单规格。"""
+
+    title: str = ""
+    objective_hint: str = ""
     workspace: str | None = None
-    task_type: TaskType = TaskType.IMPLEMENT_GENERAL
-    involves_ownership_check: bool = False
-    involves_concurrency_or_lease: bool = False
-    involves_cross_store_or_rollback: bool = False
-    is_complex: bool = False
+    task_type: TaskType | None = None
+    plan_doc_path: str | None = None
+    packet_path: str | None = None
+    resume_run_id: str | None = None
+    resume_codex_thread_id: str | None = None
+    involves_ownership_check: bool | None = None
+    involves_concurrency_or_lease: bool | None = None
+    involves_cross_store_or_rollback: bool | None = None
+    is_complex: bool | None = None
     model_override: str | None = None
     effort_override: ReasoningEffort | None = None
     sandbox_override: SandboxMode | None = None
-    packet_path: str | None = None
+    allowed_files: list[str] | None = None
+
+
+class SpecInferenceResult(BaseModel):
+    """基于方案文档、历史会话与行业功能模块完成标准推导出的派单规格建议。"""
+
+    suggested_title: str
+    suggested_task_type: TaskType
+    suggested_involves_ownership_check: bool = False
+    suggested_involves_concurrency_or_lease: bool = False
+    suggested_involves_cross_store_or_rollback: bool = False
+    suggested_is_complex: bool = False
+    objective: str
+    acceptance_criteria: list[str] = Field(default_factory=list)
     allowed_files: list[str] = Field(default_factory=list)
+    forbidden_paths: list[str] = Field(default_factory=list)
+    verification_commands: list[str] = Field(default_factory=list)
+    matched_domains: list[str] = Field(default_factory=list)
+    matched_plan_docs: list[str] = Field(default_factory=list)
+    industry_standards_applied: list[str] = Field(default_factory=list)
+    rationale: str = ""
+    routing_preview: RoutingDecision
+
+
+class DispatchRequest(BaseModel):
+    """向 Codex 发起显式派单的请求契约（支持按方案与行业标准自动补全空白字段）。"""
+
+    title: str = Field(default="", max_length=180)
+    objective: str = ""
+    workspace: str | None = None
+    task_type: TaskType | None = None
+    involves_ownership_check: bool | None = None
+    involves_concurrency_or_lease: bool | None = None
+    involves_cross_store_or_rollback: bool | None = None
+    is_complex: bool | None = None
+    model_override: str | None = None
+    effort_override: ReasoningEffort | None = None
+    sandbox_override: SandboxMode | None = None
+    plan_doc_path: str | None = None
+    packet_path: str | None = None
+    allowed_files: list[str] | None = None
     forbidden_paths: list[str] = Field(default_factory=list)
     acceptance_criteria: list[str] = Field(default_factory=list)
     verification_commands: list[str] = Field(default_factory=list)
+    auto_infer: bool = True
     source_model: str = "gemini-4-neon-high"
     resume_run_id: str | None = None
     resume_codex_thread_id: str | None = None
@@ -262,6 +328,8 @@ class DispatchRoundRecord(BaseModel):
     status: DispatchStatus = DispatchStatus.QUEUED
     pid: int | None = None
     codex_thread_id: str | None = None
+    parent_thread_id: str | None = None
+    fallback_from_locked_thread: str | None = None
     started_at: str
     completed_at: str | None = None
     duration_ms: int | None = None

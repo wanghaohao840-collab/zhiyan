@@ -6,6 +6,7 @@ import {
 } from '@modelcontextprotocol/ext-apps';
 import { z } from 'zod';
 import { toFileUri } from '../utils/format';
+import { resolveEffectiveTheme, type EffectiveTheme } from '../utils/theme';
 
 export interface InitialToolPayload {
   view?: 'monitor' | 'packets' | 'dispatch';
@@ -35,21 +36,41 @@ const toggleAuxResponseSchema = z
   })
   .passthrough();
 
+type HostStyleVariables = Parameters<typeof applyHostStyleVariables>[0];
+
 /**
  * 封装 @modelcontextprotocol/ext-apps 生命周期、宿主主题变量同步、
  * 服务端 app-only 工具调用及 Antigravity 侧边栏文件打开扩展。
  */
 export function useMcpApp(): UseMcpAppResult {
   const appRef = useRef<App | null>(null);
+  const reportedThemeRef = useRef<EffectiveTheme | undefined>(undefined);
   const [connected, setConnected] = useState(false);
-  const [hostTheme, setHostTheme] = useState<'light' | 'dark'>('light');
+  const [hostTheme, setHostTheme] = useState<EffectiveTheme>('light');
   const [canSendMessage, setCanSendMessage] = useState(false);
   const [initialPayload, setInitialPayload] = useState<InitialToolPayload | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
 
   useEffect(() => {
-    const app = new App({ name: 'Codex Monitor', version: '1.0.0' }, {});
+    const app = new App({ name: 'Codex Monitor', version: '1.0.1' }, {});
     appRef.current = app;
+
+    // 先按宿主上报极性与变量求值，再基于实际渲染亮度校正明暗模式，兼容任意 CSS 颜色与局部更新
+    const syncHostAppearance = (
+      reportedTheme: string | undefined,
+      variables: HostStyleVariables | undefined,
+    ) => {
+      if (reportedTheme === 'dark' || reportedTheme === 'light') {
+        reportedThemeRef.current = reportedTheme;
+        applyDocumentTheme(reportedTheme);
+      }
+      if (variables) {
+        applyHostStyleVariables(variables);
+      }
+      const effectiveTheme = resolveEffectiveTheme(reportedThemeRef.current);
+      applyDocumentTheme(effectiveTheme);
+      setHostTheme(effectiveTheme);
+    };
 
     // NOTE: 严格遵循 mcp-app-development 规范，先注册所有回调再调用 connect()
     app.ontoolinput = (params) => {
@@ -72,13 +93,7 @@ export function useMcpApp(): UseMcpAppResult {
     };
 
     app.onhostcontextchanged = (ctx) => {
-      if (ctx?.theme === 'dark' || ctx?.theme === 'light') {
-        applyDocumentTheme(ctx.theme);
-        setHostTheme(ctx.theme);
-      }
-      if (ctx?.styles?.variables) {
-        applyHostStyleVariables(ctx.styles.variables);
-      }
+      syncHostAppearance(ctx?.theme, ctx?.styles?.variables);
     };
 
     let active = true;
@@ -87,13 +102,7 @@ export function useMcpApp(): UseMcpAppResult {
       .then(() => {
         if (!active) return;
         const ctx = app.getHostContext();
-        if (ctx?.theme === 'dark' || ctx?.theme === 'light') {
-          applyDocumentTheme(ctx.theme);
-          setHostTheme(ctx.theme);
-        }
-        if (ctx?.styles?.variables) {
-          applyHostStyleVariables(ctx.styles.variables);
-        }
+        syncHostAppearance(ctx?.theme, ctx?.styles?.variables);
         const caps = app.getHostCapabilities() as Record<string, unknown> | undefined;
         setCanSendMessage(Boolean(caps && caps.message));
         setConnected(true);

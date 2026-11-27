@@ -51,7 +51,7 @@ def install_plugin(
     if delegation_doc.exists():
         shutil.copy2(delegation_doc, dest / "README.md")
 
-    launcher_code = f'''"""Antigravity Codex Harness 插件启动器（由 install_plugin.py 生成）。"""
+    launcher_code = f'''"""Antigravity Codex Harness 插件启动器。"""
 
 from __future__ import annotations
 

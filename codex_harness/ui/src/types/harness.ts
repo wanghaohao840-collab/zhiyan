@@ -83,6 +83,7 @@ export interface SessionSummary {
   source_kind: 'harness' | 'codex_session';
   project_name: string;
   workspace: string;
+  worktree_name?: string | null;
   title: string;
   model?: string | null;
   effort?: string | null;
@@ -92,22 +93,28 @@ export interface SessionSummary {
   started_at?: string | null;
   updated_at?: string | null;
   updated_ts: number;
+  latest_activity_ts?: number;
   originator?: string | null;
   is_subagent: boolean;
   parent_thread_id?: string | null;
   agent_nickname?: string | null;
   packet_id?: string | null;
+  packet_path?: string | null;
   run_id?: string | null;
+  cancel_requested?: boolean;
   codex_thread_id?: string | null;
   command_count: number;
   file_count: number;
   scope_status: ScopeAuditStatus;
+  child_count?: number;
+  child_sessions?: SessionSummary[];
 }
 
 export interface ProjectSessionGroup {
   project_name: string;
   workspace: string;
   session_count: number;
+  total_thread_count?: number;
   running_count: number;
   latest_updated_ts: number;
   sessions: SessionSummary[];
@@ -185,19 +192,49 @@ export interface RoutingDecision {
   required_gates: string[];
 }
 
+export interface PlanDocSummary {
+  title: string;
+  relative_path: string;
+  absolute_path: string;
+  category: 'plan' | 'agent_work' | 'task_packet';
+  updated_at: string;
+  unchecked_items: number;
+  total_items: number;
+}
+
+export interface SpecInferenceResult {
+  suggested_title: string;
+  suggested_task_type: string;
+  suggested_involves_ownership_check: boolean;
+  suggested_involves_concurrency_or_lease: boolean;
+  suggested_involves_cross_store_or_rollback: boolean;
+  suggested_is_complex: boolean;
+  objective: string;
+  acceptance_criteria: string[];
+  allowed_files: string[];
+  forbidden_paths: string[];
+  verification_commands: string[];
+  matched_domains: string[];
+  matched_plan_docs: string[];
+  industry_standards_applied: string[];
+  rationale: string;
+  routing_preview: RoutingDecision;
+}
+
 export interface DispatchFormDraft {
   title: string;
-  objective: string;
+  objective: string | null;
+  workspace: string;
   task_type: string;
-  involves_ownership_check: boolean;
-  involves_concurrency_or_lease: boolean;
-  involves_cross_store_or_rollback: boolean;
-  is_complex: boolean;
+  involves_ownership_check: boolean | null;
+  involves_concurrency_or_lease: boolean | null;
+  involves_cross_store_or_rollback: boolean | null;
+  is_complex: boolean | null;
+  plan_doc_path: string;
   packet_path: string;
-  allowed_files_text: string;
-  forbidden_paths_text: string;
-  acceptance_text: string;
-  verification_text: string;
+  allowed_files_text: string | null;
+  verification_text: string | null;
+  auto_infer: boolean;
   resume_run_id: string;
   resume_codex_thread_id: string;
 }

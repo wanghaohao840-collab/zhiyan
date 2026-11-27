@@ -7,8 +7,10 @@ import logging
 import os
 import re
 import threading
+import time
 from pathlib import Path
 
+from codex_harness.model.entities import DispatchStatus
 from codex_harness.schema.contracts import DispatchRoundRecord
 
 LOGGER = logging.getLogger(__name__)
@@ -31,7 +33,7 @@ class DispatchRepository:
 
     def _validate_run_id(self, run_id: str) -> str:
         """校验 run_id 格式，防止目录穿越。"""
-        if not _RUN_ID_PATTERN.match(run_id):
+        if not _RUN_ID_PATTERN.fullmatch(run_id):
             raise ValueError(f"Invalid run_id format: {run_id!r}")
         return run_id
 
@@ -45,6 +47,24 @@ class DispatchRepository:
         safe_id = self._validate_run_id(run_id)
         return self._runs_dir / f"{safe_id}.events.jsonl"
 
+    def _cancel_path(self, run_id: str) -> Path:
+        return self._runs_dir / f"{self._validate_run_id(run_id)}.cancel"
+
+    def request_cancel(self, run_id: str) -> DispatchRoundRecord | None:
+        """Persist an idempotent request without rewriting the owner's run record."""
+        record = self.get(run_id)
+        if record is not None and record.status in (DispatchStatus.QUEUED, DispatchStatus.RUNNING):
+            try:
+                self._cancel_path(run_id).touch(exist_ok=False)
+            except FileExistsError:
+                pass
+            return self.get(run_id)
+        return record
+
+    def cancellation_requested(self, run_id: str) -> bool:
+        """Observe requests made by any server that shares the run directory."""
+        return self._cancel_path(run_id).exists()
+
     def save(self, record: DispatchRoundRecord) -> DispatchRoundRecord:
         """以临时文件原子替换方式写入派单记录。"""
         target = self.record_path(record.run_id)
@@ -52,7 +72,15 @@ class DispatchRepository:
         with self._lock:
             tmp_path = target.with_suffix(".json.tmp")
             tmp_path.write_text(payload, encoding="utf-8")
-            os.replace(tmp_path, target)
+            for attempt in range(5):
+                try:
+                    os.replace(tmp_path, target)
+                    break
+                except PermissionError as exc:
+                    # A monitor in another Windows process can briefly hold the JSON open.
+                    if getattr(exc, "winerror", None) not in (5, 32) or attempt == 4:
+                        raise
+                    time.sleep(0.02)
         return record
 
     def get(self, run_id: str) -> DispatchRoundRecord | None:

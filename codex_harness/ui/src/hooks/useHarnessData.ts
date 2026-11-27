@@ -5,28 +5,62 @@ import type {
   DispatchResponsePayload,
   HarnessViewMode,
   PacketPlanGroup,
-  RoutingDecision,
+  PlanDocSummary,
   SessionDetail,
+  SpecInferenceResult,
   TaskPacketInfo,
 } from '../types/harness';
 import type { InitialToolPayload } from './useMcpApp';
 
 export const EMPTY_DISPATCH_DRAFT: DispatchFormDraft = {
   title: '',
-  objective: '',
-  task_type: 'implement_general',
-  involves_ownership_check: false,
-  involves_concurrency_or_lease: false,
-  involves_cross_store_or_rollback: false,
-  is_complex: false,
+  objective: null,
+  workspace: '',
+  task_type: '',
+  involves_ownership_check: null,
+  involves_concurrency_or_lease: null,
+  involves_cross_store_or_rollback: null,
+  is_complex: null,
+  plan_doc_path: '',
   packet_path: '',
-  allowed_files_text: '',
-  forbidden_paths_text: '',
-  acceptance_text: '',
-  verification_text: '',
+  allowed_files_text: null,
+  verification_text: null,
+  auto_infer: true,
   resume_run_id: '',
   resume_codex_thread_id: '',
 };
+
+function stripFollowUpPrefix(raw: string): string {
+  return raw.replace(/^(?:续轮派单\s*[:：]\s*)+/, '').trim();
+}
+
+function dispatchArguments(draft: DispatchFormDraft): Record<string, unknown> {
+  const splitLines = (raw: string) => raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return {
+    title: stripFollowUpPrefix(draft.title),
+    objective: draft.objective?.trim() || undefined,
+    workspace: draft.workspace.trim() || undefined,
+    task_type: draft.task_type || undefined,
+    involves_ownership_check: draft.involves_ownership_check ?? undefined,
+    involves_concurrency_or_lease: draft.involves_concurrency_or_lease ?? undefined,
+    involves_cross_store_or_rollback: draft.involves_cross_store_or_rollback ?? undefined,
+    is_complex: draft.is_complex ?? undefined,
+    plan_doc_path: draft.plan_doc_path.trim() || undefined,
+    packet_path: draft.packet_path.trim() || undefined,
+    allowed_files: draft.allowed_files_text === null ? undefined : splitLines(draft.allowed_files_text),
+    verification_commands: draft.verification_text?.trim() ? splitLines(draft.verification_text) : undefined,
+    auto_infer: draft.auto_infer,
+    resume_run_id: draft.resume_run_id.trim() || undefined,
+    resume_codex_thread_id: draft.resume_codex_thread_id.trim() || undefined,
+  };
+}
+
+interface SpecPreview {
+  draft: DispatchFormDraft;
+  revision: number;
+  spec?: SpecInferenceResult;
+  error?: string;
+}
 
 interface UseHarnessDataParams {
   connected: boolean;
@@ -59,12 +93,17 @@ export function useHarnessData({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const [dispatchDraft, setDispatchDraft] = useState<DispatchFormDraft>(EMPTY_DISPATCH_DRAFT);
-  const [routingPreview, setRoutingPreview] = useState<RoutingDecision | null>(null);
+  const [planDocs, setPlanDocs] = useState<PlanDocSummary[]>([]);
+  const [preview, setPreview] = useState<SpecPreview | null>(null);
+  const [specRevision, setSpecRevision] = useState(0);
+  const [showGeneratedSpec, setShowGeneratedSpec] = useState(false);
   const [submittingDispatch, setSubmittingDispatch] = useState(false);
   const [lastDispatchResult, setLastDispatchResult] = useState<DispatchResponsePayload | null>(null);
+  const [cancelRequest, setCancelRequest] = useState<{ runId: string; phase: 'sending' | 'pending' } | null>(null);
 
   const snapshotInFlightRef = useRef(false);
   const detailInFlightRef = useRef(false);
+  const specInFlightRef = useRef<Promise<SpecInferenceResult> | null>(null);
   const selectedIdRef = useRef<string | null>(null);
   selectedIdRef.current = selectedSessionId;
 
@@ -152,6 +191,33 @@ export function useHarnessData({
     }
   }, [connected, callServerTool]);
 
+  const refreshPlanDocs = useCallback(async () => {
+    if (!connected) return;
+    try {
+      const data = await callServerTool<{ plans: PlanDocSummary[] }>('app_list_plan_docs', {});
+      setPlanDocs(data.plans ?? []);
+    } catch {
+      // 方案列表非关键路径，静默忽略
+    }
+  }, [connected, callServerTool]);
+
+  const changeDispatchDraft = useCallback((draft: DispatchFormDraft) => {
+    setDispatchDraft(draft);
+    setLastDispatchResult(null);
+  }, []);
+
+  const inferDispatchSpec = useCallback(() => {
+    setDispatchDraft((draft) => draft.auto_infer ? draft : { ...draft, auto_infer: true });
+    setShowGeneratedSpec(true);
+    setSpecRevision((revision) => revision + 1);
+    setLastDispatchResult(null);
+  }, []);
+
+  const resetDispatchDraft = useCallback(() => {
+    changeDispatchDraft(EMPTY_DISPATCH_DRAFT);
+    setShowGeneratedSpec(false);
+  }, [changeDispatchDraft]);
+
   // 初次连接拉取快照
   useEffect(() => {
     if (!connected) return;
@@ -164,12 +230,15 @@ export function useHarnessData({
     void refreshDetail(selectedSessionId, true);
   }, [connected, selectedSessionId, refreshDetail]);
 
-  // 切换到任务包视图时刷新任务包树
+  // 切换到任务包或派单视图时按需加载对应仓库清单
   useEffect(() => {
-    if (connected && viewMode === 'packets') {
+    if (!connected) return;
+    if (viewMode === 'packets') {
       void refreshTaskPackets();
+    } else if (viewMode === 'dispatch') {
+      void refreshPlanDocs();
     }
-  }, [connected, viewMode, refreshTaskPackets]);
+  }, [connected, viewMode, refreshTaskPackets, refreshPlanDocs]);
 
   // 实时同步轮询（默认 2.8s，仅在 liveSync 开启时运行）
   useEffect(() => {
@@ -183,105 +252,94 @@ export function useHarnessData({
     return () => window.clearInterval(timer);
   }, [connected, liveSync, viewMode, refreshSnapshot, refreshDetail]);
 
-  // 派单表单实时预览 AGENTS.md 路由决策
+  // 同一份表单参数也用于干跑与提交，及时丢弃已经过期的预览响应。
   useEffect(() => {
     if (!connected || viewMode !== 'dispatch') return;
     let active = true;
-    const timer = window.setTimeout(() => {
-      void callServerTool<RoutingDecision>('app_preview_routing', {
-        task_type: dispatchDraft.task_type,
-        involves_ownership_check: dispatchDraft.involves_ownership_check,
-        involves_concurrency_or_lease: dispatchDraft.involves_concurrency_or_lease,
-        involves_cross_store_or_rollback: dispatchDraft.involves_cross_store_or_rollback,
-        is_complex: dispatchDraft.is_complex,
-      })
-        .then((res) => {
-          if (active) setRoutingPreview(res);
-        })
-        .catch(() => {
-          // 预览失败不影响主界面交互
-        });
-    }, 150);
+    async function loadPreview() {
+      await specInFlightRef.current?.catch(() => undefined);
+      if (!active) return;
+      const request = callServerTool<SpecInferenceResult>('app_preview_dispatch', dispatchArguments(dispatchDraft));
+      specInFlightRef.current = request;
+      try {
+        const spec = await request;
+        if (active) setPreview({ draft: dispatchDraft, revision: specRevision, spec });
+      } catch (err: unknown) {
+        const error = err instanceof Error ? err.message : String(err);
+        if (active) setPreview({ draft: dispatchDraft, revision: specRevision, error });
+      } finally {
+        if (specInFlightRef.current === request) specInFlightRef.current = null;
+      }
+    }
+    const timer = window.setTimeout(() => void loadPreview(), 150);
     return () => {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [
-    connected,
-    viewMode,
-    dispatchDraft.task_type,
-    dispatchDraft.involves_ownership_check,
-    dispatchDraft.involves_concurrency_or_lease,
-    dispatchDraft.involves_cross_store_or_rollback,
-    dispatchDraft.is_complex,
-    callServerTool,
-  ]);
+  }, [connected, viewMode, dispatchDraft, specRevision, callServerTool]);
+
+  const currentPreview = preview?.draft === dispatchDraft && preview.revision === specRevision ? preview : null;
+  const showSpec = showGeneratedSpec || Boolean(
+    dispatchDraft.plan_doc_path || dispatchDraft.packet_path || dispatchDraft.resume_run_id || dispatchDraft.resume_codex_thread_id,
+  );
 
   const selectSession = useCallback((sessionId: string) => {
     setSelectedSessionId(sessionId);
     setViewMode('monitor');
   }, []);
 
-  const prepareDispatchFromPacket = useCallback((packet: TaskPacketInfo) => {
-    setLastDispatchResult(null);
-    setDispatchDraft({
-      ...EMPTY_DISPATCH_DRAFT,
-      title: `实现任务包 ${packet.packet_id}: ${packet.title}`,
-      objective:
-        packet.goal_excerpt ||
-        `请严格按任务包 ${packet.relative_path} 完成实现与验收，不要改动白名单之外的文件。`,
-      task_type: 'implement_general',
-      packet_path: packet.relative_path,
-      allowed_files_text: packet.allowed_files.join('\n'),
-      verification_text: packet.verification_commands.join('\n'),
-    });
-    setViewMode('dispatch');
-  }, []);
+  const prepareDispatchFromPacket = useCallback(
+    (packet: TaskPacketInfo) => {
+      setShowGeneratedSpec(false);
+      changeDispatchDraft({
+        ...EMPTY_DISPATCH_DRAFT,
+        title: `实现任务包 ${packet.packet_id}: ${packet.title}`,
+        packet_path: packet.relative_path,
+      });
+      setViewMode('dispatch');
+    },
+    [changeDispatchDraft],
+  );
 
-  const prepareFollowUpDispatch = useCallback((detail: SessionDetail) => {
-    setLastDispatchResult(null);
-    const s = detail.summary;
-    setDispatchDraft({
-      ...EMPTY_DISPATCH_DRAFT,
-      title: `续轮派单：${s.title}`,
-      objective: '',
-      task_type: s.role === 'astra' ? 'review_concurrency' : 'implement_general',
-      resume_run_id: s.run_id ?? '',
-      resume_codex_thread_id: s.codex_thread_id ?? '',
-    });
-    setViewMode('dispatch');
-  }, []);
+  const prepareFollowUpDispatch = useCallback(
+    (detail: SessionDetail) => {
+      setShowGeneratedSpec(false);
+      const s = detail.summary;
+      changeDispatchDraft({
+        ...EMPTY_DISPATCH_DRAFT,
+        title: stripFollowUpPrefix(s.title),
+        workspace: s.workspace,
+        packet_path: s.packet_path ?? '',
+        resume_run_id: s.run_id ?? '',
+        resume_codex_thread_id: s.codex_thread_id ?? '',
+      });
+      setViewMode('dispatch');
+    },
+    [changeDispatchDraft],
+  );
 
   const submitDispatch = useCallback(
     async (dryRun: boolean) => {
-      if (!dispatchDraft.title.trim() || !dispatchDraft.objective.trim()) {
-        setErrorMessage('请填写派单标题与任务目标');
+      const cleanTitle = stripFollowUpPrefix(dispatchDraft.title);
+      if (
+        !cleanTitle &&
+        !dispatchDraft.plan_doc_path.trim() &&
+        !dispatchDraft.packet_path.trim() &&
+        !dispatchDraft.resume_run_id &&
+        !dispatchDraft.resume_codex_thread_id
+      ) {
+        setErrorMessage('请至少填写派单标题或选择一份仓库方案文档');
+        return;
+      }
+      if (!dispatchDraft.auto_infer && !dispatchDraft.objective?.trim()) {
+        setErrorMessage('未启用自动补全时，请填写目标与可验证完成条件');
         return;
       }
       setSubmittingDispatch(true);
       setErrorMessage(null);
       try {
-        const splitLines = (raw: string) =>
-          raw
-            .split(/\r?\n/)
-            .map((line) => line.trim())
-            .filter(Boolean);
-
         const res = await callServerTool<DispatchResponsePayload>('app_create_dispatch', {
-          title: dispatchDraft.title.trim(),
-          objective: dispatchDraft.objective.trim(),
-          task_type: dispatchDraft.task_type,
-          involves_ownership_check: dispatchDraft.involves_ownership_check,
-          involves_concurrency_or_lease: dispatchDraft.involves_concurrency_or_lease,
-          involves_cross_store_or_rollback: dispatchDraft.involves_cross_store_or_rollback,
-          is_complex: dispatchDraft.is_complex,
-          packet_path: dispatchDraft.packet_path.trim() || undefined,
-          allowed_files: splitLines(dispatchDraft.allowed_files_text),
-          forbidden_paths: splitLines(dispatchDraft.forbidden_paths_text),
-          acceptance_criteria: splitLines(dispatchDraft.acceptance_text),
-          verification_commands: splitLines(dispatchDraft.verification_text),
-          resume_run_id: dispatchDraft.resume_run_id.trim() || undefined,
-          resume_codex_thread_id: dispatchDraft.resume_codex_thread_id.trim() || undefined,
+          ...dispatchArguments(dispatchDraft),
           dry_run: dryRun,
         });
         setLastDispatchResult(res);
@@ -302,13 +360,18 @@ export function useHarnessData({
 
   const cancelRun = useCallback(
     async (runId: string) => {
+      setCancelRequest({ runId, phase: 'sending' });
       try {
-        await callServerTool('app_cancel_dispatch', { run_id: runId });
+        const result = await callServerTool<{ cancel_requested: boolean }>('app_cancel_dispatch', { run_id: runId });
+        setCancelRequest((current) => current?.runId !== runId ? current : (
+          result.cancel_requested ? { runId, phase: 'pending' } : null
+        ));
         await refreshSnapshot();
         if (selectedIdRef.current) {
           await refreshDetail(selectedIdRef.current, false);
         }
       } catch (err: unknown) {
+        setCancelRequest((current) => current?.runId === runId ? null : current);
         setErrorMessage(err instanceof Error ? err.message : String(err));
       }
     },
@@ -333,8 +396,14 @@ export function useHarnessData({
     errorMessage,
     setErrorMessage,
     dispatchDraft,
-    setDispatchDraft,
-    routingPreview,
+    changeDispatchDraft,
+    resetDispatchDraft,
+    planDocs,
+    routingPreview: currentPreview?.spec?.routing_preview ?? null,
+    inferredSpec: showSpec ? currentPreview?.spec ?? null : null,
+    specError: currentPreview?.error,
+    inferringSpec: connected && currentPreview === null,
+    inferDispatchSpec,
     submittingDispatch,
     lastDispatchResult,
     setLastDispatchResult,
@@ -345,5 +414,6 @@ export function useHarnessData({
     prepareFollowUpDispatch,
     submitDispatch,
     cancelRun,
+    cancelRequest,
   };
 }

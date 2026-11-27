@@ -36,6 +36,7 @@ interface SessionDetailProps {
   onNewDispatch: () => void;
   onFollowUpDispatch: (detail: SessionDetailType) => void;
   onCancelRun: (runId: string) => void;
+  cancelPhase?: 'sending' | 'pending';
   delegationDocPath?: string | null;
 }
 
@@ -269,6 +270,10 @@ function DialogueTurn({
     const filtered = nonFinal.filter((item) => {
       if (item.kind === 'reasoning' && !showReasoning) return false;
       if (item.kind === 'subagent' && item.subagent?.kind === 'interacted' && item.subagent.agent_path === '/root') {
+        return false;
+      }
+      // 若底部已有同内容的 Codex 中断提示，则不在过程列表里重复堆叠同一报错
+      if (item.kind === 'error' && turn.error_message && item.text?.trim() === turn.error_message.trim()) {
         return false;
       }
       return true;
@@ -569,6 +574,7 @@ export function SessionDetail({
   onNewDispatch,
   onFollowUpDispatch,
   onCancelRun,
+  cancelPhase,
   delegationDocPath,
 }: SessionDetailProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -603,6 +609,9 @@ export function SessionDetail({
 
   const docPath = detail?.delegation_doc_path || delegationDocPath;
   const isHarness = detail?.summary.source_kind === 'harness';
+  const runId = detail?.summary.run_id;
+  const canCancel = isHarness && runId && ['queued', 'running'].includes(detail.summary.status);
+  const cancelPending = detail?.summary.cancel_requested || cancelPhase === 'pending';
 
   return (
     <div className="ch-main">
@@ -667,14 +676,15 @@ export function SessionDetail({
             <RefreshCw size={12} />
           </button>
 
-          {detail?.summary.status === 'running' && detail.summary.run_id && (
+          {canCancel && (
             <button
               type="button"
               className="ch-btn ch-btn-xs ch-btn-danger"
-              onClick={() => onCancelRun(detail.summary.run_id!)}
+              disabled={cancelPending || cancelPhase === 'sending'}
+              onClick={() => onCancelRun(runId)}
             >
               <Square size={10} />
-              <span>中止</span>
+              <span>{cancelPending ? '已请求中止，等待退出' : cancelPhase === 'sending' ? '正在请求中止' : '中止'}</span>
             </button>
           )}
 

@@ -44,8 +44,22 @@ def _normalize_path_display(raw_path: str | None) -> str:
     return cleaned.replace("/", os.sep)
 
 
+def derive_worktree_name(workspace: str | None) -> str | None:
+    """若工作目录属于 Codex worktree，则提取对应的 worktree 分支/目录名。"""
+    cleaned = _normalize_path_display(workspace)
+    if not cleaned:
+        return None
+    parts = [part for part in re.split(r"[\\/]+", cleaned) if part]
+    lower_parts = [part.lower() for part in parts]
+    if "worktrees" in lower_parts:
+        idx = lower_parts.index("worktrees")
+        if idx + 2 < len(parts):
+            return parts[idx + 1]
+    return None
+
+
 def derive_project_name(workspace: str | None) -> str:
-    """根据工作目录派生左侧项目树分组名称，自动识别 Codex worktree 目录。"""
+    """根据工作目录派生左侧项目树分组名称，自动将 worktree 归并回主仓库项目名。"""
     cleaned = _normalize_path_display(workspace)
     if not cleaned:
         return "未归类工作区"
@@ -56,7 +70,7 @@ def derive_project_name(workspace: str | None) -> str:
     if "worktrees" in lower_parts:
         idx = lower_parts.index("worktrees")
         if idx + 2 < len(parts):
-            return f"{parts[idx + 2]} ({parts[idx + 1]})"
+            return parts[idx + 2]
     return parts[-1]
 
 
@@ -144,13 +158,33 @@ def _clean_prompt_text(raw_text: str) -> str:
     return text
 
 
+_SKIP_TITLE_PREFIXES = (
+    "inherited context (forked because",
+    "antigravity -> codex explicit dispatch",
+    "harness role:",
+    "sandbox:",
+    "workspace:",
+    "bound task packet:",
+)
+
+
 def _make_title_from_prompt(prompt: str, fallback: str) -> str:
-    """从首条有效提示词生成左侧列表标题。"""
+    """从首条有效提示词生成左侧列表标题，优先提取显式派单 Title 并过滤协议头与尾反斜杠。"""
     cleaned = _clean_prompt_text(prompt)
+    # 优先提取显式 Harness 派单信封中的真实 Title 字段
+    title_match = re.search(r"(?m)^Title:\s*(.+)$", cleaned)
+    if title_match:
+        explicit_title = title_match.group(1).strip().rstrip("\\").strip()
+        if explicit_title and not explicit_title.lower().startswith(_SKIP_TITLE_PREFIXES):
+            return explicit_title[:_MAX_PROMPT_TITLE] + ("..." if len(explicit_title) > _MAX_PROMPT_TITLE else "")
+
     for raw_line in cleaned.splitlines():
-        line = raw_line.strip().lstrip("#").strip()
-        if line and not line.startswith("```") and not line.startswith("来自 ") and not line.startswith("<"):
-            return line[:_MAX_PROMPT_TITLE] + ("..." if len(line) > _MAX_PROMPT_TITLE else "")
+        line = raw_line.strip().lstrip("#").strip().rstrip("\\").strip()
+        if not line:
+            continue
+        if line.startswith(("```", "来自 ", "<")) or line.lower().startswith(_SKIP_TITLE_PREFIXES):
+            continue
+        return line[:_MAX_PROMPT_TITLE] + ("..." if len(line) > _MAX_PROMPT_TITLE else "")
     return fallback
 
 
@@ -165,6 +199,25 @@ def _iso_from_mtime(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
+def _format_clean_error_message(raw_err: str) -> str:
+    """将上游 API 返回的 JSON 错误体提取为精炼人类可读提示。"""
+    cleaned = raw_err.strip()
+    if cleaned.startswith("{") and cleaned.endswith("}"):
+        try:
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, dict):
+                inner = parsed.get("error")
+                if isinstance(inner, dict) and inner.get("message"):
+                    code = inner.get("code") or inner.get("type")
+                    msg = str(inner["message"])
+                    return f"{msg} ({code})" if code else msg
+                if parsed.get("message"):
+                    return str(parsed["message"])
+        except json.JSONDecodeError:
+            pass
+    return cleaned
+
+
 def parse_exec_events_file(events_path: Path) -> dict[str, Any]:
     """解析 codex exec --json 输出的实时事件流，提取线程 ID、命令、改动文件与时间线。"""
     timeline: list[TimelineItem] = []
@@ -173,6 +226,7 @@ def parse_exec_events_file(events_path: Path) -> dict[str, Any]:
     codex_thread_id: str | None = None
     final_answer: str | None = None
     error_message: str | None = None
+    seen_errors: set[str] = set()
 
     if not events_path.exists():
         return {
@@ -209,10 +263,13 @@ def parse_exec_events_file(events_path: Path) -> dict[str, Any]:
 
             if evt_type in ("error", "turn.failed"):
                 err = evt.get("message") or (evt.get("error") or {}).get("message")
-                if isinstance(err, str) and err:
-                    error_message = err
-                    seq += 1
-                    timeline.append(TimelineItem(id=f"exec-err-{seq}", kind="error", timestamp=ts, text=err))
+                if isinstance(err, str) and err.strip():
+                    clean_err = _format_clean_error_message(err)
+                    error_message = clean_err
+                    if clean_err not in seen_errors:
+                        seen_errors.add(clean_err)
+                        seq += 1
+                        timeline.append(TimelineItem(id=f"exec-err-{seq}", kind="error", timestamp=ts, text=clean_err))
                 continue
 
             if evt_type in ("item.completed", "item.updated"):
@@ -633,6 +690,7 @@ class SessionRepository:
             source_kind="codex_session",
             project_name=derive_project_name(workspace),
             workspace=workspace or "未知路径",
+            worktree_name=derive_worktree_name(workspace),
             title=title,
             model=latest_model,
             effort=latest_effort,
@@ -642,6 +700,7 @@ class SessionRepository:
             started_at=started_at or mtime_iso,
             updated_at=mtime_iso,
             updated_ts=stat.st_mtime,
+            latest_activity_ts=stat.st_mtime,
             originator=originator,
             is_subagent=is_subagent,
             parent_thread_id=parent_thread_id,
@@ -719,6 +778,10 @@ class SessionRepository:
                         target = path
                         self._index_by_id[session_id] = path
                         break
+            if target is None or not target.exists():
+                # 兜底建立 session_id 索引，避免首次直接按 ID 读取详情时因未扫描目录返回 None
+                self.list_sessions(limit=500)
+                target = self._index_by_id.get(session_id)
             if target is None or not target.exists():
                 return None
 
