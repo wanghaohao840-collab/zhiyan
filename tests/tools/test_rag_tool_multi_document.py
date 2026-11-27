@@ -228,6 +228,40 @@ class RAGToolMultiDocumentTests(unittest.TestCase):
         self.assertIn("## 共同点", output)
         self.assertIn("JSON", tool.llm.prompts[-1])
 
+    def test_compare_rejects_citations_belonging_to_another_document(self):
+        tool = self.make_tool()
+        tool.graph_service = FakeGraphContextService()
+        selected = ["doc-1", "doc-2", "doc-3"]
+        chunk = tool._pipelines["test"].search("alpha", document_id="doc-2", limit=1)[0]
+        other_chunk = tool._citation_id(chunk)
+        other_entity = tool._graph_citation_id("doc-2", "entity", "doc-2:concept:alpha")
+        shared = tool._graph_citation_id("|".join(selected), "canonical_entity", "canonical-alpha")
+        for section, document, citation in (
+            ("per_document_evidence", "doc-1", other_chunk),
+            ("differences", "doc-1", other_entity),
+            ("per_document_evidence", "doc-3", shared),
+        ):
+            with self.subTest(section=section, document=document, citation=citation):
+                row = {
+                    "document_id": document, "text": "wrong-owner-claim", "citations": [citation],
+                }
+                payload = {
+                    "common_points": [], "differences": [],
+                    "per_document_evidence": [], "missing_information": [],
+                }
+                if section == "differences":
+                    payload[section] = [{"topic": "alpha", "documents": [row]}]
+                else:
+                    payload[section] = [row]
+                tool.llm.generate = lambda *args, **kwargs: json.dumps(payload)
+                result = tool.execute_result(
+                    "ask", query="compare alpha", document_ids=selected,
+                    mode="compare", structured_output=True,
+                )
+                self.assertIsNone(result.data["comparison"])
+                self.assertEqual(result.data["comparison_format"], "markdown_fallback")
+                self.assertNotIn("wrong-owner-claim", result.message)
+
     def test_compare_injects_selected_document_graph_context(self):
         tool = self.make_tool()
         graph = FakeGraphContextService()
@@ -289,7 +323,10 @@ class RAGToolMultiDocumentTests(unittest.TestCase):
                 "citations": [canonical_id],
             }],
             "differences": [],
-            "per_document_evidence": [],
+            "per_document_evidence": [
+                {"document_id": doc_id, "summary": "shared concept", "citations": [canonical_id]}
+                for doc_id in ("doc-1", "doc-2")
+            ],
             "missing_information": [],
         }
 

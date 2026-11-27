@@ -61,6 +61,7 @@ from hello_agents.tools.builtin.rag_context import (
     fit_context,
 )
 from hello_agents.tools.builtin.rag_compare import (
+    comparison_markdown_fallback,
     parse_structured_comparison,
     render_comparison_markdown,
 )
@@ -2454,6 +2455,7 @@ class RAGTool(Tool):
   "missing_information": [{"document_id": "...", "note": "..."}]
 }
 所有 document_id 必须来自所选文档，所有 citations 必须来自资料中的稳定引用 ID。
+逐文档依据和差异点下每篇文档只能引用该文档的资料。共享图谱实体可用于其成员文档。
 citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
 """
         try:
@@ -2465,16 +2467,21 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
         except ContextCapacityError:
             return self._capacity_error()
         if structured_output:
-            allowed_citation_ids = {
-                item.get("citation_id") or self._citation_id(item)
+            citation_documents = {
+                (item.get("citation_id") or self._citation_id(item)): {
+                    str((item.get("metadata") or {}).get("document_id") or "")
+                }
                 for item in used_results
             }
-            allowed_citation_ids.update(
-                source["citation_id"] for source in graph_sources
-            )
+            for source in graph_sources:
+                if source["kind"] == "canonical_entity":
+                    owners = set(source["member_document_ids"])
+                else:
+                    owners = {source["document_id"]}
+                citation_documents[source["citation_id"]] = owners
             comparison = parse_structured_comparison(
                 answer,
-                allowed_citation_ids=allowed_citation_ids,
+                citation_documents=citation_documents,
                 selected_document_ids=set(document_ids),
             )
             action_data = dict(getattr(self, "_last_action_data", {}) or {})
@@ -2489,6 +2496,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                     comparison=None,
                     comparison_format="markdown_fallback",
                 )
+                answer = comparison_markdown_fallback(answer)
             self._last_action_data = action_data
         return self._format_answer(
             answer,

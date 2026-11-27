@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -14,6 +15,7 @@ from app.qa_models import QaSourceDraft, QaValidationError
 from app.qa_observability import InProcessQaTelemetry
 from app.qa_repository import QaRepository
 from app.qa_service import (
+    QaBusyError,
     QaEngineUnavailableError,
     QaNotFoundError,
     QaRetryNotAllowedError,
@@ -323,6 +325,93 @@ def test_duplicate_request_calls_engine_once_and_returns_persisted_answer(
     assert engine.calls[0][1].question == "问题"
     assert engine.calls[0][1].document_ids == ("doc-1",)
     assert service.telemetry.snapshot()["qa_idempotent_hit"] == 1
+
+
+def test_concurrent_stream_duplicate_shares_in_flight_reservation(
+    service_parts, monkeypatch
+) -> None:
+    service = make_service(service_parts)
+    conversation = service.create_conversation(TOKEN, ("doc-1",))
+    reserved = threading.Event()
+    release_first_request = threading.Event()
+    duplicate_arrived = threading.Event()
+    reserve_count = 0
+
+    def reserve():
+        nonlocal reserve_count
+        reserve_count += 1
+        if reserve_count != 1:
+            return False
+        reserved.set()
+        assert release_first_request.wait(5)
+        return True
+
+    release_slot = Mock()
+    commit_slot = Mock(return_value=True)
+    service.worker_pool = SimpleNamespace(
+        reserve_question_slot=reserve,
+        release_question_slot=release_slot,
+        commit_reserved_question=commit_slot,
+    )
+    service.session_registry.runtime_registry = SimpleNamespace()
+    create_turn = service.repository.create_pending_turn
+
+    def observed_create_turn(*args, **kwargs):
+        if reserved.is_set():
+            duplicate_arrived.set()
+        return create_turn(*args, **kwargs)
+
+    monkeypatch.setattr(service.repository, "create_pending_turn", observed_create_turn)
+
+    def ask():
+        return service.ask(
+            TOKEN, conversation.id, "问题", "joint", "duplicate", stream=True
+        )
+
+    def repeat():
+        try:
+            return ask()
+        finally:
+            duplicate_arrived.set()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(ask)
+        try:
+            assert reserved.wait(5)
+            duplicate = executor.submit(repeat)
+            assert duplicate_arrived.wait(5)
+        finally:
+            release_first_request.set()
+
+    assert duplicate.result().id == first.result().id
+    assert reserve_count == 1
+    commit_slot.assert_called_once()
+    release_slot.assert_not_called()
+    assert len(service.list_messages(TOKEN, conversation.id).items) == 2
+
+
+def test_stream_conversation_conflict_releases_only_its_reservation(service_parts) -> None:
+    service = make_service(service_parts)
+    conversation = service.create_conversation(TOKEN, ("doc-1",))
+    pending = service.repository.create_pending_turn(
+        OWNER, conversation.id, "原问题", "joint", "original"
+    )
+    worker = SimpleNamespace(
+        reserve_question_slot=Mock(return_value=True),
+        release_question_slot=Mock(),
+        commit_reserved_question=Mock(),
+    )
+    service.worker_pool = worker
+
+    with pytest.raises(QaBusyError):
+        service.ask(TOKEN, conversation.id, "另一条问题", "joint", "new", stream=True)
+
+    duplicate = service.ask(TOKEN, conversation.id, "原问题", "joint", "original", stream=True)
+    assert duplicate.id == pending.assistant_message.id
+    worker.reserve_question_slot.assert_called_once()
+    worker.release_question_slot.assert_called_once()
+    worker.commit_reserved_question.assert_not_called()
+    assert len(service.list_messages(TOKEN, conversation.id).items) == 2
 
 
 def test_compare_and_missing_fixed_scope_fail_before_engine(service_parts) -> None:

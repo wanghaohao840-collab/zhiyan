@@ -301,6 +301,72 @@ def test_stream_queue_full_rejects_with_503_without_polluting_history(qa_parts):
     assert messages == []
 
 
+@pytest.mark.parametrize("operation", ["ask", "retry"])
+def test_stream_queue_full_returns_existing_request(qa_parts, monkeypatch, operation):
+    conversation_id = create_conversation(qa_parts)["conversation_id"]
+    message_path = f"/api/v1/qa/conversations/{conversation_id}/messages"
+    worker = qa_parts.services.qa_worker_pool
+    monkeypatch.setattr(worker, "worker_count", 1)
+    monkeypatch.setattr(worker, "_question_capacity", 1)
+
+    if operation == "retry":
+        repository = qa_parts.services.qa_service.repository
+        session = qa_parts.services.session_registry.get_session(qa_parts.owner_token)
+        user_id = str(session.user_id)
+        failed_ids = []
+        for question in ("原问题", "另一条原问题"):
+            pending = repository.create_pending_turn(
+                user_id, conversation_id, question, "joint", str(uuid4())
+            )
+            failed = pending.assistant_message
+            assert repository.fail_turn(
+                user_id, failed.id, failed.version, "QA_ENGINE_UNAVAILABLE", "trace"
+            )
+            failed_ids.append(failed.id)
+        path = f"/api/v1/qa/messages/{failed_ids[0]}/retry?stream=true"
+        new_path = f"/api/v1/qa/messages/{failed_ids[1]}/retry?stream=true"
+        body = {"client_request_id": str(uuid4())}
+    else:
+        path = new_path = f"{message_path}?stream=true"
+        body = {"question": "原问题", "client_request_id": str(uuid4())}
+
+    blocker_started = Event()
+    release_blocker = Event()
+
+    def occupy_worker(accepted):
+        if accepted:
+            blocker_started.set()
+            release_blocker.wait(10)
+
+    worker.start()
+    try:
+        assert worker.schedule_question(occupy_worker)
+        assert blocker_started.wait(5)
+        first = qa_parts.client.post(path, headers=csrf(qa_parts), json=body)
+        assert first.status_code == 202, first.text
+        original_history = qa_parts.client.get(message_path).json()["items"]
+
+        duplicate = qa_parts.client.post(path, headers=csrf(qa_parts), json=body)
+        assert duplicate.status_code == 202, duplicate.text
+        assert duplicate.json()["message_id"] == first.json()["message_id"]
+
+        new_body = {**body, "client_request_id": str(uuid4())}
+        if operation == "retry":
+            same_target = qa_parts.client.post(path, headers=csrf(qa_parts), json=new_body)
+            assert same_target.status_code == 202, same_target.text
+            assert same_target.json()["message_id"] == first.json()["message_id"]
+            reused_id = qa_parts.client.post(new_path, headers=csrf(qa_parts), json=body)
+            assert reused_id.status_code == 422, reused_id.text
+            assert reused_id.json()["error"]["code"] == "QA_CLIENT_REQUEST_REUSED"
+
+        rejected = qa_parts.client.post(new_path, headers=csrf(qa_parts), json=new_body)
+        assert rejected.status_code == 503, rejected.text
+        assert rejected.json()["error"]["code"] == "QA_ENGINE_BUSY"
+        assert qa_parts.client.get(message_path).json()["items"] == original_history
+    finally:
+        release_blocker.set()
+
+
 def test_retry_supports_streaming_202_and_live_sse(qa_parts, monkeypatch):
     conversation_id = create_conversation(qa_parts)["conversation_id"]
     original_answer = qa_parts.engine.answer

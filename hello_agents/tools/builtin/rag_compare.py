@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Collection, Mapping
 from typing import Any, Optional
 
 
@@ -17,7 +18,7 @@ _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL | re.IGN
 def parse_structured_comparison(
     answer: str,
     *,
-    allowed_citation_ids: set[str],
+    citation_documents: Mapping[str, set[str]],
     selected_document_ids: set[str],
 ) -> Optional[dict[str, Any]]:
     """Parse and validate the bounded comparison JSON contract."""
@@ -35,7 +36,7 @@ def parse_structured_comparison(
         return None
 
     for item in value["common_points"]:
-        if not _valid_text_citations(item, allowed_citation_ids):
+        if not _valid_text_citations(item, citation_documents.keys()):
             return None
     for item in value["differences"]:
         if not isinstance(item, dict) or not isinstance(item.get("topic"), str):
@@ -46,14 +47,14 @@ def parse_structured_comparison(
         for document in documents:
             if not _valid_document_item(
                 document,
-                allowed_citation_ids,
+                citation_documents,
                 selected_document_ids,
             ):
                 return None
     for item in value["per_document_evidence"]:
         if not _valid_document_item(
             item,
-            allowed_citation_ids,
+            citation_documents,
             selected_document_ids,
         ):
             return None
@@ -103,7 +104,20 @@ def render_comparison_markdown(value: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _valid_text_citations(item: Any, allowed: set[str]) -> bool:
+def comparison_markdown_fallback(answer: str) -> str:
+    """Keep prose responses usable without displaying a rejected JSON comparison."""
+    text = str(answer or "")
+    # Some models prefix their JSON with a sentence despite the requested format.
+    _, opening_brace, body = text.partition("{")
+    has_comparison_fields = bool(opening_brace) and any(
+        f'"{key}"' in body for key in COMPARISON_KEYS
+    )
+    if has_comparison_fields or text.lstrip().startswith("{") or _JSON_FENCE_RE.search(text):
+        return "本次对比结果未通过校验。请参考下方来源，或重新提问。"
+    return text
+
+
+def _valid_text_citations(item: Any, allowed: Collection[str]) -> bool:
     if not isinstance(item, dict) or not isinstance(item.get("text"), str):
         return False
     citations = item.get("citations")
@@ -115,12 +129,13 @@ def _valid_text_citations(item: Any, allowed: set[str]) -> bool:
 
 def _valid_document_item(
     item: Any,
-    allowed_citations: set[str],
+    citation_documents: Mapping[str, set[str]],
     selected_documents: set[str],
 ) -> bool:
     if not isinstance(item, dict):
         return False
-    if str(item.get("document_id", "")) not in selected_documents:
+    document_id = item.get("document_id")
+    if not isinstance(document_id, str) or document_id not in selected_documents:
         return False
     if not isinstance(item.get("text", item.get("summary")), str):
         return False
@@ -128,7 +143,9 @@ def _valid_document_item(
     return (
         isinstance(citations, list)
         and all(
-            isinstance(value, str) and value in allowed_citations
+            isinstance(value, str)
+            and value in citation_documents
+            and document_id in citation_documents[value]
             for value in citations
         )
     )

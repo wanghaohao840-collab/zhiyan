@@ -1,6 +1,7 @@
 import json
 
 from hello_agents.tools.builtin.rag_compare import (
+    comparison_markdown_fallback,
     parse_structured_comparison,
     render_comparison_markdown,
 )
@@ -47,7 +48,7 @@ def valid_comparison():
 def test_structured_comparison_validates_and_renders_markdown():
     parsed = parse_structured_comparison(
         json.dumps(valid_comparison()),
-        allowed_citation_ids={"S-one", "S-two"},
+        citation_documents={"S-one": {"doc-1"}, "S-two": {"doc-2"}},
         selected_document_ids={"doc-1", "doc-2"},
     )
 
@@ -64,7 +65,7 @@ def test_structured_comparison_rejects_unknown_citation():
 
     assert parse_structured_comparison(
         json.dumps(value),
-        allowed_citation_ids={"S-one", "S-two"},
+        citation_documents={"S-one": {"doc-1"}, "S-two": {"doc-2"}},
         selected_document_ids={"doc-1", "doc-2"},
     ) is None
 
@@ -75,6 +76,17 @@ def test_structured_comparison_rejects_unselected_document():
 
     assert parse_structured_comparison(
         json.dumps(value),
-        allowed_citation_ids={"S-one", "S-two"},
+        citation_documents={"S-one": {"doc-1"}, "S-two": {"doc-2"}},
         selected_document_ids={"doc-1", "doc-2"},
     ) is None
+
+
+def test_fallback_preserves_markdown_and_hides_rejected_json():
+    prose = "## 共同点\n两份文档都讨论了昼夜节律。"
+    assert comparison_markdown_fallback(prose) == prose
+    assert "wrong-owner-claim" not in comparison_markdown_fallback(
+        '输出如下\n```json\n{"text": "wrong-owner-claim"}\n```'
+    )
+    assert "wrong-owner-claim" not in comparison_markdown_fallback(
+        '输出如下\n{"per_document_evidence": [{"summary": "wrong-owner-claim"}]}'
+    )

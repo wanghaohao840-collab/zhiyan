@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event, RLock
 from types import SimpleNamespace
 
 import pytest
@@ -8,7 +10,8 @@ from fastapi.testclient import TestClient
 from api.app import create_api_app
 from app.auth import AuthService
 from app.database import connect, initialize_database
-from app.graph_service import GraphService
+from app.graph_service import GraphProjectionWorker, GraphService
+from app.qa_deletion import QaDeletionRepository, QaDeletionWorker
 from app.session import InvalidSessionError
 
 
@@ -235,9 +238,6 @@ def test_graph_service_reuses_pooled_driver_caches_capabilities_and_recovers(mon
 def test_async_graph_projection_worker_decouples_import_and_respects_deletion_fence(
     tmp_path, monkeypatch
 ):
-    from threading import RLock
-    from app.graph_service import GraphProjectionWorker
-    from app.qa_deletion import QaDeletionRepository
     from hello_agents.memory.graph.extractor import GraphExtractor
 
     db = tmp_path / "async_graph.db"
@@ -300,3 +300,185 @@ def test_async_graph_projection_worker_decouples_import_and_respects_deletion_fe
         ).fetchall()
         assert [(row["document_id"], row["status"]) for row in rows] == [(DOC, "succeeded")]
     service.close()
+
+
+@pytest.fixture
+def graph_build_and_deletion(tmp_path, monkeypatch):
+    from hello_agents.memory.graph.extractor import GraphExtractor
+
+    db = tmp_path / "graph_deletion.db"
+    initialize_database(db)
+    auth = AuthService(db)
+    user = auth.register("graph_owner", "correct horse battery")
+    other_user = auth.register("other_owner", "correct horse battery")
+    task = SimpleNamespace(user_id=user.id, document_id=DOC, original_name="example.md")
+    namespace = f"pdf_{user.id}"
+    other_namespace = f"pdf_{other_user.id}"
+    history_docs = [{"document_id": DOC}]
+    graph_documents = {(other_namespace, DOC), (namespace, FOREIGN)}
+    graph_changes = []
+    hooks = SimpleNamespace(during_extract=lambda: None, before_publish=lambda: None)
+
+    def extract(*args, **kwargs):
+        hooks.during_extract()
+        return SimpleNamespace(to_store_payload=lambda: {})
+
+    def publish(document_id, build_id, payload, *, rag_namespace):
+        hooks.before_publish()
+        graph_changes.append(("publish", rag_namespace, document_id))
+        graph_documents.add((rag_namespace, document_id))
+
+    def remove(document_id, *, rag_namespace):
+        graph_changes.append(("delete", rag_namespace, document_id))
+        graph_documents.discard((rag_namespace, document_id))
+
+    monkeypatch.setattr(GraphExtractor, "extract", extract)
+    monkeypatch.setenv("ZHIYAN_GRAPH_ENABLED", "1")
+    store = SimpleNamespace(replace_document_graph=publish, delete_document=remove, close=lambda: None)
+    service = GraphService(db, store_factory=lambda **kwargs: store)
+    runtime = SimpleNamespace(
+        lock=RLock(),
+        history=SimpleNamespace(load=lambda: {"documents": list(history_docs)}),
+        rag_tool=SimpleNamespace(
+            rag_namespace=namespace,
+            _get_pipeline=lambda scope: SimpleNamespace(get_document_chunks=lambda doc_id: []),
+        ),
+        memory_tool=SimpleNamespace(memory_manager=object()),
+    )
+    runtime_registry = SimpleNamespace(
+        acquire_background=lambda uid: runtime,
+        release_background=lambda uid: None,
+    )
+    projection = GraphProjectionWorker(db, runtime_registry, service)
+    deletion_repository = QaDeletionRepository(db)
+    deletion_worker = QaDeletionWorker(
+        deletion_repository,
+        runtime_registry,
+        SimpleNamespace(perform_document_delete=lambda *args, **kwargs: history_docs.clear()),
+        SimpleNamespace(clear_document_selection=lambda *args: None),
+        graph_service=service,
+    )
+
+    def fence_document():
+        return deletion_repository.create_document_deletion(user.id, DOC)
+
+    def delete():
+        deletion = fence_document()
+        assert deletion_worker.run_once("graph-deletion-test")
+        assert deletion_repository.get_deletion(user.id, deletion.id).status == "completed"
+
+    yield SimpleNamespace(
+        db=db, user=user, other_user=other_user, task=task, namespace=namespace,
+        other_namespace=other_namespace, graph_documents=graph_documents,
+        graph_changes=graph_changes, hooks=hooks, service=service, projection=projection,
+        delete=delete, fence_document=fence_document,
+    )
+    service.close()
+
+
+def test_projection_cannot_publish_after_deletion_completes_during_extraction(graph_build_and_deletion):
+    parts = graph_build_and_deletion
+    parts.hooks.during_extract = parts.delete
+
+    assert parts.service.enqueue_after_import(parts.task)
+    assert parts.projection.run_once()
+
+    assert parts.graph_changes == [("delete", parts.namespace, DOC)]
+    assert parts.graph_documents == {(parts.other_namespace, DOC), (parts.namespace, FOREIGN)}
+    assert not parts.service.enqueue_after_import(parts.task)
+    with connect(parts.db) as conn:
+        assert conn.execute("select 1 from graph_document_cleanup").fetchall() == []
+        assert conn.execute("select 1 from graph_build_jobs").fetchall() == []
+
+
+def test_projection_blocked_during_extraction_is_not_recorded_as_succeeded(graph_build_and_deletion):
+    parts = graph_build_and_deletion
+    parts.hooks.during_extract = parts.fence_document
+
+    assert parts.service.enqueue_after_import(parts.task)
+    assert parts.projection.run_once()
+
+    assert parts.graph_changes == []
+    with connect(parts.db) as conn:
+        assert conn.execute("select 1 from graph_build_jobs").fetchall() == []
+
+
+def test_deletion_waits_for_publication_of_only_the_same_document(graph_build_and_deletion, monkeypatch):
+    parts = graph_build_and_deletion
+    publishing = Event()
+    allow_publication = Event()
+    deleting = Event()
+    delete_document = parts.service.delete_document
+
+    def pause_publication():
+        publishing.set()
+        assert allow_publication.wait(timeout=10)
+
+    def observe_deletion(user_id, document_id):
+        if (user_id, document_id) == (parts.user.id, DOC):
+            deleting.set()
+        return delete_document(user_id, document_id)
+
+    def finish_unrelated_operations():
+        delete_document(parts.other_user.id, DOC)
+        assert parts.service.enqueue_after_import(SimpleNamespace(
+            user_id=parts.user.id, document_id=FOREIGN, original_name="unrelated.md",
+        ))
+
+    parts.hooks.before_publish = pause_publication
+    monkeypatch.setattr(parts.service, "delete_document", observe_deletion)
+    assert parts.service.enqueue_after_import(parts.task)
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        build = executor.submit(parts.projection.run_once)
+        try:
+            assert publishing.wait(timeout=5)
+            deletion = executor.submit(parts.delete)
+            assert deleting.wait(timeout=5)
+            executor.submit(finish_unrelated_operations).result(timeout=5)
+            with pytest.raises(TimeoutError):
+                deletion.result(timeout=0.25)
+        finally:
+            allow_publication.set()
+        assert build.result(timeout=5)
+        deletion.result(timeout=5)
+
+    assert parts.graph_changes == [
+        ("delete", parts.other_namespace, DOC),
+        ("publish", parts.namespace, DOC),
+        ("delete", parts.namespace, DOC),
+    ]
+    assert parts.graph_documents == {(parts.namespace, FOREIGN)}
+    with connect(parts.db) as conn:
+        assert conn.execute("select 1 from graph_document_cleanup").fetchall() == []
+
+
+def test_graph_recovery_finishes_exhausted_attempt_and_requeues_remaining_attempt(
+    graph_build_and_deletion, monkeypatch
+):
+    parts = graph_build_and_deletion
+    monkeypatch.setattr("app.graph_service._utc_after", lambda delay: "2000-01-01T00:00:00Z")
+    assert parts.service.enqueue_after_import(parts.task)
+    for attempt in (1, 2):
+        claimed = parts.projection._claim_next()
+        assert claimed.attempt_count == attempt
+        parts.projection._fail_or_retry_job(claimed, RuntimeError())
+    assert parts.projection._claim_next().attempt_count == 3
+    assert parts.service.enqueue_after_import(SimpleNamespace(
+        user_id=parts.user.id, document_id=FOREIGN, original_name="retry.md",
+    ))
+    assert parts.projection._claim_next().attempt_count == 1
+
+    restarted = GraphProjectionWorker(parts.db, parts.projection.runtime_registry, parts.service)
+    assert restarted.recover_interrupted() == 2
+    with connect(parts.db) as conn:
+        rows = conn.execute(
+            "select document_id, status, attempt_count, next_attempt_at, last_error "
+            "from graph_build_jobs order by document_id"
+        ).fetchall()
+    assert [tuple(row) for row in rows] == [
+        (DOC, "failed", 3, None, "GraphBuildInterrupted"),
+        (FOREIGN, "queued", 1, None, None),
+    ]
+    retried = restarted._claim_next()
+    assert (retried.document_id, retried.attempt_count) == (FOREIGN, 2)
+    assert restarted._claim_next() is None

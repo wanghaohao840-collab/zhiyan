@@ -12,6 +12,7 @@ from threading import BoundedSemaphore, Lock
 from time import monotonic
 from types import SimpleNamespace
 from uuid import uuid4
+from weakref import WeakValueDictionary
 
 from app.database import connect
 from app.document_library import DocumentNotFoundError
@@ -70,6 +71,8 @@ class GraphService:
             self._capabilities_ttl = max(0.0, float(capabilities_ttl_seconds))
         self._read_slots = BoundedSemaphore(4)
         self._driver_lock = Lock()
+        self._document_locks_guard = Lock()
+        self._document_locks: WeakValueDictionary[tuple[str, str], Lock] = WeakValueDictionary()
         self._store = None
         self._store_key: tuple[str | None, str, str | None, str] | None = None
         self._cap_lock = Lock()
@@ -166,7 +169,18 @@ class GraphService:
     def _namespace(user_id: str) -> str:
         return f"pdf_{user_id}"
 
-    def _has_active_document_fence(self, user_id: str, document_id: str) -> bool:
+    def _document_lock(self, user_id: str, document_id: str):
+        # The single application process shares this service across its workers.
+        # Hold the registry lock only while obtaining the document's own lock.
+        key = (user_id, document_id)
+        with self._document_locks_guard:
+            lock = self._document_locks.get(key)
+            if lock is None:
+                lock = Lock()
+                self._document_locks[key] = lock
+            return lock
+
+    def _has_document_deletion(self, user_id: str, document_id: str) -> bool:
         if self._db_path is None:
             return False
         with closing(connect(self._db_path)) as conn:
@@ -174,10 +188,7 @@ class GraphService:
                 """
                 select 1 from qa_deletion_fences
                 where user_id = ? and target_type = 'document' and target_id = ?
-                  and (
-                      status in ('queued', 'running')
-                      or (status = 'failed' and attempt_count < 3)
-                  )
+                limit 1
                 """,
                 (user_id, document_id),
             ).fetchone()
@@ -259,16 +270,19 @@ class GraphService:
         """导入成功后以 O(1) 写入异步建图任务并唤醒后台投影 Worker，不阻塞主导入。"""
         if not self._enabled() or self._db_path is None:
             return False
-        if self._has_active_document_fence(task.user_id, task.document_id):
-            return False
         now = _utc_now()
         with closing(connect(self._db_path)) as connection, connection:
-            connection.execute(
+            queued = connection.execute(
                 """
                 insert into graph_build_jobs (
                     user_id, document_id, document_name, status, attempt_count,
                     next_attempt_at, last_error, created_at, updated_at
-                ) values (?, ?, ?, 'queued', 0, null, null, ?, ?)
+                )
+                select ?, ?, ?, 'queued', 0, null, null, ?, ?
+                where not exists (
+                    select 1 from qa_deletion_fences
+                    where user_id = ? and target_type = 'document' and target_id = ?
+                )
                 on conflict(user_id, document_id) do update set
                     document_name = excluded.document_name,
                     status = 'queued',
@@ -277,8 +291,13 @@ class GraphService:
                     last_error = null,
                     updated_at = excluded.updated_at
                 """,
-                (task.user_id, task.document_id, task.original_name, now, now),
-            )
+                (
+                    task.user_id, task.document_id, task.original_name, now, now,
+                    task.user_id, task.document_id,
+                ),
+            ).rowcount
+        if not queued:
+            return False
         if self._worker_wake is not None:
             self._worker_wake()
         return True
@@ -293,11 +312,11 @@ class GraphService:
                 (user_id, document_id),
             )
 
-    def build_after_import(self, task, runtime) -> None:
+    def build_after_import(self, task, runtime) -> bool:
         if not self._enabled():
-            return
-        if self._has_active_document_fence(task.user_id, task.document_id):
-            return
+            return False
+        if self._has_document_deletion(task.user_id, task.document_id):
+            return False
         from hello_agents.core.llm import HelloAgentsLLM
         from hello_agents.memory.graph.extractor import GraphExtractor
 
@@ -313,45 +332,49 @@ class GraphService:
             {"name": task.original_name},
             rag_namespace=namespace,
         )
-        # NOTE: 耗时 LLM 抽取结束后、写入清理台账与 Neo4j 前再次核验删除栅栏，
-        # 防止抽取期间文档被删除导致已删文档图谱幽灵复活。
-        if self._has_active_document_fence(task.user_id, task.document_id):
-            return
-        with self._connect() as store:
-            # Commit the cleanup record before Neo4j publication so a process
-            # failure between stores cannot leave an untracked document graph.
+        # Document IDs are never reused, so completed deletion rows still
+        # fence late projections. Serialize this final check and publication
+        # with graph cleanup, while leaving the extraction outside the lock.
+        with self._document_lock(task.user_id, task.document_id):
+            if self._has_document_deletion(task.user_id, task.document_id):
+                return False
+            with self._connect() as store:
+                # Commit the cleanup record before Neo4j publication so a process
+                # failure between stores cannot leave an untracked document graph.
+                if self._db_path is not None:
+                    with closing(connect(self._db_path)) as connection, connection:
+                        connection.execute(
+                            "insert or ignore into graph_document_cleanup values (?, ?)",
+                            (task.user_id, task.document_id),
+                        )
+                store.replace_document_graph(
+                    task.document_id, str(uuid4()), graph.to_store_payload(),
+                    rag_namespace=namespace,
+                )
+        return True
+
+    def delete_document(self, user_id: str, document_id: str) -> None:
+        key = (user_id, document_id)
+        with self._document_lock(*key):
+            self.cancel_pending_build(*key)
+            if not self._enabled():
+                if self._db_path is None:
+                    return
+                with closing(connect(self._db_path)) as connection:
+                    tracked = connection.execute(
+                        "select 1 from graph_document_cleanup where user_id = ? and document_id = ?",
+                        key,
+                    ).fetchone()
+                if tracked is None:
+                    return
+            with self._connect() as store:
+                store.delete_document(document_id, rag_namespace=self._namespace(user_id))
             if self._db_path is not None:
                 with closing(connect(self._db_path)) as connection, connection:
                     connection.execute(
-                        "insert or ignore into graph_document_cleanup values (?, ?)",
-                        (task.user_id, task.document_id),
+                        "delete from graph_document_cleanup where user_id = ? and document_id = ?",
+                        key,
                     )
-            store.replace_document_graph(
-                task.document_id, str(uuid4()), graph.to_store_payload(),
-                rag_namespace=namespace,
-            )
-
-    def delete_document(self, user_id: str, document_id: str) -> None:
-        self.cancel_pending_build(user_id, document_id)
-        key = (user_id, document_id)
-        if not self._enabled():
-            if self._db_path is None:
-                return
-            with closing(connect(self._db_path)) as connection:
-                tracked = connection.execute(
-                    "select 1 from graph_document_cleanup where user_id = ? and document_id = ?",
-                    key,
-                ).fetchone()
-            if tracked is None:
-                return
-        with self._connect() as store:
-            store.delete_document(document_id, rag_namespace=self._namespace(user_id))
-        if self._db_path is not None:
-            with closing(connect(self._db_path)) as connection, connection:
-                connection.execute(
-                    "delete from graph_document_cleanup where user_id = ? and document_id = ?",
-                    key,
-                )
 
 
 class GraphProjectionWorker:
@@ -375,16 +398,20 @@ class GraphProjectionWorker:
         self.graph_service.set_worker_wake(self.notify)
 
     def recover_interrupted(self) -> int:
-        """服务启动时将意外中断遗留的 running 建图任务复位为 queued，等待自动重试。"""
+        """启动时重新排队仍可重试的任务，并将已耗尽次数的中断任务标记为失败。"""
         now = _utc_now()
         with closing(connect(self.db_path)) as conn, conn:
             updated = conn.execute(
                 """
                 update graph_build_jobs
-                set status = 'queued', next_attempt_at = null, updated_at = ?
-                where status = 'running' and attempt_count < ?
+                set status = case when attempt_count < ? then 'queued' else 'failed' end,
+                    last_error = case when attempt_count < ? then last_error
+                                      else 'GraphBuildInterrupted' end,
+                    next_attempt_at = null,
+                    updated_at = ?
+                where status = 'running'
                 """,
-                (now, _GRAPH_BUILD_MAX_ATTEMPTS),
+                (_GRAPH_BUILD_MAX_ATTEMPTS, _GRAPH_BUILD_MAX_ATTEMPTS, now),
             )
             return updated.rowcount
 
@@ -492,7 +519,7 @@ class GraphProjectionWorker:
         if not self.graph_service._enabled():
             self.graph_service.cancel_pending_build(job.user_id, job.document_id)
             return True
-        if self.graph_service._has_active_document_fence(job.user_id, job.document_id):
+        if self.graph_service._has_document_deletion(job.user_id, job.document_id):
             self.graph_service.cancel_pending_build(job.user_id, job.document_id)
             return True
         runtime = None
@@ -513,8 +540,10 @@ class GraphProjectionWorker:
                 document_id=job.document_id,
                 original_name=job.document_name,
             )
-            self.graph_service.build_after_import(task, runtime)
-            self._complete_job(job)
+            if self.graph_service.build_after_import(task, runtime):
+                self._complete_job(job)
+            else:
+                self.graph_service.cancel_pending_build(job.user_id, job.document_id)
         except Exception as error:
             logger.warning(
                 "async document graph build failed (attempt %s/%s): %s",

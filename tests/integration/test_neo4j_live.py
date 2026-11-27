@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
@@ -38,6 +39,58 @@ def _live_graph(document_id: str) -> dict:
             },
         }],
     }
+
+
+@pytest.mark.skipif(not os.getenv("NEO4J_TEST_URI"), reason="NEO4J_TEST_URI is not configured")
+def test_live_graph_stays_deleted_when_extraction_finishes_late(tmp_path, monkeypatch):
+    from app.auth import AuthService
+    from app.database import initialize_database
+    from app.graph_service import GraphService
+    from app.qa_deletion import QaDeletionRepository
+    from hello_agents.memory.graph.extractor import GraphExtractor
+
+    db = tmp_path / "app.db"
+    initialize_database(db)
+    user = AuthService(db).register("graph_reader", "test passphrase")
+    document_id = str(uuid.uuid4())
+    namespace = f"pdf_{user.id}"
+    task = SimpleNamespace(user_id=user.id, document_id=document_id, original_name="fixture.md")
+    pipeline = SimpleNamespace(get_document_chunks=lambda doc_id: [])
+    runtime = SimpleNamespace(rag_tool=SimpleNamespace(
+        rag_namespace=namespace, _get_pipeline=lambda scope: pipeline,
+    ))
+    store = Neo4jGraphStore(
+        uri=os.environ["NEO4J_TEST_URI"],
+        username=os.getenv("NEO4J_TEST_USERNAME", "neo4j"),
+        password=os.environ["NEO4J_TEST_PASSWORD"],
+        database=os.getenv("NEO4J_TEST_DATABASE", "neo4j"),
+    )
+    service = GraphService(db, store_factory=lambda **kwargs: store)
+    deletions = QaDeletionRepository(db)
+    graph = _live_graph(document_id)
+
+    def finish_extraction_after_deletion(*args, **kwargs):
+        deletion = deletions.create_document_deletion(user.id, document_id)
+        worker = "test-deletion-worker"
+        assert deletions.claim_next_deletion(worker, lease_seconds=120).id == deletion.id
+        service.delete_document(user.id, document_id)
+        assert deletions.complete_deletion(deletion.id, worker)
+        return SimpleNamespace(to_store_payload=lambda: graph)
+
+    monkeypatch.setenv("ZHIYAN_GRAPH_ENABLED", "1")
+    monkeypatch.setattr("hello_agents.core.llm.HelloAgentsLLM", lambda **kwargs: object())
+    monkeypatch.setattr(GraphExtractor, "extract", finish_extraction_after_deletion)
+    try:
+        store.replace_document_graph(document_id, "first", graph, rag_namespace=namespace)
+        assert store.get_document_build(document_id, rag_namespace=namespace)["build_id"] == "first"
+        service.build_after_import(task, runtime)
+        assert store.get_document_build(document_id, rag_namespace=namespace) is None
+        assert store.get_document_graph(document_id, rag_namespace=namespace)["nodes"] == []
+    finally:
+        try:
+            store.delete_document(document_id, rag_namespace=namespace)
+        finally:
+            store.close()
 
 
 @pytest.mark.skipif(

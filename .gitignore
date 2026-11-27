@@ -1,6 +1,10 @@
 .env
 .env.*
 !.env.example
+/auth.json
+/auth.json.bak
+/.cockpit_codex_auth.json
+/.cockpit_codex_auth.json.bak
 
 venv/
 .venv/

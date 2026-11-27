@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Sequence
@@ -276,6 +277,7 @@ class QaRepository:
         mode: str,
         client_request_id: str,
         *,
+        admit_new_turn: Callable[[], None] | None = None,
         now: str | None = None,
     ) -> PendingTurn:
         timestamp = now or _utc_now()
@@ -291,6 +293,7 @@ class QaRepository:
                 client_request_id,
                 retry_of_message_id=None,
                 timestamp=timestamp,
+                admit_new_turn=admit_new_turn,
             )
             conn.commit()
             return result
@@ -307,6 +310,7 @@ class QaRepository:
         failed_assistant_message_id: str,
         client_request_id: str,
         *,
+        admit_new_turn: Callable[[], None] | None = None,
         now: str | None = None,
     ) -> PendingTurn:
         request_id = str(client_request_id or "").strip()
@@ -325,6 +329,7 @@ class QaRepository:
                 failed_assistant_message_id,
                 request_id,
                 timestamp,
+                admit_new_turn=admit_new_turn,
             )
             conn.commit()
             return result
@@ -913,6 +918,7 @@ class QaRepository:
         *,
         retry_of_message_id: str | None,
         timestamp: str,
+        admit_new_turn: Callable[[], None] | None = None,
     ) -> PendingTurn:
         normalized_question = normalize_question(question)
         request_id = str(client_request_id or "").strip()
@@ -976,6 +982,11 @@ class QaRepository:
                 raise QaValidationError(
                     "QA_RETRY_NOT_ALLOWED", "retry target is not a failed answer"
                 )
+
+        # Keep admission and the idempotency check in the same write transaction.
+        # The callback only reserves a slot and must not wait for queue capacity.
+        if admit_new_turn is not None:
+            admit_new_turn()
 
         busy = conn.execute(
             """
@@ -1080,6 +1091,8 @@ class QaRepository:
         failed_assistant_message_id: str,
         client_request_id: str,
         timestamp: str,
+        *,
+        admit_new_turn: Callable[[], None] | None = None,
     ) -> PendingTurn:
         conversation = conn.execute(
             f"""
@@ -1187,6 +1200,9 @@ class QaRepository:
                 self._message_from_row(conn, legacy_retry),
                 True,
             )
+
+        if admit_new_turn is not None:
+            admit_new_turn()
 
         busy = conn.execute(
             """
