@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "codex_harness": {
+      "command": "python",
+      "args": [
+        "./scripts/launch_codex_mcp.py"
+      ],
+      "cwd": ".",
+      "env": {
+        "PYTHONUTF8": "1",
+        "PYTHONUNBUFFERED": "1"
+      },
+      "startup_timeout_sec": 15
+    }
+  }
+}

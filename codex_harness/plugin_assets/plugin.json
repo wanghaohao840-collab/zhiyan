@@ -1,0 +1,12 @@
+{
+  "name": "codex-harness",
+  "displayName": "Codex Monitor",
+  "version": "1.0.0",
+  "description": "Antigravity × Codex 显式 Harness 与单向实时监控插件：依据 AGENTS.md 自动路由模型与门禁，管理任务包与范围白名单，并在侧边栏实时监控 Codex 派单与执行轨迹。",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "打开 Codex Monitor 右侧监控面板并查看当前项目最新会话",
+    "按 AGENTS.md 评估本轮任务的 Codex 模型分工并用 dry_run 预览派单契约",
+    "扫描 docs/agent-workflow/task-packets/ 找出可立即派单的任务包"
+  ]
+}

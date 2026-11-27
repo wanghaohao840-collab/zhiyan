@@ -1,0 +1,22 @@
+{
+  "name": "codex-harness",
+  "version": "1.0.0",
+  "description": "Antigravity × Codex 显式 Harness 与单向实时监控插件：依据 AGENTS.md 自动路由模型与门禁，管理任务包与范围白名单审计。",
+  "author": {
+    "name": "wanghaohao840-collab"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Codex Monitor (Harness)",
+    "shortDescription": "Antigravity × Codex 显式派单、模型路由、任务包与范围门禁",
+    "longDescription": "将仓库 AGENTS.md 模型分工、docs/agent-workflow 任务包状态机与范围白名单审计封装为可执行 MCP Harness，并与 Antigravity 右侧 Codex Monitor 面板共享实时监控台账。",
+    "developerName": "wanghaohao840-collab",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read"
+    ],
+    "logo": "./plugin_assets/logo.svg"
+  }
+}
