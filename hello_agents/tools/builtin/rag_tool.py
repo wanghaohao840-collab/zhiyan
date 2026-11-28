@@ -2140,7 +2140,8 @@ class RAGTool(Tool):
         model_kwargs = {"model": summary_model} if summary_model is not None else {}
         try:
             generate_with_metadata = getattr(self.llm, "generate_with_metadata", None)
-            if summary_max_tokens is not None and callable(generate_with_metadata):
+            uses_metadata = summary_max_tokens is not None and callable(generate_with_metadata)
+            if uses_metadata:
                 # Custom clients may accept kwargs only to forward them to their provider.
                 chat_with_metadata = getattr(self.llm, "_chat_with_metadata", None)
                 if (
@@ -2171,9 +2172,14 @@ class RAGTool(Tool):
                 raise ContextCapacityError("provider rejected the prompt as too large") from None
             raise
 
-        normalized = str(answer or "").lower()
-        if any(marker in normalized for marker in capacity_markers):
-            raise ContextCapacityError("provider rejected the prompt as too large")
+        # For summaries, only a legacy client's explicit failure can identify a
+        # capacity error from text. The model may discuss capacity in a valid answer.
+        if summary_max_tokens is None or (
+            not uses_metadata and str(answer or "").startswith("[LLM调用失败]")
+        ):
+            normalized = str(answer or "").lower()
+            if any(marker in normalized for marker in capacity_markers):
+                raise ContextCapacityError("provider rejected the prompt as too large")
         return answer
 
     def _generate_summary(

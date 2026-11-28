@@ -1195,6 +1195,83 @@ def test_summary_reports_only_confirmed_capacity_failures(
     assert "PRIVATE_BUDGET_DETAIL" not in caplog.text
 
 
+@pytest.mark.parametrize("enable", [False, True])
+@pytest.mark.parametrize("client_kind", ["legacy", "metadata"])
+def test_summary_can_discuss_context_capacity(worker_parts, enable, client_kind):
+    qa, jobs, _ = worker_parts
+    pool, registry, queued = start_multi_summary(worker_parts, SummaryPipeline(), enable=enable)
+    pool.lease_seconds = 60
+    tool = registry.runtime.rag_tool
+    generate = tool.llm.generate
+    map_text = "文档解释 context window 对检索的影响。"
+    reduce_text = "两篇资料都讨论了上下文长度和 token limit。"
+
+    def answer(prompt):
+        generate(prompt)
+        return reduce_text if "请给出联合总结：" in prompt else map_text
+
+    def metadata(prompt, **kwargs):
+        return SimpleNamespace(text=answer(prompt), finish_reason="stop")
+
+    if client_kind == "metadata":
+        tool.llm.generate_with_metadata = metadata
+    else:
+        tool.llm.generate = answer
+    pool._run_job("test-worker", jobs.claim_next("test-worker", lease_seconds=60))
+
+    job = jobs.get(OWNER, queued.job.id)
+    message = qa.get_message(OWNER, queued.pending.assistant_message.id)
+    assert job.status == message.status == "completed"
+    assert len(tool.llm.prompts) == 3 and tool.llm.prompts[-1].count(map_text) == 2
+    assert reduce_text in message.content and len(message.sources) == 2
+
+
+@pytest.mark.parametrize("enable", [False, True])
+@pytest.mark.parametrize(("failure", "status", "code"), [
+    ("legacy_capacity", "failed", "QA_SUMMARY_CONTEXT_CAPACITY"),
+    ("legacy_other", "failed", "QA_SUMMARY_INCOMPLETE"),
+    ("http_capacity", "failed", "QA_SUMMARY_CONTEXT_CAPACITY"),
+    ("http_other", "failed", "QA_ENGINE_FAILED"),
+])
+def test_summary_keeps_explicit_provider_capacity_failures_distinct(
+    worker_parts, caplog, enable, failure, status, code,
+):
+    from httpx import Request, Response
+    from openai import BadRequestError
+
+    qa, jobs, _ = worker_parts
+    pool, registry, queued = start_multi_summary(worker_parts, SummaryPipeline(), enable=enable)
+    pool.lease_seconds = 60
+    tool = registry.runtime.rag_tool
+    generate = tool.llm.generate
+    detail = "maximum context length exceeded" if failure.endswith("capacity") else "unsupported option"
+
+    def legacy(prompt):
+        text = generate(prompt)
+        return f"[LLM调用失败] {detail} PRIVATE_PROVIDER" if "请给出联合总结：" in prompt else text
+
+    def metadata(prompt, **kwargs):
+        text = generate(prompt)
+        if "请给出联合总结：" in prompt:
+            request = Request("POST", "https://provider.example/v1/chat/completions")
+            raise BadRequestError(f"{detail} PRIVATE_PROVIDER", response=Response(400, request=request), body=None)
+        return SimpleNamespace(text=text, finish_reason="stop")
+
+    if failure.startswith("legacy"):
+        tool.llm.generate = legacy
+    else:
+        tool.llm.generate_with_metadata = metadata
+    with caplog.at_level("INFO", logger="hello_agents.tools.builtin.rag_summary_workflow"):
+        pool._run_job("test-worker", jobs.claim_next("test-worker", lease_seconds=60))
+
+    job = jobs.get(OWNER, queued.job.id)
+    message = qa.get_message(OWNER, queued.pending.assistant_message.id)
+    assert (job.status, job.safe_error_code) == (status, code)
+    assert (message.status, message.safe_error_code) == (status, code)
+    assert not message.content and not message.sources
+    assert len(tool.llm.prompts) == 3 and "PRIVATE_PROVIDER" not in caplog.text
+
+
 @pytest.mark.parametrize("reason", ["stop", None])
 def test_summary_reuses_only_completed_maps_at_the_same_budget(monkeypatch, reason):
     monkeypatch.delenv("SUMMARY_MAP_MAX_OUTPUT_TOKENS", raising=False)
