@@ -6,7 +6,9 @@ import argparse
 import os
 import sys
 import time
+from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 
 import uvicorn
 
@@ -15,7 +17,7 @@ sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from api.app import create_application
 from app.bootstrap import ApplicationServices
-from app.qa_answer_engine import QaAnswerRequest, QaAnswerResult, QaEngineError
+from app.qa_answer_engine import QaAnswerRequest, QaAnswerResult, QaEngineError, RagQaAnswerEngine
 from app.qa_models import QaSourceDraft
 
 
@@ -77,6 +79,20 @@ class DeterministicQaAnswerEngine:
             if request.mode == "summary"
             else "这是确定性的可信回答，可通过右侧引用核对来源。"
         )
+        if request.mode == "summary" and "[graph-reference]" in request.question:
+            evidence = SimpleNamespace(
+                success=True,
+                message=answer,
+                data={
+                    "sources": [asdict(source)],
+                    "graph_sources": [{
+                        "citation_id": "G-0123456789", "document_id": document_id,
+                        "kind": "entity", "type": "Concept", "name": "证据链中的图谱实体",
+                    }],
+                },
+            )
+            graph_runtime = SimpleNamespace(rag_tool=SimpleNamespace(execute_result=lambda *_, **__: evidence))
+            return RagQaAnswerEngine().answer(graph_runtime, request)
         return QaAnswerResult(answer, (source,), request.mode)
 
 

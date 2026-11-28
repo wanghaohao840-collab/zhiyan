@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import PurePath
 from typing import Any, Literal, Mapping, Protocol
 
@@ -95,8 +95,15 @@ class RagQaAnswerEngine:
             _source_draft(item, "rag")
             for item in _mapping_items(result.data.get("sources"))
         )
+        summary_document_names = None
+        if request.mode == "summary":
+            summary_document_names = {
+                source.document_id: source.document_name
+                for source in rag_sources
+                if source.document_id in request.document_ids and source.document_name
+            }
         graph_sources = tuple(
-            _graph_source_draft(item, request.document_ids)
+            _graph_source_draft(item, request.document_ids, summary_document_names)
             for item in _mapping_items(result.data.get("graph_sources"))
         )
         comparison = result.data.get("comparison")
@@ -117,7 +124,8 @@ def _mapping_items(value: object) -> tuple[Mapping[str, Any], ...]:
 
 
 def _graph_source_draft(
-    raw: Mapping[str, Any], document_ids: tuple[str, ...]
+    raw: Mapping[str, Any], document_ids: tuple[str, ...],
+    summary_document_names: Mapping[str, str] | None = None,
 ) -> QaSourceDraft:
     members = raw.get("member_document_ids")
     if raw.get("kind") == "canonical_entity" and isinstance(members, (list, tuple)):
@@ -131,7 +139,28 @@ def _graph_source_draft(
                 "document_name": "跨文档图谱",
                 "excerpt": raw.get("name"),
             }
-    return _source_draft(raw, "graph")
+    source = _source_draft(raw, "graph")
+    kind = raw.get("kind")
+    if (
+        summary_document_names is None
+        or raw.get("document_id") not in document_ids
+        or kind not in ("entity", "relation", "canonical_entity")
+    ):
+        return source
+
+    document_name = source.document_name or summary_document_names.get(source.document_id) or "图谱来源"
+    excerpt = source.excerpt.strip()
+    if kind == "entity" and not excerpt:
+        excerpt = _optional_text(raw.get("name"), limit=240) or ""
+    if kind == "relation" and not excerpt:
+        relation_type = _optional_text(raw.get("type")) or "关系"
+        excerpt = f"{relation_type}（暂无图谱证据片段）"
+    return replace(
+        source,
+        document_name=document_name,
+        excerpt=excerpt,
+        reference=source.reference or f"[{source.citation_id}] {document_name}",
+    )
 
 
 def _source_draft(

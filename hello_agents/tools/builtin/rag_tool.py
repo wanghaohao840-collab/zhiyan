@@ -72,6 +72,7 @@ from hello_agents.tools.builtin.rag_summary_workflow import (
 
 
 GRAPH_CONTEXT_HEADING = "图谱上下文（仅作为补充证据）："
+GRAPH_RELATION_EVIDENCE_LIMIT = 240
 
 
 class RAGTool(Tool):
@@ -1815,6 +1816,8 @@ class RAGTool(Tool):
     def _graph_sources(
         self,
         contexts: List[Dict[str, Any]],
+        *,
+        include_relation_evidence: bool = False,
     ) -> List[Dict[str, Any]]:
         sources: List[Dict[str, Any]] = []
         seen = set()
@@ -1899,15 +1902,17 @@ class RAGTool(Tool):
                     continue
                 seen.add(citation_id)
                 properties = relation.get("properties") or {}
-                sources.append(
-                    {
-                        "citation_id": citation_id,
-                        "document_id": document_id,
-                        "kind": "relation",
-                        "type": relation.get("type"),
-                        "name": properties.get("evidence") or relation_id,
-                    }
-                )
+                evidence = properties.get("evidence")
+                source = {
+                    "citation_id": citation_id,
+                    "document_id": document_id,
+                    "kind": "relation",
+                    "type": relation.get("type"),
+                    "name": evidence or relation_id,
+                }
+                if include_relation_evidence and evidence:
+                    source["excerpt"] = str(evidence)[:GRAPH_RELATION_EVIDENCE_LIMIT]
+                sources.append(source)
         return sources
 
     def _format_graph_context(
@@ -2000,7 +2005,7 @@ class RAGTool(Tool):
                     f"{entity_names.get(str(relation.get('target_id')), relation.get('target_id'))}"
                 )
                 if evidence:
-                    line += f" | evidence: {str(evidence)[:240]}"
+                    line += f" | evidence: {str(evidence)[:GRAPH_RELATION_EVIDENCE_LIMIT]}"
                 entries.append((citation, line))
         return entries
 
@@ -2058,7 +2063,7 @@ class RAGTool(Tool):
             return context, []
         included = {citation for citation, _ in entries[:fitted_count - 1]}
         sources = [
-            source for source in self._graph_sources(contexts)
+            source for source in self._graph_sources(contexts, include_relation_evidence=True)
             if source["citation_id"] in included
         ]
         return combined, sources

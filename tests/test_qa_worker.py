@@ -508,6 +508,43 @@ def test_real_summary_worker_projects_sources_and_persists_progress(
 
 
 @pytest.mark.parametrize("enable", [False, True])
+def test_summary_persists_readable_graph_references(worker_parts, enable):
+    qa, jobs, _ = worker_parts
+    pool, registry, queued = start_multi_summary(worker_parts, SummaryPipeline(), enable=enable)
+    pool.lease_seconds = 60
+    tool = registry.runtime.rag_tool
+    evidence = "保留的图谱证据。" + "甲" * 240 + "不进入模型的尾部"
+    tool.graph_service = SimpleNamespace(
+        get_graph_context=lambda document_id, query, **kwargs: {"success": True, "data": {
+            "entities": [{"id": "root", "name": f"图谱实体 {document_id}", "type": "Concept"}],
+            "relations": [
+                {"source_id": "root", "target_id": "analysis", "type": "SUPPORTS", "properties": {"evidence": evidence}},
+                {"source_id": "root", "target_id": "result", "type": "MENTIONS"},
+            ],
+        }},
+    )
+    pool._run_job("test-worker", jobs.claim_next("test-worker", lease_seconds=60))
+
+    job = jobs.get(OWNER, queued.job.id)
+    message = qa.get_message(OWNER, queued.pending.assistant_message.id)
+    assert job.status == message.status == "completed"
+    sources = {source.citation_id: source for source in message.sources if source.source_type == "graph"}
+    assert len(sources) == 6
+    for document_id in ("doc-0", "doc-1"):
+        for kind, graph_id, excerpt in (
+            ("entity", "root", f"图谱实体 {document_id}"),
+            ("relation", "root|analysis|SUPPORTS", evidence[:240]),
+            ("relation", "root|result|MENTIONS", "MENTIONS（暂无图谱证据片段）"),
+        ):
+            citation_id = tool._graph_citation_id(document_id, kind, graph_id)
+            source = sources[citation_id]
+            assert source.document_id == document_id
+            assert source.document_name == f"PRIVATE_FILE_{document_id}.pdf"
+            assert source.excerpt == excerpt
+            assert source.reference == f"[{citation_id}] {source.document_name}"
+
+
+@pytest.mark.parametrize("enable", [False, True])
 def test_real_summary_cancellation_stops_replenishing_map(
     worker_parts, monkeypatch, enable
 ):

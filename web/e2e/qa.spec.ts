@@ -97,6 +97,25 @@ test("explains summary capacity failure and opens a new document scope", async (
   await expect(picker.getByRole("checkbox", { name: filename })).toBeVisible();
 });
 
+test("shows and copies a summary graph reference", async ({ appUrl, page }, testInfo) => {
+  test.slow();
+  const { conversationId, filename } = await createQaConversation(page, appUrl, uniqueUsername("qa_graph_reference"));
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: appUrl });
+  await page.route(`${appUrl}/api/v1/qa/conversations/${conversationId}/summary-jobs`, async (route) => {
+    await route.continue({ postData: JSON.stringify({ ...route.request().postDataJSON(), instruction: "[graph-reference]" }) });
+  });
+  await page.getByRole("button", { name: "生成摘要" }).click();
+  await page.getByRole("button", { name: "引用 2", exact: true }).click();
+  const evidence = page.getByText("证据链中的图谱实体", { exact: true }).filter({ visible: true });
+  await expect(evidence).toBeVisible();
+  const source = page.getByRole("listitem").filter({ has: evidence });
+  await expect(source).toContainText(`[G-0123456789] ${filename}`);
+  await source.getByRole("button", { name: "复制引用 2" }).click();
+  await expect(page.getByText("引用 2 已复制").filter({ visible: true })).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`[G-0123456789] ${filename}`);
+  await page.screenshot({ path: testInfo.outputPath("graph-reference.png") });
+});
+
 test("real server preserves answer, isolates users, cancels summary and deletes durably", async ({ appUrl, browser, page }, testInfo) => {
   test.slow();
   const ownerName = uniqueUsername("qa_owner");
