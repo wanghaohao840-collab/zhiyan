@@ -42,24 +42,26 @@ LOGGER = logging.getLogger(__name__)
 def resolve_codex_executable() -> str | None:
     """按优先顺序定位本机 Codex CLI，优先使用与桌面运行时同步的新版原生 codex.exe。"""
     env_override = os.getenv("CODEX_CLI_PATH")
-    if env_override and Path(env_override).exists():
+    if env_override and Path(env_override).is_file():
         return env_override
 
-    # NOTE: 优先使用 Codex Desktop 运行时附带的原生 codex.exe（支持最新模型元数据与缓存格式），
-    # 避免旧版 npm global codex.cmd 在解析 models cache 时降级并多消耗大量 token。
-    desktop_plugin_exe = Path.home() / ".codex" / "plugins" / ".plugin-appserver" / "codex.exe"
-    if desktop_plugin_exe.exists():
-        return str(desktop_plugin_exe)
+    # 插件缓存可跨桌面版升级保留；优先选用桌面安装包中的运行时以匹配会话和模型目录。
+    winapps_root = Path(os.getenv("ProgramFiles", r"C:\Program Files")) / "WindowsApps"
+    installed = []
+    try:
+        for folder in winapps_root.glob("OpenAI.Codex_[0-9]*"):
+            version = folder.name.split("_")[1].split(".")
+            exe = folder / "app" / "resources" / "codex.exe"
+            if all(part.isdecimal() for part in version) and exe.is_file():
+                installed.append((tuple(map(int, version)), exe))
+    except OSError:
+        pass
+    if installed:
+        return str(max(installed)[1])
 
-    winapps_root = Path(r"C:\Program Files\WindowsApps")
-    if winapps_root.exists():
-        try:
-            for folder in sorted(winapps_root.glob("OpenAI.Codex_*"), reverse=True):
-                exe = folder / "app" / "resources" / "codex.exe"
-                if exe.exists():
-                    return str(exe)
-        except OSError:
-            pass
+    desktop_plugin_exe = Path.home() / ".codex" / "plugins" / ".plugin-appserver" / "codex.exe"
+    if desktop_plugin_exe.is_file():
+        return str(desktop_plugin_exe)
 
     for candidate in ("codex.exe", "codex.cmd", "codex"):
         found = shutil.which(candidate)

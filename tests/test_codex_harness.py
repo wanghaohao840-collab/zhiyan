@@ -25,10 +25,29 @@ from codex_harness.repository.packet_repository import PacketRepository
 from codex_harness.repository.session_repository import SessionRepository, parse_exec_events_file
 from codex_harness.schema.contracts import DispatchRequest, DispatchRoundRecord, RoutingRequest
 from codex_harness.service.dispatch_process import DispatchProcess
-from codex_harness.service.dispatch_service import DispatchService
+from codex_harness.service.dispatch_service import DispatchService, resolve_codex_executable
 from codex_harness.service.monitor_service import MonitorService
 from codex_harness.service.routing_service import RoutingService
 from codex_harness.service.scope_service import ScopeService
+
+
+def test_executable_prefers_installed_desktop_over_plugin_cache(tmp_path, monkeypatch):
+    monkeypatch.delenv("CODEX_CLI_PATH", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("ProgramFiles", str(tmp_path))
+    cached = tmp_path / ".codex/plugins/.plugin-appserver/codex.exe"
+    cached.parent.mkdir(parents=True)
+    cached.touch()
+    assert resolve_codex_executable() == str(cached)
+
+    for version in ("26.9.1.0", "26.10.1.0"):
+        installed = tmp_path / "WindowsApps" / f"OpenAI.Codex_{version}_x64__test" / "app/resources/codex.exe"
+        installed.parent.mkdir(parents=True)
+        installed.touch()
+    assert resolve_codex_executable() == str(installed)
+
+    monkeypatch.setenv("CODEX_CLI_PATH", str(cached))
+    assert resolve_codex_executable() == str(cached)
 
 
 def test_routing_service_follows_agents_md_matrix() -> None:
