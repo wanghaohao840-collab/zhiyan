@@ -721,6 +721,11 @@ class SessionRepository:
         )
         return summary, detail
 
+    @staticmethod
+    def _is_stale_running_status(status: str, mtime: float) -> bool:
+        """若缓存的 running 状态对应文件已超过 2 分钟无写入，则需失效重算为 completed。"""
+        return status == "running" and (datetime.now(tz=timezone.utc).timestamp() - mtime) >= 120.0
+
     def list_sessions(self, limit: int = 80, query: str | None = None) -> list[SessionSummary]:
         """返回按更新时间倒序排列的本机 Codex 会话摘要，基于文件 stat 增量缓存。"""
         files = self._discover_files()
@@ -735,7 +740,12 @@ class SessionRepository:
                 except OSError:
                     continue
                 cached = self._summary_cache.get(key)
-                if cached and cached[0] == stat.st_mtime_ns and cached[1] == stat.st_size:
+                if (
+                    cached
+                    and cached[0] == stat.st_mtime_ns
+                    and cached[1] == stat.st_size
+                    and not self._is_stale_running_status(cached[2].status, stat.st_mtime)
+                ):
                     summary = cached[2]
                 else:
                     try:
@@ -791,7 +801,12 @@ class SessionRepository:
             except OSError:
                 return None
             cached = self._detail_cache.get(key)
-            if cached and cached[0] == stat.st_mtime_ns and cached[1] == stat.st_size:
+            if (
+                cached
+                and cached[0] == stat.st_mtime_ns
+                and cached[1] == stat.st_size
+                and not self._is_stale_running_status(cached[2].summary.status, stat.st_mtime)
+            ):
                 return cached[2]
 
             summary, detail = self._parse_rollout_file(target, include_detail=True)

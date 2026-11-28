@@ -39,10 +39,7 @@ export function App() {
         viewMode={harness.viewMode}
         onChangeView={harness.setViewMode}
         searchQuery={harness.searchQuery}
-        onChangeSearch={(q) => {
-          harness.setSearchQuery(q);
-          void harness.refreshSnapshot(q);
-        }}
+        onChangeSearch={harness.updateSearchQuery}
         groups={harness.snapshot?.project_groups ?? []}
         selectedSessionId={harness.selectedSessionId}
         onSelectSession={harness.selectSession}
@@ -67,11 +64,14 @@ export function App() {
         {harness.viewMode === 'monitor' && (
           <SessionDetail
             detail={harness.sessionDetail}
+            selectedSummary={harness.selectedSummary}
+            backgroundRunning={harness.backgroundRunning}
+            onReturnToRunning={harness.returnToRunningSession}
             loading={harness.loadingDetail || !connected}
             liveSync={harness.liveSync}
             onToggleLiveSync={() => harness.setLiveSync((v) => !v)}
             autoFollow={harness.autoFollow}
-            onToggleAutoFollow={() => harness.setAutoFollow((v) => !v)}
+            onToggleAutoFollow={harness.toggleAutoFollow}
             onManualRefresh={() => {
               void harness.refreshSnapshot();
               if (harness.selectedSessionId) {

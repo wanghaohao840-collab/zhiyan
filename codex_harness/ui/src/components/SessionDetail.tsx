@@ -14,7 +14,13 @@ import {
   Sparkles,
   Square,
 } from 'lucide-react';
-import type { SessionDetail as SessionDetailType, SessionTurn, TimelineItem } from '../types/harness';
+import type {
+  SessionDetail as SessionDetailType,
+  SessionSummary,
+  SessionTurn,
+  TimelineItem,
+} from '../types/harness';
+import type { BackgroundRunningInfo } from '../utils/sessionFollow';
 import {
   formatCommandSeconds,
   formatDurationZh,
@@ -25,6 +31,9 @@ import { SafeMarkdown } from './SafeMarkdown';
 
 interface SessionDetailProps {
   detail: SessionDetailType | null;
+  selectedSummary?: SessionSummary | null;
+  backgroundRunning?: BackgroundRunningInfo | null;
+  onReturnToRunning?: (sessionId: string) => void;
   loading: boolean;
   liveSync: boolean;
   onToggleLiveSync: () => void;
@@ -563,6 +572,9 @@ function DialogueTurn({
  */
 export function SessionDetail({
   detail,
+  selectedSummary = null,
+  backgroundRunning = null,
+  onReturnToRunning,
   loading,
   liveSync,
   onToggleLiveSync,
@@ -582,6 +594,7 @@ export function SessionDetail({
   const prevSessionIdRef = useRef<string | null>(null);
 
   const sessionId = detail?.summary.session_id ?? null;
+  const headerSummary = detail?.summary ?? selectedSummary;
   const turns = detail?.turns ?? [];
   const lastTurn = turns.length > 0 ? turns[turns.length - 1] : null;
   const isRunning = detail?.summary.status === 'running' || lastTurn?.status === 'running';
@@ -608,7 +621,7 @@ export function SessionDetail({
   }, [sessionId, autoFollow, isRunning, liveEventKey]);
 
   const docPath = detail?.delegation_doc_path || delegationDocPath;
-  const isHarness = detail?.summary.source_kind === 'harness';
+  const isHarness = headerSummary?.source_kind === 'harness';
   const runId = detail?.summary.run_id;
   const canCancel = isHarness && runId && ['queued', 'running'].includes(detail.summary.status);
   const cancelPending = detail?.summary.cancel_requested || cancelPhase === 'pending';
@@ -618,14 +631,14 @@ export function SessionDetail({
       <header className="ch-topbar">
         <div className="ch-topbar-left">
           <div className="ch-topbar-title">
-            {detail ? detail.summary.project_name : 'Codex Monitor'}
+            {headerSummary ? headerSummary.project_name : 'Codex Monitor'}
           </div>
           <div className="ch-topbar-sub">
-            {detail
-              ? `${isHarness ? 'Antigravity → Codex' : detail.summary.originator || 'Antigravity → Codex'} · ${
-                  detail.summary.model || 'codex'
-                }${detail.summary.effort ? ` · ${detail.summary.effort}` : ''} · ${
-                  detail.summary.turn_count || turns.length
+            {headerSummary
+              ? `${isHarness ? 'Antigravity → Codex' : headerSummary.originator || 'Antigravity → Codex'} · ${
+                  headerSummary.model || 'codex'
+                }${headerSummary.effort ? ` · ${headerSummary.effort}` : ''} · ${
+                  headerSummary.turn_count || turns.length
                 }轮`
               : 'Antigravity × Codex 对话式单向实时监控'}
           </div>
@@ -642,7 +655,10 @@ export function SessionDetail({
             <span>{liveSync ? '实时同步' : '已暂停'}</span>
           </button>
 
-          <label className="ch-toggle-label">
+          <label
+            className="ch-toggle-label"
+            title="开启时自动跟随当前运行任务的最新输出；手动切换查看历史会话时不会强制跳回"
+          >
             <button
               type="button"
               role="switch"
@@ -695,9 +711,37 @@ export function SessionDetail({
         </div>
       </header>
 
+      {backgroundRunning && onReturnToRunning && (
+        <div className="ch-running-bar" role="status" aria-live="polite">
+          <span className="ch-running-bar-info">
+            <span className="ch-dot ch-dot-blue" />
+            <span className="ch-running-bar-label">
+              后台执行中：
+              <strong title={backgroundRunning.primarySession.title}>
+                {backgroundRunning.primarySession.title}
+              </strong>
+              {backgroundRunning.runningCount > 1
+                ? ` 等 ${backgroundRunning.runningCount} 个任务`
+                : ''}
+            </span>
+          </span>
+          <button
+            type="button"
+            className="ch-btn ch-btn-xs"
+            onClick={() => onReturnToRunning(backgroundRunning.primarySession.session_id)}
+          >
+            回到运行中
+          </button>
+        </div>
+      )}
+
       <div ref={scrollRef} className="ch-content-scroll ch-chat-canvas">
         {loading && !detail ? (
-          <div className="ch-empty">正在同步 Antigravity × Codex 对话轨迹...</div>
+          <div className="ch-empty">
+            {selectedSummary
+              ? `正在加载会话「${selectedSummary.title}」的执行历史...`
+              : '正在同步 Antigravity × Codex 对话轨迹...'}
+          </div>
         ) : !detail ? (
           <div className="ch-empty">
             <CodexAvatar />

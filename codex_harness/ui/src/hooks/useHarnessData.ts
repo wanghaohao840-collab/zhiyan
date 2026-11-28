@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   DashboardSnapshot,
   DispatchFormDraft,
@@ -10,6 +10,15 @@ import type {
   SpecInferenceResult,
   TaskPacketInfo,
 } from '../types/harness';
+import {
+  createSessionDetailCoordinator,
+  findSessionSummaryById,
+  resolveBackgroundRunningInfo,
+  resolveInitialSelectionMode,
+  resolveNextSelectionOnSnapshot,
+  type SessionDetailCoordinator,
+  type SessionSelectionMode,
+} from '../utils/sessionFollow';
 import type { InitialToolPayload } from './useMcpApp';
 
 export const EMPTY_DISPATCH_DRAFT: DispatchFormDraft = {
@@ -87,7 +96,10 @@ export function useHarnessData({
 
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const [sessionDetail, setSessionDetail] = useState<SessionDetail | null>(null);
+  const [loadedDetail, setLoadedDetail] = useState<{
+    requestedSessionId: string;
+    detail: SessionDetail;
+  } | null>(null);
   const [packetPlans, setPacketPlans] = useState<PacketPlanGroup[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -101,11 +113,43 @@ export function useHarnessData({
   const [lastDispatchResult, setLastDispatchResult] = useState<DispatchResponsePayload | null>(null);
   const [cancelRequest, setCancelRequest] = useState<{ runId: string; phase: 'sending' | 'pending' } | null>(null);
 
+  const snapshotRef = useRef<DashboardSnapshot | null>(null);
+  snapshotRef.current = snapshot;
   const snapshotInFlightRef = useRef(false);
-  const detailInFlightRef = useRef(false);
+  const pendingSnapshotQueryRef = useRef<string | null>(null);
   const specInFlightRef = useRef<Promise<SpecInferenceResult> | null>(null);
   const selectedIdRef = useRef<string | null>(null);
-  selectedIdRef.current = selectedSessionId;
+  const selectionModeRef = useRef<SessionSelectionMode>('auto');
+  const autoFollowRef = useRef(autoFollow);
+  autoFollowRef.current = autoFollow;
+  const searchQueryRef = useRef(searchQuery);
+  searchQueryRef.current = searchQuery;
+  const detailCoordinatorRef = useRef<SessionDetailCoordinator | null>(null);
+
+  useEffect(() => {
+    const coordinator = createSessionDetailCoordinator({
+      fetchDetail: (sessionId) =>
+        callServerTool<SessionDetail>('app_get_session_detail', {
+          session_id: sessionId,
+        }),
+      getSelectedSessionId: () => selectedIdRef.current,
+      onDetailLoaded: (requestedSessionId, detail) => {
+        setLoadedDetail({ requestedSessionId, detail });
+        setErrorMessage(null);
+      },
+      onLoadingChange: setLoadingDetail,
+      onError: (_sessionId, message) => {
+        setErrorMessage(message);
+      },
+    });
+    detailCoordinatorRef.current = coordinator;
+    return () => {
+      coordinator.dispose();
+      if (detailCoordinatorRef.current === coordinator) {
+        detailCoordinatorRef.current = null;
+      }
+    };
+  }, [callServerTool]);
 
   // 响应工具推送的初始快照或新派单聚焦
   useEffect(() => {
@@ -113,72 +157,80 @@ export function useHarnessData({
     if (initialPayload.view) {
       setViewMode(initialPayload.view);
     }
-    if (initialPayload.snapshot) {
-      setSnapshot(initialPayload.snapshot as DashboardSnapshot);
+    const pushedSnapshot = initialPayload.snapshot as DashboardSnapshot | undefined;
+    if (pushedSnapshot) {
+      snapshotRef.current = pushedSnapshot;
+      setSnapshot(pushedSnapshot);
     }
     const targetId = initialPayload.selected_session_id || initialPayload.session_id;
     if (targetId) {
+      const nextMode = resolveInitialSelectionMode(
+        pushedSnapshot ?? snapshotRef.current,
+        targetId,
+      );
+      selectedIdRef.current = targetId;
+      selectionModeRef.current = nextMode;
       setSelectedSessionId(targetId);
     }
   }, [initialPayload]);
 
   const refreshSnapshot = useCallback(
     async (queryOverride?: string) => {
-      if (!connected || snapshotInFlightRef.current) return;
-      snapshotInFlightRef.current = true;
-      try {
-        const q = queryOverride !== undefined ? queryOverride : searchQuery;
-        const data = await callServerTool<DashboardSnapshot>('app_get_dashboard_snapshot', {
-          query: q.trim() || undefined,
-          limit: 80,
-        });
-        setSnapshot(data);
-        setErrorMessage(null);
+      if (!connected) return;
+      const requestedQuery = queryOverride !== undefined ? queryOverride : searchQueryRef.current;
+      if (snapshotInFlightRef.current) {
+        // 合入在途期间的最新查询，避免快速输入搜索词被静默丢弃
+        pendingSnapshotQueryRef.current = requestedQuery;
+        return;
+      }
 
-        const firstSession = data.project_groups[0]?.sessions[0];
-        if (!selectedIdRef.current && firstSession) {
-          setSelectedSessionId(firstSession.session_id);
-        } else if (autoFollow && firstSession) {
-          // 自动跟随：当出现最新活跃/运行中会话且当前不在阅读历史旧会话时平滑切至最新
-          const runningSession = data.project_groups
-            .flatMap((g) => g.sessions)
-            .find((s) => s.status === 'running');
-          if (runningSession && runningSession.session_id !== selectedIdRef.current) {
-            setSelectedSessionId(runningSession.session_id);
+      snapshotInFlightRef.current = true;
+      let nextQuery: string | null = requestedQuery;
+      try {
+        while (nextQuery !== null) {
+          const currentQuery = nextQuery;
+          nextQuery = null;
+          const data = await callServerTool<DashboardSnapshot>('app_get_dashboard_snapshot', {
+            query: currentQuery.trim() || undefined,
+            limit: 80,
+          });
+          snapshotRef.current = data;
+          setSnapshot(data);
+          setErrorMessage(null);
+
+          const nextSelectedId = resolveNextSelectionOnSnapshot({
+            snapshot: data,
+            currentSessionId: selectedIdRef.current,
+            selectionMode: selectionModeRef.current,
+            autoFollow: autoFollowRef.current,
+            searchActive: Boolean(searchQueryRef.current.trim()),
+          });
+          if (nextSelectedId && nextSelectedId !== selectedIdRef.current) {
+            selectedIdRef.current = nextSelectedId;
+            setSelectedSessionId(nextSelectedId);
+          }
+
+          if (pendingSnapshotQueryRef.current !== null) {
+            nextQuery = pendingSnapshotQueryRef.current;
+            pendingSnapshotQueryRef.current = null;
           }
         }
       } catch (err: unknown) {
         setErrorMessage(err instanceof Error ? err.message : String(err));
       } finally {
+        pendingSnapshotQueryRef.current = null;
         snapshotInFlightRef.current = false;
       }
     },
-    [connected, searchQuery, autoFollow, callServerTool],
+    [connected, callServerTool],
   );
 
   const refreshDetail = useCallback(
     async (sessionId: string | null, showSpinner = false) => {
-      if (!connected || !sessionId || detailInFlightRef.current) return;
-      detailInFlightRef.current = true;
-      if (showSpinner) setLoadingDetail(true);
-      try {
-        const detail = await callServerTool<SessionDetail>('app_get_session_detail', {
-          session_id: sessionId,
-        });
-        // 防止切走后旧请求回写覆盖新选中项
-        if (selectedIdRef.current === sessionId) {
-          setSessionDetail(detail);
-        }
-      } catch (err: unknown) {
-        if (selectedIdRef.current === sessionId) {
-          setErrorMessage(err instanceof Error ? err.message : String(err));
-        }
-      } finally {
-        detailInFlightRef.current = false;
-        if (showSpinner) setLoadingDetail(false);
-      }
+      if (!connected || !sessionId || !detailCoordinatorRef.current) return;
+      await detailCoordinatorRef.current.request(sessionId, showSpinner);
     },
-    [connected, callServerTool],
+    [connected],
   );
 
   const refreshTaskPackets = useCallback(async () => {
@@ -224,10 +276,11 @@ export function useHarnessData({
     void refreshSnapshot();
   }, [connected, refreshSnapshot]);
 
-  // 选中会话切换时立即拉取详情
+  // 选中会话切换时立即拉取详情（命中缓存时静默刷新，未命中时显示加载态）
   useEffect(() => {
     if (!connected || !selectedSessionId) return;
-    void refreshDetail(selectedSessionId, true);
+    const hasCached = Boolean(detailCoordinatorRef.current?.getCached(selectedSessionId));
+    void refreshDetail(selectedSessionId, !hasCached);
   }, [connected, selectedSessionId, refreshDetail]);
 
   // 切换到任务包或派单视图时按需加载对应仓库清单
@@ -283,9 +336,64 @@ export function useHarnessData({
     dispatchDraft.plan_doc_path || dispatchDraft.packet_path || dispatchDraft.resume_run_id || dispatchDraft.resume_codex_thread_id,
   );
 
-  const selectSession = useCallback((sessionId: string) => {
-    setSelectedSessionId(sessionId);
-    setViewMode('monitor');
+  const applySelectedSession = useCallback(
+    (sessionId: string, mode: SessionSelectionMode) => {
+      const prevId = selectedIdRef.current;
+      selectedIdRef.current = sessionId;
+      selectionModeRef.current = mode;
+      setSelectedSessionId(sessionId);
+      setViewMode('monitor');
+      setErrorMessage(null);
+
+      const cached = detailCoordinatorRef.current?.getCached(sessionId) ?? null;
+      if (cached) {
+        setLoadedDetail({ requestedSessionId: sessionId, detail: cached });
+        setLoadingDetail(false);
+      } else if (prevId !== sessionId) {
+        // 切换至未缓存会话时立即清空旧详情，避免右侧残留正在运行任务的内容
+        setLoadedDetail(null);
+        setLoadingDetail(true);
+      }
+
+      if (prevId === sessionId) {
+        void refreshDetail(sessionId, !cached);
+      }
+    },
+    [refreshDetail],
+  );
+
+  const selectSession = useCallback(
+    (sessionId: string) => {
+      // 用户主动点击会话（包括历史会话、子代理或其它运行中会话）时锁定手动查看态
+      applySelectedSession(sessionId, 'manual');
+    },
+    [applySelectedSession],
+  );
+
+  const returnToRunningSession = useCallback(
+    (sessionId: string) => {
+      autoFollowRef.current = true;
+      setAutoFollow(true);
+      applySelectedSession(sessionId, 'auto');
+    },
+    [applySelectedSession],
+  );
+
+  const updateSearchQuery = useCallback(
+    (nextQuery: string) => {
+      searchQueryRef.current = nextQuery;
+      setSearchQuery(nextQuery);
+      void refreshSnapshot(nextQuery);
+    },
+    [refreshSnapshot],
+  );
+
+  const toggleAutoFollow = useCallback(() => {
+    setAutoFollow((prev) => {
+      const next = !prev;
+      autoFollowRef.current = next;
+      return next;
+    });
   }, []);
 
   const prepareDispatchFromPacket = useCallback(
@@ -344,8 +452,7 @@ export function useHarnessData({
         });
         setLastDispatchResult(res);
         if (!dryRun) {
-          setSelectedSessionId(res.session_id);
-          setViewMode('monitor');
+          applySelectedSession(res.session_id, 'auto');
           await refreshSnapshot();
           await refreshDetail(res.session_id, true);
         }
@@ -355,7 +462,7 @@ export function useHarnessData({
         setSubmittingDispatch(false);
       }
     },
-    [dispatchDraft, callServerTool, refreshSnapshot, refreshDetail],
+    [dispatchDraft, callServerTool, applySelectedSession, refreshSnapshot, refreshDetail],
   );
 
   const cancelRun = useCallback(
@@ -378,18 +485,38 @@ export function useHarnessData({
     [callServerTool, refreshSnapshot, refreshDetail],
   );
 
+  const sessionDetail =
+    loadedDetail && loadedDetail.requestedSessionId === selectedSessionId
+      ? loadedDetail.detail
+      : null;
+
+  const selectedSummary = useMemo(
+    () => findSessionSummaryById(snapshot, selectedSessionId),
+    [snapshot, selectedSessionId],
+  );
+
+  const backgroundRunning = useMemo(
+    () => resolveBackgroundRunningInfo(snapshot, selectedSessionId),
+    [snapshot, selectedSessionId],
+  );
+
   return {
     viewMode,
     setViewMode,
     searchQuery,
     setSearchQuery,
+    updateSearchQuery,
     liveSync,
     setLiveSync,
     autoFollow,
     setAutoFollow,
+    toggleAutoFollow,
     snapshot,
     selectedSessionId,
+    selectedSummary,
+    backgroundRunning,
     selectSession,
+    returnToRunningSession,
     sessionDetail,
     loadingDetail,
     packetPlans,
