@@ -116,6 +116,27 @@ test("shows and copies a summary graph reference", async ({ appUrl, page }, test
   await page.screenshot({ path: testInfo.outputPath("graph-reference.png") });
 });
 
+test("copies a historical summary graph citation after reload", async ({ appUrl, page }, testInfo) => {
+  test.slow();
+  const { conversationId, filename } = await createQaConversation(page, appUrl, uniqueUsername("qa_history_graph"));
+  const { csrf_token } = await (await page.request.get(`${appUrl}/api/v1/auth/session`)).json();
+  const started = await page.request.post(`${appUrl}/api/v1/qa/conversations/${conversationId}/summary-jobs`, {
+    headers: { "X-CSRF-Token": csrf_token },
+    data: { client_request_id: crypto.randomUUID(), instruction: "[historical-graph-reference]" },
+  });
+  expect(started.status()).toBe(202);
+  const { job_id } = await started.json();
+  await expect.poll(async () => (await (await page.request.get(`${appUrl}/api/v1/qa/jobs/${job_id}`)).json()).status).toBe("completed");
+
+  await page.reload();
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: appUrl });
+  await page.getByRole("button", { name: "引用 2", exact: true }).click();
+  await expect(page.getByText("这条历史引用没有保存证据片段。", { exact: true }).filter({ visible: true })).toBeVisible();
+  await page.getByRole("button", { name: "复制引用 2", exact: true }).filter({ visible: true }).click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`[G-0123456789] ${filename}`);
+  await page.screenshot({ path: testInfo.outputPath("historical-graph-reference.png") });
+});
+
 test("real server preserves answer, isolates users, cancels summary and deletes durably", async ({ appUrl, browser, page }, testInfo) => {
   test.slow();
   const ownerName = uniqueUsername("qa_owner");

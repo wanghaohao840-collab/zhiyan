@@ -1,6 +1,6 @@
 import { type KeyboardEvent, type PropsWithChildren, useEffect, useRef, useState } from "react";
 import { Button } from "../Button/Button";
-import type { QaConversation, QaJob, QaMessage, QaMode, QaSource } from "../../features/qa/types";
+import type { QaConversation, QaDocumentSnapshot, QaJob, QaMessage, QaMode, QaSource } from "../../features/qa/types";
 
 const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -107,7 +107,10 @@ export function QaComposer({ busy, documentCount, onSubmit }: { busy: boolean; d
   return <div className="qa-composer"><label htmlFor="qa-question">向这些文档提问</label><textarea ref={text} id="qa-question" maxLength={20000} rows={2} disabled={busy} onKeyDown={(event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } }} /><div><select ref={mode} aria-label="回答模式" defaultValue="auto" disabled={busy}><option value="auto">自动</option><option value="joint">联合分析</option><option value="compare" disabled={documentCount < 2}>对比（需至少两篇文档）</option></select><Button loading={busy} onClick={submit}>发送</Button></div></div>;
 }
 
-export function SourcePanel({ sources }: { sources: QaSource[] }) {
+export function SourcePanel({ sources, summaryDocuments }: {
+  sources: QaSource[];
+  summaryDocuments?: QaDocumentSnapshot[];
+}) {
   const [feedback, setFeedback] = useState("");
   async function copyReference(reference: string, index: number) {
     try {
@@ -118,7 +121,31 @@ export function SourcePanel({ sources }: { sources: QaSource[] }) {
       setFeedback("复制失败，请手动选择引用文本");
     }
   }
-  return <aside className="qa-sources" aria-label="引用来源"><h2>引用证据</h2>{sources.length ? <ol>{sources.map((source, index) => <li key={source.citation_id}><span className="qa-source-index">{index + 1}</span><div><small className="qa-citation-id">{source.citation_id}</small><strong>{source.document_name}</strong><small>{[source.page_number ? `第 ${source.page_number} 页` : null, source.section].filter(Boolean).join(" · ")}</small><p>{source.excerpt}</p><code>{source.reference}</code><button className="qa-source-copy" onClick={() => void copyReference(source.reference, index)}>复制引用 {index + 1}</button></div></li>)}</ol> : <p className="qa-muted">选择一条含引用的回答后，在这里核对来源。</p>}<p className="qa-copy-feedback" aria-live="polite">{feedback}</p></aside>;
+  return <aside className="qa-sources" aria-label="引用来源">
+    <h2>引用证据</h2>
+    {sources.length ? <ol>{sources.map((source, index) => {
+      const needsGraphFallback = summaryDocuments !== undefined && source.source_type === "graph" && !source.reference.trim();
+      const scopedName = needsGraphFallback
+        ? summaryDocuments.find((document) => document.document_id === source.document_id)?.document_name
+        : undefined;
+      const citation = source.citation_id.trim();
+      const reference = needsGraphFallback
+        ? (citation ? [`[${citation}]`, scopedName].filter(Boolean).join(" ") : "")
+        : source.reference;
+      return <li key={source.citation_id}>
+        <span className="qa-source-index">{index + 1}</span>
+        <div>
+          <small className="qa-citation-id">{source.citation_id}</small>
+          <strong>{source.document_name || scopedName || (needsGraphFallback ? "历史图谱来源" : "")}</strong>
+          <small>{[source.page_number ? `第 ${source.page_number} 页` : null, source.section].filter(Boolean).join(" · ")}</small>
+          <p>{needsGraphFallback && !source.excerpt.trim() ? "这条历史引用没有保存证据片段。" : source.excerpt}</p>
+          <code>{reference}</code>
+          <button className="qa-source-copy" disabled={needsGraphFallback && !reference} onClick={() => void copyReference(reference, index)}>复制引用 {index + 1}</button>
+        </div>
+      </li>;
+    })}</ol> : <p className="qa-muted">选择一条含引用的回答后，在这里核对来源。</p>}
+    <p className="qa-copy-feedback" aria-live="polite">{feedback}</p>
+  </aside>;
 }
 
 export function SummaryStatus({ job, onCancel }: { job?: QaJob; onCancel: () => void }) {

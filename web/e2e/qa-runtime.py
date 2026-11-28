@@ -79,6 +79,9 @@ class DeterministicQaAnswerEngine:
             if request.mode == "summary"
             else "这是确定性的可信回答，可通过右侧引用核对来源。"
         )
+        if request.mode == "summary" and "[historical-graph-reference]" in request.question:
+            historical = QaSourceDraft("G-0123456789", document_id, "", source_type="graph")
+            return QaAnswerResult(answer, (source, historical), request.mode)
         if request.mode == "summary" and "[graph-reference]" in request.question:
             evidence = SimpleNamespace(
                 success=True,

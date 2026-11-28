@@ -8,7 +8,7 @@ import { QaDrawer } from "../components/QaWorkspace/QaDrawer";
 import { useDocumentsQuery } from "../features/documents/queries";
 import { useNotesCapabilities } from "../features/notes/queries";
 import { newClientRequestId, useQaActiveSummary, useQaCapabilities, useQaConversation, useQaConversations, useQaDeletion, useQaJob, useQaMessages, useQaMutations } from "../features/qa/queries";
-import type { QaMessage, QaSource } from "../features/qa/types";
+import type { QaMessage } from "../features/qa/types";
 
 const message = (reason: unknown, fallback: string) => reason instanceof ApiError ? reason.message : fallback;
 
@@ -27,7 +27,7 @@ export function QaPage() {
   const mutations = useQaMutations();
   const [createOpen, setCreateOpen] = useState(handoffIds.length > 0);
   const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set(handoffIds));
-  const [sources, setSources] = useState<QaSource[]>([]);
+  const [sourceMessage, setSourceMessage] = useState<QaMessage>();
   const [sourceOpen, setSourceOpen] = useState(false);
   const [conversationOpen, setConversationOpen] = useState(false);
   const [conversationTrigger, setConversationTrigger] = useState<HTMLElement | null>(null);
@@ -69,10 +69,10 @@ export function QaPage() {
     const items = messages.data?.items;
     if (!items) return;
     const latest = [...items].reverse().find((item) => item.role === "assistant" && item.status === "completed");
-    setSources(latest?.sources ?? []);
+    setSourceMessage(latest);
   }, [messages.data?.items, selectedId]);
 
-  function selectConversation(id: string) { setParams({ conversation: id }); setConversationOpen(false); setSources([]); }
+  function selectConversation(id: string) { setParams({ conversation: id }); setConversationOpen(false); setSourceMessage(undefined); }
   function createConversation() {
     mutations.create.mutate([...selectedDocuments], { onSuccess: (item) => { setCreateOpen(false); setParams({ conversation: item.conversation_id }); setSelectedDocuments(new Set()); } });
   }
@@ -93,7 +93,7 @@ export function QaPage() {
     }
     mutations.retry.mutate(request);
   }
-  function showSources(item: QaMessage, trigger: HTMLButtonElement) { setSources(item.sources); setSourceTrigger(trigger); if (window.innerWidth < 1200) setSourceOpen(true); }
+  function showSources(item: QaMessage, trigger: HTMLButtonElement) { setSourceMessage(item); setSourceTrigger(trigger); if (window.innerWidth < 1200) setSourceOpen(true); }
 
   if (capabilities.isPending) return <div className="qa-state" role="status">正在加载智能问答…</div>;
   if (capabilities.error) return <div className="qa-state" role="alert">{message(capabilities.error, "智能问答状态加载失败")}</div>;
@@ -101,6 +101,12 @@ export function QaPage() {
 
   const items = conversations.items;
   const currentMessages = messages.items;
+  const currentSource = sourceMessage?.conversation_id === selectedId ? sourceMessage : undefined;
+  const scopedDocuments = conversation.data?.conversation_id === selectedId ? conversation.data?.documents : undefined;
+  const sourcePanel = <SourcePanel
+    sources={currentSource?.sources ?? []}
+    summaryDocuments={currentSource?.mode === "summary" ? (scopedDocuments ?? []) : undefined}
+  />;
   const currentJob = job.data ?? activeSummary.data?.job ?? undefined;
   const summaryActive = currentJob?.status === "queued" || currentJob?.status === "running";
   const busy = mutations.ask.isPending
@@ -123,10 +129,10 @@ export function QaPage() {
       <main className="qa-thread">
         {selectedId ? <>{messages.isPending ? <div className="qa-welcome" role="status">正在加载消息…</div> : <MessageList messages={currentMessages} onSources={showSources} onRetry={retryMessage} busy={busy} hasOlder={Boolean(messages.hasNextPage)} loadingOlder={messages.isFetchingNextPage} onLoadOlder={() => void messages.fetchNextPage()} notesEnabled={enabled && notesEnabled} />}<QaComposer busy={busy} documentCount={conversation.data?.documents.length ?? 0} onSubmit={(question, mode) => mutations.ask.mutate({ conversationId: selectedId, question, mode, clientRequestId: newClientRequestId() })} /></> : <div className="qa-welcome"><h2>从一个问题，开始理解</h2><p>文档范围创建后保持固定，避免后续回答悄悄改变证据边界。</p><Button onClick={() => setCreateOpen(true)}>选择文档</Button></div>}
       </main>
-      <SourcePanel sources={sources} />
+      {sourcePanel}
     </div>
     {conversationOpen ? <QaDrawer title="选择对话" className="qa-overlay__panel--conversations" returnFocusTo={conversationTrigger} onClose={() => setConversationOpen(false)}><ConversationList items={items} selectedId={selectedId} onSelect={selectConversation} onNew={() => { setConversationOpen(false); setCreateOpen(true); }} onDeleteSelected={selectedId ? () => { setConversationOpen(false); setDeleteOpen(true); } : undefined} hasMore={Boolean(conversations.hasNextPage)} loadingMore={conversations.isFetchingNextPage} onLoadMore={() => void conversations.fetchNextPage()} /></QaDrawer> : null}
-    {sourceOpen ? <QaDrawer title="引用证据" className="qa-overlay__panel--sources" returnFocusTo={sourceTrigger} onClose={() => setSourceOpen(false)}><SourcePanel sources={sources} /></QaDrawer> : null}
+    {sourceOpen ? <QaDrawer title="引用证据" className="qa-overlay__panel--sources" returnFocusTo={sourceTrigger} onClose={() => setSourceOpen(false)}>{sourcePanel}</QaDrawer> : null}
     {createOpen ? <QaOverlay title="新建对话" onClose={() => setCreateOpen(false)}><div className="qa-document-picker"><p>选择 1–10 篇文档。创建后范围固定；需要更换范围时请新建对话。</p>{documents.isPending ? <p role="status">正在加载文档…</p> : <ul>{(documents.data?.items ?? []).map((doc) => <li key={doc.document_id}><label><input type="checkbox" checked={selectedDocuments.has(doc.document_id)} disabled={!selectedDocuments.has(doc.document_id) && selectedDocuments.size >= 10} onChange={(event) => setSelectedDocuments((current) => { const next = new Set(current); if (event.target.checked) next.add(doc.document_id); else next.delete(doc.document_id); return next; })} /> <span>{doc.name}</span></label></li>)}</ul>}<footer><Button hierarchy="secondary" onClick={() => setCreateOpen(false)}>取消</Button><Button disabled={!selectedDocuments.size} loading={mutations.create.isPending} onClick={createConversation}>创建对话</Button></footer>{mutations.create.error ? <p className="qa-error" role="alert">{message(mutations.create.error, "创建失败")}</p> : null}</div></QaOverlay> : null}
     {deleteOpen && conversation.data ? <QaDeleteDialog title="永久删除对话" onClose={() => setDeleteOpen(false)}><div className="qa-delete-copy"><p>将永久删除“{conversation.data.title}”的消息、引用、摘要和问答记忆。此操作不可撤销。</p><footer><Button hierarchy="secondary" onClick={() => setDeleteOpen(false)}>取消</Button><Button hierarchy="danger" loading={mutations.remove.isPending || deletionActive} onClick={() => mutations.remove.mutate(conversation.data!.conversation_id, { onSuccess: (item) => setDeletionId(item.deletion_id) })}>永久删除</Button></footer>{deletion.data ? <p role="status">{deletion.data.stage} · {deletion.data.status}</p> : null}{mutations.remove.error ? <p className="qa-error" role="alert">{message(mutations.remove.error, "删除失败，请重试")}</p> : null}</div></QaDeleteDialog> : null}
   </article>;

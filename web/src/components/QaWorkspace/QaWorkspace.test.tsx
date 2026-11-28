@@ -74,6 +74,29 @@ describe("QA workspace components", () => {
     expect(screen.getByRole("button", { name: "重试回答" })).toBeDisabled();
   });
 
+  it("copies historical graph citations using only the current summary scope", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window.navigator, "clipboard", { configurable: true, value: { writeText } });
+    const historical: QaSource = {
+      ...source, citation_id: "G-0123456789", source_type: "graph", document_name: "", excerpt: "", reference: " ",
+    };
+    const { rerender } = render(<SourcePanel sources={[historical]} summaryDocuments={[
+      { document_id: "doc-1", document_name: "同一篇文档.md", position: 0 },
+    ]} />);
+    expect(screen.getByText("这条历史引用没有保存证据片段。")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "复制引用 1" }));
+    expect(writeText).toHaveBeenLastCalledWith("[G-0123456789] 同一篇文档.md");
+
+    rerender(<SourcePanel sources={[historical]} summaryDocuments={[
+      { document_id: "another-doc", document_name: "另一篇文档.md", position: 0 },
+    ]} />);
+    await userEvent.click(screen.getByRole("button", { name: "复制引用 1" }));
+    expect(writeText).toHaveBeenLastCalledWith("[G-0123456789]");
+    expect(screen.queryByText("另一篇文档.md")).not.toBeInTheDocument();
+    rerender(<SourcePanel sources={[{ ...historical, citation_id: "" }]} summaryDocuments={[]} />);
+    expect(screen.getByRole("button", { name: "复制引用 1" })).toBeDisabled();
+  });
+
   it("explains how to recover from a summary capacity failure", () => {
     const capacity: QaMessage = { ...failed, mode: "summary", safe_error_code: "QA_SUMMARY_CONTEXT_CAPACITY" };
     render(<MessageList messages={[capacity]} onSources={vi.fn()} onRetry={vi.fn()} />);
