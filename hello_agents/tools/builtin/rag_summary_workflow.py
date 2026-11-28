@@ -7,6 +7,8 @@ from time import perf_counter
 from typing import Any, Literal, TypedDict
 from uuid import UUID, uuid4
 
+from hello_agents.memory.rag.errors import RAGOperationError
+
 
 logger = logging.getLogger(__name__)
 _CITATION_MARKER = re.compile(r"\[(S-[0-9a-fA-F]{12}|G-[0-9a-fA-F]{10})\]")
@@ -23,6 +25,10 @@ class SummaryProgressAborted(RuntimeError):
 
 class SummaryCapacityError(RuntimeError):
     """The required evidence cannot fit into the summary input budget."""
+
+
+class SummaryOwnershipCheckError(RAGOperationError):
+    """The workflow could not verify that the background attempt can continue."""
 
 
 SummaryOutputIssue = Literal["output_truncated", "safety_blocked", "empty_output", "abnormal_finish"]
@@ -126,6 +132,9 @@ def run_summary_workflow(
             except IncompleteSummaryOutput as error:
                 reason = error.category if error.category in _OUTPUT_MESSAGES else "abnormal_finish"
                 rejected_citations = error.invalid_citations
+                raise
+            except SummaryOwnershipCheckError:
+                reason = "ownership_check_failed"
                 raise
             except SummaryCancelled:
                 status, reason = "cancelled", "cancelled"

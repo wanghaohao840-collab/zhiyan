@@ -595,6 +595,96 @@ def test_summary_graph_calls_each_tool_once_and_uses_job_retry(worker_parts):
     assert registry.acquired == registry.released == [OWNER]
 
 
+@pytest.mark.parametrize("enable", [False, True])
+@pytest.mark.parametrize("change", ["cancel", "reclaim"])
+def test_summary_checks_sqlite_ownership_before_map_model_calls(
+    worker_parts, monkeypatch, caplog, enable, change,
+):
+    qa, jobs, _ = worker_parts
+    pipeline = SummaryPipeline()
+    pool, registry, queued = start_multi_summary(worker_parts, pipeline, enable=enable)
+    pool.lease_seconds = 60
+    tool = registry.runtime.rag_tool
+    read = pipeline.get_document_summary_context
+    state_changed = threading.Event()
+    clock = datetime.now(timezone.utc)
+    monkeypatch.setattr(qa_job_repository_module, "_utc_now", lambda: clock.isoformat())
+
+    def read_after_state_change(document_id, limit):
+        nonlocal clock
+        if document_id == "doc-0":
+            if change == "cancel":
+                assert jobs.request_cancel(OWNER, queued.job.id).cancel_requested_at
+            else:
+                clock += timedelta(seconds=61)
+                replacement = jobs.claim_next("test-worker", lease_seconds=60)
+                assert replacement.id == queued.job.id and replacement.attempt_count == 2
+            state_changed.set()
+        assert state_changed.wait(timeout=5)
+        return read(document_id, limit)
+
+    monkeypatch.setattr(pipeline, "get_document_summary_context", read_after_state_change)
+    claimed = jobs.claim_next("test-worker", lease_seconds=60)
+    with caplog.at_level("INFO", logger="hello_agents.tools.builtin.rag_summary_workflow"):
+        pool._run_job("test-worker", claimed)
+
+    assert not tool.llm.prompts and not tool._document_summary_cache
+    job = jobs.get(OWNER, queued.job.id)
+    answer = qa.get_message(OWNER, queued.pending.assistant_message.id)
+    if change == "cancel":
+        assert (job.status, job.attempt_count, answer.status) == ("cancelled", 1, "cancelled")
+    else:
+        assert (job.status, job.attempt_count, answer.status) == ("running", 2, "pending")
+    assert not answer.content and not answer.sources
+    records = [record for record in caplog.records if hasattr(record, "qa_summary_stage")]
+    assert [record.qa_summary_stage for record in records] == ["prepare", "map_documents"]
+    assert records[-1].qa_summary_reason in {"cancelled", "progress_aborted"}
+    assert registry.acquired == registry.released == [OWNER]
+
+
+@pytest.mark.parametrize("enable", [False, True])
+@pytest.mark.parametrize("db_error", ["database is locked", "PRIVATE_DATABASE_ERROR"])
+def test_summary_does_not_publish_partial_answers_when_ownership_checks_fail(
+    worker_parts, monkeypatch, caplog, enable, db_error,
+):
+    qa, jobs, _ = worker_parts
+    pool, registry, queued = start_multi_summary(worker_parts, SummaryPipeline(), enable=enable)
+    pool.lease_seconds = 60
+    tool = registry.runtime.rag_tool
+    other_document_generated = threading.Event()
+    first_check = threading.Lock()
+    owns_attempt = jobs.can_continue_attempt
+    generate = tool.llm.generate
+
+    def probe(*args):
+        if first_check.acquire(blocking=False):
+            return owns_attempt(*args)
+        assert other_document_generated.wait(timeout=5)
+        raise sqlite3.OperationalError(db_error)
+
+    def model(prompt):
+        result = generate(prompt)
+        other_document_generated.set()
+        return result
+
+    monkeypatch.setattr(jobs, "can_continue_attempt", probe)
+    monkeypatch.setattr(tool.llm, "generate", model)
+    claimed = jobs.claim_next("test-worker", lease_seconds=60)
+    with caplog.at_level("INFO", logger="hello_agents.tools.builtin.rag_summary_workflow"):
+        pool._run_job("test-worker", claimed)
+
+    job = jobs.get(OWNER, queued.job.id)
+    expected = ("queued", "QA_RAG_TRANSIENT") if db_error == "database is locked" else ("failed", "QA_ENGINE_FAILED")
+    assert (job.status, job.safe_error_code) == expected
+    answer = qa.get_message(OWNER, queued.pending.assistant_message.id)
+    assert answer.status == ("pending" if job.status == "queued" else "failed")
+    assert not answer.content and not answer.sources
+    assert len(tool.llm.prompts) == 1 and "请给出联合总结" not in tool.llm.prompts[0]
+    records = [record for record in caplog.records if hasattr(record, "qa_summary_stage")]
+    assert records[-1].qa_summary_reason == "ownership_check_failed"
+    assert "PRIVATE_DATABASE_ERROR" not in caplog.text
+
+
 def test_summary_provider_failure_is_neither_a_cached_summary_nor_a_nested_retry(
     monkeypatch,
 ):

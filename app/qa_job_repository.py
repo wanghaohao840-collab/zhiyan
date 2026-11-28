@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Sequence
@@ -780,6 +781,24 @@ class QaJobRepository:
                 (job_id, user_id),
             ).fetchone()
             return _job_from_row(row) if row is not None else None
+
+    def can_continue_attempt(self, job_id: str, worker_id: str, attempt: int) -> bool:
+        """Check persisted ownership without renewing the lease or writing progress."""
+        uri = self.db_path.resolve().as_uri() + "?mode=ro"
+        with closing(sqlite3.connect(uri, uri=True)) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                select status, lease_owner, lease_expires_at, attempt_count, cancel_requested_at
+                from qa_jobs where id = ?
+                """,
+                (job_id,),
+            ).fetchone()
+        return (
+            row is not None
+            and row["cancel_requested_at"] is None
+            and self._owns_live_lease(row, worker_id, _lease_timestamp(None), attempt)
+        )
 
     def get_active_for_conversation(
         self, user_id: str, conversation_id: str

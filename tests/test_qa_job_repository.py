@@ -97,6 +97,32 @@ def test_active_job_discovery_is_user_conversation_and_fence_scoped(
     assert jobs.get(OWNER, second.job.id) is not None
 
 
+def test_attempt_check_reads_current_state_without_renewing_the_lease(repositories, monkeypatch):
+    qa, jobs = repositories
+    convo = conversation(qa)
+    queued = jobs.create_summary_turn_and_job(OWNER, convo.id, "总结", "client", now=iso(NOW))
+    clock = NOW
+    monkeypatch.setattr("app.qa_job_repository._utc_now", lambda: iso(clock))
+    claimed = jobs.claim_next("worker", lease_seconds=10)
+    assert claimed.id == queued.job.id
+
+    # A reserved write lock still permits the independent read.
+    with connect(qa.db_path) as conn:
+        conn.execute("begin immediate")
+        assert jobs.can_continue_attempt(claimed.id, "worker", claimed.attempt_count)
+        assert not jobs.can_continue_attempt(claimed.id, "other", claimed.attempt_count)
+    assert jobs.get(OWNER, claimed.id) == claimed
+
+    clock += timedelta(seconds=11)
+    assert not jobs.can_continue_attempt(claimed.id, "worker", claimed.attempt_count)
+    replacement = jobs.claim_next("worker", lease_seconds=10)
+    assert replacement.attempt_count == claimed.attempt_count + 1
+    assert not jobs.can_continue_attempt(claimed.id, "worker", claimed.attempt_count)
+    assert jobs.can_continue_attempt(replacement.id, "worker", replacement.attempt_count)
+    assert jobs.request_cancel(OWNER, replacement.id).cancel_requested_at
+    assert not jobs.can_continue_attempt(replacement.id, "worker", replacement.attempt_count)
+
+
 def test_expired_running_job_is_reclaimed_and_stale_owner_loses(repositories) -> None:
     qa, jobs = repositories
     created = conversation(qa)

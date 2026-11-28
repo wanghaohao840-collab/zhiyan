@@ -63,6 +63,7 @@ from hello_agents.tools.builtin.rag_summary_workflow import (
     IncompleteSummaryOutput,
     SummaryCancelled,
     SummaryCapacityError,
+    SummaryOwnershipCheckError,
     SummaryProgressAborted,
     SummaryState,
     run_summary_workflow,
@@ -2470,6 +2471,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
         effective_model = summary_model or str(getattr(self.llm, "model", "") or "")
         total_documents = len(document_ids)
         work_aborted = Event()
+        check_before_model = getattr(cancel_event, "check_before_model", None)
 
         def check_cancelled() -> None:
             checker = getattr(cancel_event, "is_set", None)
@@ -2601,6 +2603,9 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 token_budget=budget,
             )
             check_cancelled()
+            if callable(check_before_model):
+                check_before_model()
+                check_cancelled()
             summary = self._generate_summary(
                 f"{prompt}{context}\n",
                 max_tokens=map_max_tokens,
@@ -2664,7 +2669,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                             item = future.result()
                             completed[doc_id] = item
                             invalid_citations += item.get("invalid_citations", 0)
-                        except (SummaryCancelled, SummaryProgressAborted):
+                        except (SummaryCancelled, SummaryProgressAborted, SummaryOwnershipCheckError):
                             raise
                         except IncompleteSummaryOutput as error:
                             failures[doc_id] = str(error)

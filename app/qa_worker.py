@@ -7,7 +7,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from time import monotonic
-from typing import Iterator, Protocol, Sequence
+from typing import Callable, Iterator, Protocol, Sequence
 from uuid import uuid4
 
 from app.qa_answer_engine import QaAnswerEngine, QaAnswerRequest, QaEngineError
@@ -18,7 +18,10 @@ from app.qa_models import QaJob, QaMessage
 from app.qa_observability import QaTelemetry
 from app.qa_repository import QaRepository
 from app.qa_service import QaService
-from hello_agents.tools.builtin.rag_summary_workflow import SummaryProgressAborted
+from hello_agents.tools.builtin.rag_summary_workflow import (
+    SummaryOwnershipCheckError,
+    SummaryProgressAborted,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -70,9 +73,20 @@ class _LeaseLost(SummaryProgressAborted):
 class _SummaryCancellation:
     shutdown: threading.Event
     lease_lost: threading.Event
+    owns_attempt: Callable[[], bool]
 
     def is_set(self) -> bool:
         return self.shutdown.is_set() or self.lease_lost.is_set()
+
+    def check_before_model(self) -> None:
+        try:
+            owns_attempt = not self.lease_lost.is_set() and self.owns_attempt()
+        except sqlite3.Error as error:
+            retryable = isinstance(error, sqlite3.OperationalError) and _is_sqlite_lock_error(error)
+            raise SummaryOwnershipCheckError("无法核对摘要任务状态", retryable=retryable) from None
+        if not owns_attempt:
+            self.lease_lost.set()
+            raise _LeaseLost()
 
 
 @dataclass(frozen=True)
@@ -185,8 +199,12 @@ class QaWorkerPool:
 
     def _run_job(self, worker_id: str, job: QaJob) -> None:
         runtime = None
-        cancel = _SummaryCancellation(self._stop, threading.Event())
         attempt = job.attempt_count
+        cancel = _SummaryCancellation(
+            self._stop,
+            threading.Event(),
+            lambda: self.job_repository.can_continue_attempt(job.id, worker_id, attempt),
+        )
         try:
             with self._renew_summary_lease(worker_id, job, cancel):
                 if cancel.is_set():
