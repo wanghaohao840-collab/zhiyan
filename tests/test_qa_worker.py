@@ -718,6 +718,65 @@ def test_summary_provider_failure_is_neither_a_cached_summary_nor_a_nested_retry
     assert runtime.rag_tool._document_summary_cache == {}
 
 
+@pytest.mark.parametrize("enable", [False, True])
+@pytest.mark.parametrize("failing_stage", ["map", "reduce"])
+def test_summary_transport_does_not_retry_after_persisted_cancellation(
+    worker_parts, enable, failing_stage,
+):
+    from httpx import Request
+    from openai import APIConnectionError
+
+    qa, jobs, _ = worker_parts
+    pool, registry, queued = start_multi_summary(worker_parts, SummaryPipeline(), enable=enable)
+    pool.lease_seconds = 60
+    llm = HelloAgentsLLM(max_retries=2, retry_backoff=0)
+    failing_calls = []
+    both_maps_started = threading.Barrier(2, action=lambda: jobs.request_cancel(OWNER, queued.job.id))
+
+    def create(messages, **kwargs):
+        assert "before_retry" not in kwargs
+        prompt = messages[-1]["content"]
+        stage = "reduce" if "请给出联合总结：" in prompt else "map"
+        if stage != failing_stage:
+            return SimpleNamespace(choices=[SimpleNamespace(
+                finish_reason="stop", message=SimpleNamespace(content="合成文档摘要"),
+            )])
+        failing_calls.append(prompt)
+        if stage == "map" and len(failing_calls) <= 2:
+            both_maps_started.wait(timeout=5)
+        elif stage == "reduce" and len(failing_calls) == 1:
+            assert jobs.request_cancel(OWNER, queued.job.id).cancel_requested_at
+        raise APIConnectionError(request=Request("POST", "https://provider.example/v1/chat/completions"))
+
+    llm.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    registry.runtime.rag_tool.llm = llm
+    pool._run_job("test-worker", jobs.claim_next("test-worker", lease_seconds=60))
+
+    assert len(failing_calls) == (2 if failing_stage == "map" else 1)
+    job = jobs.get(OWNER, queued.job.id)
+    answer = qa.get_message(OWNER, queued.pending.assistant_message.id)
+    assert job.status == answer.status == "cancelled"
+    assert job.attempt_count == 1 and not answer.content and not answer.sources
+
+
+def test_summary_does_not_send_internal_retry_check_to_custom_transport(worker_parts):
+    qa, jobs, _ = worker_parts
+    pool, registry, queued = start_multi_summary(worker_parts, SummaryPipeline(), enable=False)
+    pool.lease_seconds = 60
+
+    class CustomTransport(HelloAgentsLLM):
+        def _chat_with_metadata(self, prompt, *, strict, max_tokens):
+            return SimpleNamespace(text="自定义模型摘要", finish_reason="stop")
+
+    registry.runtime.rag_tool.llm = CustomTransport()
+    pool._run_job("test-worker", jobs.claim_next("test-worker", lease_seconds=60))
+
+    job = jobs.get(OWNER, queued.job.id)
+    answer = qa.get_message(OWNER, queued.pending.assistant_message.id)
+    assert job.status == answer.status == "completed"
+    assert "自定义模型摘要" in answer.content
+
+
 def test_summary_graph_keeps_partial_result_and_logs_only_metadata(caplog, monkeypatch):
     monkeypatch.setenv("LANGSMITH_TRACING", "true")
     monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")

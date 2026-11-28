@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 try:
     from dotenv import load_dotenv
@@ -207,6 +207,7 @@ class HelloAgentsLLM:
         *,
         strict: bool = False,
         return_errors: bool = False,
+        before_retry: Callable[[], None] | None = None,
         **kwargs,
     ) -> LLMCompletionResult:
         """Run a chat completion. Strict calls surface failures without retrying."""
@@ -228,6 +229,8 @@ class HelloAgentsLLM:
 
         attempts = 1 if strict else self.max_retries + 1
         for attempt in range(attempts):
+            if attempt and before_retry is not None:
+                before_retry()
             try:
                 response = self._create_completion(messages, **request_kwargs)
                 reason = getattr(response.choices[0], "finish_reason", None)

@@ -2125,6 +2125,7 @@ class RAGTool(Tool):
         strict: bool = False,
         summary_max_tokens: int | None = None,
         summary_model: str | None = None,
+        before_retry: Callable[[], None] | None = None,
     ) -> str:
         capacity_markers = (
             "context length",
@@ -2140,6 +2141,17 @@ class RAGTool(Tool):
         try:
             generate_with_metadata = getattr(self.llm, "generate_with_metadata", None)
             if summary_max_tokens is not None and callable(generate_with_metadata):
+                # Custom clients may accept kwargs only to forward them to their provider.
+                chat_with_metadata = getattr(self.llm, "_chat_with_metadata", None)
+                if (
+                    before_retry is not None
+                    and not strict
+                    and getattr(generate_with_metadata, "__func__", None)
+                    is HelloAgentsLLM.generate_with_metadata
+                    and getattr(chat_with_metadata, "__func__", None)
+                    is HelloAgentsLLM._chat_with_metadata
+                ):
+                    model_kwargs["before_retry"] = before_retry
                 completion = generate_with_metadata(
                     prompt, max_tokens=summary_max_tokens, strict=strict, **model_kwargs
                 )
@@ -2165,10 +2177,12 @@ class RAGTool(Tool):
         return answer
 
     def _generate_summary(
-        self, prompt: str, *, max_tokens: int, strict: bool, model: str | None
+        self, prompt: str, *, max_tokens: int, strict: bool, model: str | None,
+        before_retry: Callable[[], None] | None = None,
     ) -> str:
         answer = self._generate(
-            prompt, strict=strict, summary_max_tokens=max_tokens, summary_model=model
+            prompt, strict=strict, summary_max_tokens=max_tokens, summary_model=model,
+            before_retry=before_retry,
         )
         if not answer.strip() or answer.startswith(("[LLM调用失败]", "[LLM未配置]")):
             raise IncompleteSummaryOutput("empty_output")
@@ -2478,6 +2492,14 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
             if work_aborted.is_set() or (callable(checker) and checker()):
                 raise SummaryCancelled()
 
+        def check_model_attempt() -> None:
+            check_cancelled()
+            if callable(check_before_model):
+                check_before_model()
+                check_cancelled()
+
+        before_retry = check_model_attempt if callable(check_before_model) else None
+
         def emit_progress(
             stage: str,
             completed: int,
@@ -2602,15 +2624,13 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 document_graph_contexts,
                 token_budget=budget,
             )
-            check_cancelled()
-            if callable(check_before_model):
-                check_before_model()
-                check_cancelled()
+            check_model_attempt()
             summary = self._generate_summary(
                 f"{prompt}{context}\n",
                 max_tokens=map_max_tokens,
                 strict=use_summary_workflow,
                 model=summary_model,
+                before_retry=before_retry,
             )
             check_cancelled()
             source_refs = [source["citation_id"] for source in sources + graph_sources]
@@ -2797,6 +2817,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                     max_tokens=reduce_max_tokens,
                     strict=use_summary_workflow,
                     model=summary_model,
+                    before_retry=before_retry,
                 )
             except ContextCapacityError:
                 return {
@@ -2805,7 +2826,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                     "incomplete_output": False,
                     "error_category": "context_capacity",
                 }
-            except (IncompleteSummaryOutput, SummaryCancelled, SummaryProgressAborted):
+            except (IncompleteSummaryOutput, SummaryCancelled, SummaryProgressAborted, SummaryOwnershipCheckError):
                 raise
             except Exception as error:
                 raise RAGOperationError(

@@ -103,6 +103,17 @@ class HelloAgentsLLMTransportTests(unittest.TestCase):
                     llm.generate_with_metadata("summary", strict=strict)
                 self.assertEqual(len(llm.client.chat.completions.calls), count)
 
+    def test_metadata_retry_check_runs_before_transport_and_does_not_leak(self):
+        llm = self.make_llm([FakeTransportError("transport error"), completion("ok")], max_retries=2)
+        checks = []
+
+        def before_retry():
+            checks.append(len(llm.client.chat.completions.calls))
+
+        self.assertEqual(llm.generate_with_metadata("summary", before_retry=before_retry).text, "ok")
+        self.assertEqual(checks, [1])
+        self.assertTrue(all("before_retry" not in call for call in llm.client.chat.completions.calls))
+
     def test_invoke_accepts_openai_style_messages(self):
         messages = [{"role": "user", "content": "hello"}]
         llm = self.make_llm([completion("ok")])
