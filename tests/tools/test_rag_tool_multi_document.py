@@ -646,6 +646,35 @@ class RAGToolMultiDocumentTests(unittest.TestCase):
         self.assertIn("GraphRAG", output)
         self.assertEqual(tool.llm.prompts, [])
 
+    def test_summary_cancellation_takes_priority_over_required_graph_failure(self):
+        for use_langgraph in (False, True):
+            for cancel_at in ("doc-1", "shared"):
+                with self.subTest(langgraph=use_langgraph, cancel_at=cancel_at):
+                    tool = self.make_tool()
+                    cancel = threading.Event()
+                    calls = []
+
+                    def lookup(step):
+                        calls.append(step)
+                        if step == cancel_at:
+                            cancel.set()
+                            raise RuntimeError("controlled graph failure")
+                        return {"success": True, "data": {"entities": [{"id": step, "name": step}]}}
+
+                    tool.graph_service = SimpleNamespace(
+                        get_graph_context=lambda document_id, query, **kwargs: lookup(document_id),
+                        get_cross_document_entities=lambda document_ids, query, **kwargs: lookup("shared"),
+                    )
+                    result = tool.execute_result(
+                        "ask", query="alpha", document_ids=["doc-1", "doc-2"],
+                        mode="summary", graph_mode="required", cancel_event=cancel,
+                        use_summary_workflow=use_langgraph,
+                    )
+                    self.assertFalse(result.success)
+                    self.assertIn("联合总结已取消", result.message)
+                    self.assertEqual(calls, ["doc-1"] if cancel_at == "doc-1" else ["doc-1", "doc-2", "shared"])
+                    self.assertEqual(tool.llm.prompts, [])
+
     def test_summary_verifies_model_citations_before_caching_and_publishing(self):
         for use_langgraph in (False, True):
             with self.subTest(langgraph=use_langgraph):

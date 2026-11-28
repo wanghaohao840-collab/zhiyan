@@ -536,6 +536,50 @@ def test_real_summary_cancellation_stops_replenishing_map(
     assert registry.acquired == registry.released == [OWNER]
 
 
+@pytest.mark.parametrize("enable", [False, True])
+@pytest.mark.parametrize("cancel_at", ["doc-0", "shared"])
+@pytest.mark.parametrize("graph_failure", [False, True])
+def test_summary_graph_stops_after_sqlite_cancellation(
+    worker_parts, caplog, enable, cancel_at, graph_failure,
+):
+    qa, jobs, _ = worker_parts
+    pipeline = SummaryPipeline()
+    pool, registry, queued = start_multi_summary(worker_parts, pipeline, enable=enable, count=3)
+    pool.lease_seconds = 60
+    tool = registry.runtime.rag_tool
+    calls = []
+
+    def graph_response(step):
+        calls.append(step)
+        if step == cancel_at:
+            assert jobs.request_cancel(OWNER, queued.job.id).cancel_requested_at
+            if graph_failure:
+                raise RuntimeError("PRIVATE_GRAPH_FAILURE")
+        return {"success": True, "data": {"entities": [{"id": step, "name": step}]}}
+
+    tool.graph_service = SimpleNamespace(
+        get_graph_context=lambda document_id, query, **kwargs: graph_response(document_id),
+        get_cross_document_entities=lambda document_ids, query, **kwargs: graph_response("shared"),
+    )
+    claimed = jobs.claim_next("test-worker", lease_seconds=60)
+    with caplog.at_level("INFO", logger="hello_agents.tools.builtin.rag_summary_workflow"):
+        pool._run_job("test-worker", claimed)
+
+    assert calls == (["doc-0"] if cancel_at == "doc-0" else ["doc-0", "doc-1", "doc-2", "shared"])
+    assert not pipeline.reads and not tool.llm.prompts
+    job = jobs.get(OWNER, queued.job.id)
+    message = qa.get_message(OWNER, queued.pending.assistant_message.id)
+    assert job.status == message.status == "cancelled"
+    assert job.attempt_count == 1 and job.safe_error_code is None
+    assert not message.content and not message.sources
+    assert registry.acquired == registry.released == [OWNER]
+    records = [record for record in caplog.records if hasattr(record, "qa_summary_stage")]
+    assert [(record.qa_summary_stage, record.qa_summary_reason) for record in records] == [
+        ("prepare", "progress_aborted"),
+    ]
+    assert "PRIVATE_GRAPH_FAILURE" not in caplog.text
+
+
 def test_summary_graph_calls_each_tool_once_and_uses_job_retry(worker_parts):
     qa, jobs, _ = worker_parts
     pipeline = SummaryPipeline(TimeoutError("PRIVATE_PROVIDER"), ids_with_errors=("doc-0", "doc-1"))

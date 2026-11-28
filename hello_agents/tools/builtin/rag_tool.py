@@ -14,7 +14,7 @@ from contextvars import ContextVar, copy_context
 from inspect import Parameter, signature
 from pathlib import Path
 from threading import Event, RLock
-from typing import Dict, Any, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from openai import APIConnectionError
 
@@ -1696,6 +1696,7 @@ class RAGTool(Tool):
         mode: str,
         node_limit: int,
         relation_limit: int,
+        after_lookup: Callable[[], None] | None = None,
     ) -> tuple[List[Dict[str, Any]], Optional[str]]:
         if mode == "off" or not document_ids:
             return [], None
@@ -1716,9 +1717,13 @@ class RAGTool(Tool):
                     relation_limit=relation_limit,
                 )
             except Exception as error:
+                if after_lookup is not None:
+                    after_lookup()
                 if mode == "required":
                     return [], f"鉂?GraphRAG 图谱查询失败: {error.__class__.__name__}"
                 continue
+            if after_lookup is not None:
+                after_lookup()
             if not result or not result.get("success"):
                 if mode == "required":
                     error = (result or {}).get("error") or {}
@@ -2493,6 +2498,7 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 mode=graph_mode,
                 node_limit=graph_node_limit,
                 relation_limit=graph_relation_limit,
+                after_lookup=lambda: emit_progress("mapping", 0),
             )
             if graph_error:
                 return {"error": graph_error}
@@ -2502,10 +2508,10 @@ citations 可以使用向量资料的 S-* ID 或图谱资料的 G-* ID。
                 query=query,
                 mode=graph_mode,
             )
-            if graph_error:
-                return {"error": graph_error}
             if graph_mode != "off" and getattr(self, "graph_service", None) is not None:
                 emit_progress("mapping", 0)
+            if graph_error:
+                return {"error": graph_error}
             return {
                 "graph_by_document": {
                     str(context.get("document_id") or ""): context
